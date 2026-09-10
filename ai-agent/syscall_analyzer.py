@@ -55,9 +55,12 @@ Keep analysis concise."""
     )
 
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=120) as response:
             result = json.loads(response.read().decode('utf-8'))
             return result.get("response", "No response from model.")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8', errors='replace')
+        return f"Ollama HTTP {e.code} Error: {error_body}"
     except urllib.error.URLError as e:
         return f"Error connecting to Ollama at {ollama_url}: {e}"
 
