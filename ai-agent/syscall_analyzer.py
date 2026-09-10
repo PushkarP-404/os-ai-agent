@@ -5,8 +5,31 @@ import urllib.request
 import urllib.error
 import os
 
-def analyze_syscalls(syscall_data, ollama_url="http://10.0.2.2:11434"):
+def get_available_model(ollama_url="http://10.0.2.2:11434"):
+    """Query Ollama for available models or default to mistral:latest."""
+    env_model = os.environ.get("OLLAMA_MODEL")
+    if env_model:
+        return env_model
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            models = [m.get("name") for m in data.get("models", [])]
+            if "llama3.2:latest" in models or "llama3.2" in models:
+                return "llama3.2"
+            if "mistral:latest" in models or "mistral" in models:
+                return "mistral:latest"
+            if models:
+                return models[0]
+    except Exception:
+        pass
+    return "mistral:latest"
+
+def analyze_syscalls(syscall_data, ollama_url="http://10.0.2.2:11434", model=None):
     """Send syscall data to an LLM backend (Ollama) for analysis."""
+
+    if not model:
+        model = get_available_model(ollama_url)
 
     prompt = f"""You are an OS system analyst. Analyze these system calls and explain:
 1. What the process is trying to do
@@ -20,7 +43,7 @@ Syscall data:
 Keep analysis concise."""
 
     data = {
-        "model": "llama3.2", # Fallback to llama3.2 if available, user can change this
+        "model": model,
         "prompt": prompt,
         "stream": False
     }
