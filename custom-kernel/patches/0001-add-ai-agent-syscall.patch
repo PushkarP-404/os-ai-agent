@@ -1,0 +1,27 @@
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -375,3 +375,4 @@
+ 451	common	cachestat		sys_cachestat
+ 452	common	fchmodat2		sys_fchmodat2
++548	common	agent_query		sys_agent_query
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -1060,4 +1060,7 @@
+ 		int __user *optlen);
+ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
+ 		int optlen);
++
++asmlinkage long sys_agent_query(pid_t target_pid, const char __user *query, size_t query_len,
++				char __user *response, size_t resp_len);
+ #endif
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -14,6 +14,8 @@
+ 	    extable.o params.o \
+ 	    kthread.o sys_ni.o nsproxy.o \
+ 	    notifier.o ksysfs.o cred.o reboot.o \
+ 	    async.o range.o smpboot.o ucount.o regset.o ksyms_common.o
+ 
++obj-y += ai_agent.o
++
+ obj-$(CONFIG_USERMODE_DRIVER) += usermode_driver.o
