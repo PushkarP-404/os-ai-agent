@@ -80,10 +80,10 @@ SYSCALL_DEFINE5(agent_query,
                 size_t, resp_len)
 {
     char *kquery;
-    char fallback_resp[AI_AGENT_MAX_RESP_LEN];
+    char *fallback_resp;
     pid_t current_daemon;
     int qid;
-    struct ai_query_waiter waiter;
+    struct ai_query_waiter *waiter;
     struct sk_buff *skb;
     struct nlmsghdr *nlh;
     struct ai_agent_query_msg *qmsg;
@@ -122,45 +122,59 @@ SYSCALL_DEFINE5(agent_query,
 
     /* If no userspace daemon is registered, provide Kernel Diagnostics Fallback */
     if (current_daemon == 0 || !nl_sock) {
-        snprintf(fallback_resp, sizeof(fallback_resp),
+        fallback_resp = kmalloc(AI_AGENT_MAX_RESP_LEN, GFP_KERNEL);
+        if (!fallback_resp) {
+            kfree(kquery);
+            return -ENOMEM;
+        }
+
+        snprintf(fallback_resp, AI_AGENT_MAX_RESP_LEN,
                  "[KERNEL-AI-SUBSYSTEM] Query received for PID %d (%s). Daemon offline; kernel status: NORMAL.",
                  target_pid, current->comm);
 
-        copy_len = strnlen(fallback_resp, sizeof(fallback_resp));
+        copy_len = strnlen(fallback_resp, AI_AGENT_MAX_RESP_LEN);
         if (copy_len >= resp_len)
             copy_len = resp_len - 1;
 
         if (copy_to_user(response, fallback_resp, copy_len)) {
+            kfree(fallback_resp);
             kfree(kquery);
             return -EFAULT;
         }
 
         if (put_user('\0', response + copy_len)) {
+            kfree(fallback_resp);
             kfree(kquery);
             return -EFAULT;
         }
 
+        kfree(fallback_resp);
         kfree(kquery);
         return (long)copy_len;
     }
 
     /* Daemon is active: dispatch via Netlink and await response */
-    qid = atomic_inc_return(&next_query_id);
+    waiter = kzalloc(sizeof(*waiter), GFP_KERNEL);
+    if (!waiter) {
+        kfree(kquery);
+        return -ENOMEM;
+    }
 
-    memset(&waiter, 0, sizeof(waiter));
-    waiter.query_id = qid;
-    waiter.completed = false;
-    init_waitqueue_head(&waiter.wq);
+    qid = atomic_inc_return(&next_query_id);
+    waiter->query_id = qid;
+    waiter->completed = false;
+    init_waitqueue_head(&waiter->wq);
 
     spin_lock_irqsave(&waiter_lock, flags);
-    list_add_tail(&waiter.list, &waiter_list);
+    list_add_tail(&waiter->list, &waiter_list);
     spin_unlock_irqrestore(&waiter_lock, flags);
 
     skb = nlmsg_new(sizeof(*qmsg), GFP_KERNEL);
     if (!skb) {
         spin_lock_irqsave(&waiter_lock, flags);
-        list_del(&waiter.list);
+        list_del(&waiter->list);
         spin_unlock_irqrestore(&waiter_lock, flags);
+        kfree(waiter);
         kfree(kquery);
         return -ENOMEM;
     }
@@ -169,8 +183,9 @@ SYSCALL_DEFINE5(agent_query,
     if (!nlh) {
         kfree_skb(skb);
         spin_lock_irqsave(&waiter_lock, flags);
-        list_del(&waiter.list);
+        list_del(&waiter->list);
         spin_unlock_irqrestore(&waiter_lock, flags);
+        kfree(waiter);
         kfree(kquery);
         return -EMSGSIZE;
     }
@@ -190,35 +205,43 @@ SYSCALL_DEFINE5(agent_query,
     if (ret < 0) {
         pr_warn("ai_agent: Failed to unicast query to daemon PID %d (ret=%ld)\n", current_daemon, ret);
         spin_lock_irqsave(&waiter_lock, flags);
-        list_del(&waiter.list);
+        list_del(&waiter->list);
         spin_unlock_irqrestore(&waiter_lock, flags);
+        kfree(waiter);
         return -EIO;
     }
 
     /* Wait for daemon response (timeout: 15 seconds) */
-    ret = wait_event_interruptible_timeout(waiter.wq, waiter.completed, msecs_to_jiffies(15000));
+    ret = wait_event_interruptible_timeout(waiter->wq, waiter->completed, msecs_to_jiffies(15000));
 
     spin_lock_irqsave(&waiter_lock, flags);
-    list_del(&waiter.list);
+    list_del(&waiter->list);
     spin_unlock_irqrestore(&waiter_lock, flags);
 
     if (ret == 0) {
         pr_warn("ai_agent: Query %d timed out waiting for daemon response\n", qid);
+        kfree(waiter);
         return -ETIMEDOUT;
     } else if (ret < 0) {
+        kfree(waiter);
         return -EINTR;
     }
 
-    copy_len = strnlen(waiter.response, sizeof(waiter.response));
+    copy_len = strnlen(waiter->response, sizeof(waiter->response));
     if (copy_len >= resp_len)
         copy_len = resp_len - 1;
 
-    if (copy_to_user(response, waiter.response, copy_len))
+    if (copy_to_user(response, waiter->response, copy_len)) {
+        kfree(waiter);
         return -EFAULT;
+    }
 
-    if (put_user('\0', response + copy_len))
+    if (put_user('\0', response + copy_len)) {
+        kfree(waiter);
         return -EFAULT;
+    }
 
+    kfree(waiter);
     return (long)copy_len;
 }
 

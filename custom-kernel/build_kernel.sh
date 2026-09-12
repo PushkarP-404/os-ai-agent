@@ -65,6 +65,11 @@ fi
 ./scripts/config --disable CONFIG_DEBUG_INFO_DWARF5
 ./scripts/config --enable CONFIG_DEBUG_INFO_NONE
 
+# Clear external distro certificate paths that do not exist locally
+./scripts/config --set-str CONFIG_MODULE_SIG_KEY ""
+./scripts/config --set-str CONFIG_SYSTEM_TRUSTED_KEYS ""
+./scripts/config --set-str CONFIG_SYSTEM_REVOCATION_KEYS ""
+
 # Run olddefconfig to resolve dependencies
 make olddefconfig
 echo "  -> Kernel configuration validated."
