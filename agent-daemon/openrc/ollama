@@ -1,0 +1,52 @@
+#!/sbin/openrc-run
+# /etc/init.d/ollama — OpenRC service for the Ollama LLM server (in-guest)
+# Install: cp this file to /etc/init.d/ollama && chmod +x /etc/init.d/ollama
+#          rc-update add ollama default
+
+description="Ollama local LLM inference server"
+
+OLLAMA_BIN="${OLLAMA_BIN:-/usr/local/bin/ollama}"
+OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0}"
+OLLAMA_LOG="/var/log/ollama.log"
+OLLAMA_PIDFILE="/run/ollama.pid"
+
+# Run as root inside the VM (development mode).
+# For production, create a dedicated 'ollama' user and set command_user here.
+
+depend() {
+    need net localmount
+    after firewall
+}
+
+start_pre() {
+    if [ ! -x "$OLLAMA_BIN" ]; then
+        eerror "Ollama binary not found at $OLLAMA_BIN"
+        eerror "Install with: curl -fsSL https://ollama.com/install.sh | sh"
+        return 1
+    fi
+    # Ensure log dir exists
+    mkdir -p /var/log
+    mkdir -p /var/ai-agent/logs /var/ai-agent/training_data
+}
+
+start() {
+    ebegin "Starting Ollama LLM server"
+    OLLAMA_HOST="$OLLAMA_HOST" \
+    start-stop-daemon --start \
+        --background \
+        --make-pidfile \
+        --pidfile "$OLLAMA_PIDFILE" \
+        --stdout "$OLLAMA_LOG" \
+        --stderr "$OLLAMA_LOG" \
+        --exec "$OLLAMA_BIN" \
+        -- serve
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping Ollama LLM server"
+    start-stop-daemon --stop \
+        --pidfile "$OLLAMA_PIDFILE" \
+        --retry "SIGTERM/10/SIGKILL/5"
+    eend $?
+}

@@ -1,0 +1,77 @@
+#!/sbin/openrc-run
+# /etc/init.d/ai-agent — OpenRC service for the AI-Agent OS kernel daemon
+# Install: cp this file to /etc/init.d/ai-agent && chmod +x /etc/init.d/ai-agent
+#          rc-update add ai-agent default
+
+description="AI-Agent OS kernel-userspace agent daemon"
+
+AGENT_SCRIPT="${AGENT_SCRIPT:-/root/os-ai-agent/agent-daemon/agent_daemon.py}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+AGENT_LOG="/var/log/ai-agent.log"
+AGENT_PIDFILE="/run/ai-agent.pid"
+
+# LLM backend — defaults to in-guest Ollama (Phase 5).
+# Override to http://10.0.2.2:11434/api/generate to use host Ollama.
+export OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434/api/generate}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b-instruct-q4_K_M}"
+export AI_AGENT_LOG_DIR="${AI_AGENT_LOG_DIR:-/var/ai-agent}"
+
+depend() {
+    need localmount
+    # Depend on ollama only if the service is installed
+    use ollama
+    after ollama
+}
+
+start_pre() {
+    if [ ! -f "$AGENT_SCRIPT" ]; then
+        eerror "agent_daemon.py not found at $AGENT_SCRIPT"
+        return 1
+    fi
+    # Verify we are running on the custom ai-agent kernel
+    KERNEL=$(uname -r)
+    case "$KERNEL" in
+        *-ai-agent*)
+            einfo "Custom kernel detected: $KERNEL"
+            ;;
+        *)
+            ewarn "WARNING: Not running on ai-agent kernel ($KERNEL)."
+            ewarn "Netlink socket may fail. Boot 6.6.142-ai-agent and retry."
+            ;;
+    esac
+    mkdir -p /var/ai-agent/logs /var/ai-agent/training_data
+}
+
+start() {
+    ebegin "Starting AI-Agent OS kernel daemon"
+    start-stop-daemon --start \
+        --background \
+        --make-pidfile \
+        --pidfile "$AGENT_PIDFILE" \
+        --stdout "$AGENT_LOG" \
+        --stderr "$AGENT_LOG" \
+        --exec "$PYTHON_BIN" \
+        -- "$AGENT_SCRIPT"
+    local ret=$?
+    # Give the daemon 2 seconds to register with the kernel before returning
+    sleep 2
+    eend $ret
+}
+
+stop() {
+    ebegin "Stopping AI-Agent OS kernel daemon"
+    start-stop-daemon --stop \
+        --pidfile "$AGENT_PIDFILE" \
+        --retry "SIGTERM/10/SIGKILL/5"
+    eend $?
+}
+
+status() {
+    if [ -f "$AGENT_PIDFILE" ] && kill -0 "$(cat $AGENT_PIDFILE)" 2>/dev/null; then
+        einfo "ai-agent is running (PID $(cat $AGENT_PIDFILE))"
+        return 0
+    else
+        einfo "ai-agent is not running"
+        return 1
+    fi
+}
