@@ -23,6 +23,7 @@ import time
 import json
 import urllib.request
 import urllib.error
+import signal
 
 # ── Conditionally import Phase 5 logger (graceful fallback if not present) ──
 try:
@@ -193,6 +194,11 @@ def main():
     max_events  = int(sys.argv[1]) if len(sys.argv) > 1 else None
     events_seen = 0
 
+    def sig_handler(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, sig_handler)
+
     try:
         while True:
             data, _ = sock.recvfrom(4096)
@@ -237,8 +243,15 @@ def main():
                 break
 
     except KeyboardInterrupt:
-        print("\n[AGENT DAEMON] Stopped by user (SIGINT).")
+        print("\n[AGENT DAEMON] Stopped by signal.")
     finally:
+        try:
+            unreg_hdr = struct.pack(NLMSG_HDR_FORMAT, NLMSG_HDR_SIZE,
+                                    AI_MSG_REGISTER, 0, 1, 0)
+            sock.sendto(unreg_hdr, (0, 0))
+            print("[AGENT DAEMON] Unregistered from kernel ai_agent subsystem.")
+        except Exception:
+            pass
         sock.close()
 
     if LOGGING_ENABLED:

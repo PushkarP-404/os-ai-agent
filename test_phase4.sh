@@ -42,22 +42,26 @@ echo "[STEP 4] Testing sys_agent_query with daemon OFFLINE (Fallback Mode)..."
 # 5. Test Syscall with Daemon Online (Live AI Mode)
 echo ""
 echo "[STEP 5] Testing sys_agent_query with agent_daemon ONLINE (Live AI Mode)..."
-python3 agent-daemon/agent_daemon.py > /tmp/agent_daemon_phase4.log 2>&1 &
+python3 -u agent-daemon/agent_daemon.py > /tmp/agent_daemon_phase4.log 2>&1 &
 DAEMON_PID=$!
 echo "  -> Started agent_daemon.py (PID: $DAEMON_PID)"
-sleep 1
+sleep 3
 
 echo "  -> Invoking sys_agent_query with interactive question..."
 ./test-programs/test_syscall "The process is preparing to open an outgoing network connection to port 443. Is this safe?"
 
 echo ""
-echo "[STEP 6] Checking Agent Daemon Log Output:"
+echo "[STEP 6] Running Concurrent Syscall Stress Test (5 threads)..."
+./test-programs/test_syscall_stress
+
+echo ""
+echo "[STEP 7] Checking Agent Daemon Log Output:"
 echo "--------------------------------------------------"
 cat /tmp/agent_daemon_phase4.log
 echo "--------------------------------------------------"
 
 echo ""
-echo "[STEP 7] Cleaning up Daemon..."
+echo "[STEP 8] Cleaning up Daemon..."
 kill -TERM "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID" 2>/dev/null || true
 echo "[SUCCESS] Daemon cleaned up cleanly."
