@@ -1,0 +1,79 @@
+#!/sbin/openrc-run
+# /etc/init.d/llama-server — OpenRC service for native musl llama-server
+# Phase 5: native musl llama.cpp replaces Ollama (musl-compatible, no glibc)
+#
+# Install:
+#   cp this file to /etc/init.d/llama-server
+#   chmod +x /etc/init.d/llama-server
+#   rc-update add llama-server default
+
+description="llama.cpp native musl inference server (HTTP)"
+
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/root/llama.cpp/build/bin/llama-server}"
+LLAMA_MODEL="${LLAMA_MODEL:-/root/models/smollm2-135m-instruct-q4_k_m.gguf}"
+LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
+LLAMA_PORT="${LLAMA_PORT:-11434}"
+LLAMA_THREADS="${LLAMA_THREADS:-2}"
+LLAMA_CTX="${LLAMA_CTX:-512}"
+LLAMA_LOG="/var/log/llama-server.log"
+LLAMA_PIDFILE="/run/llama-server.pid"
+
+depend() {
+    need localmount
+}
+
+start_pre() {
+    if [ ! -x "$LLAMA_SERVER_BIN" ]; then
+        eerror "llama-server binary not found at $LLAMA_SERVER_BIN"
+        eerror "Build with: make -C /root/llama.cpp/build -j4 llama-server"
+        return 1
+    fi
+    if [ ! -f "$LLAMA_MODEL" ]; then
+        eerror "Model not found at $LLAMA_MODEL"
+        return 1
+    fi
+    mkdir -p /var/log /var/ai-agent/logs /var/ai-agent/training_data
+    einfo "Model: $LLAMA_MODEL"
+    einfo "Endpoint: http://$LLAMA_HOST:$LLAMA_PORT"
+}
+
+start() {
+    ebegin "Starting llama.cpp inference server"
+    start-stop-daemon --start \
+        --background \
+        --make-pidfile \
+        --pidfile "$LLAMA_PIDFILE" \
+        --stdout "$LLAMA_LOG" \
+        --stderr "$LLAMA_LOG" \
+        --exec "$LLAMA_SERVER_BIN" \
+        -- \
+        --model "$LLAMA_MODEL" \
+        --host "$LLAMA_HOST" \
+        --port "$LLAMA_PORT" \
+        --threads "$LLAMA_THREADS" \
+        --ctx-size "$LLAMA_CTX" \
+        --n-predict 200 \
+        --log-disable
+    local ret=$?
+    # Wait briefly for server to initialise and bind port
+    sleep 3
+    eend $ret
+}
+
+stop() {
+    ebegin "Stopping llama.cpp inference server"
+    start-stop-daemon --stop \
+        --pidfile "$LLAMA_PIDFILE" \
+        --retry "SIGTERM/10/SIGKILL/5"
+    eend $?
+}
+
+status() {
+    if [ -f "$LLAMA_PIDFILE" ] && kill -0 "$(cat $LLAMA_PIDFILE)" 2>/dev/null; then
+        einfo "llama-server is running (PID $(cat $LLAMA_PIDFILE))"
+        return 0
+    else
+        einfo "llama-server is not running"
+        return 1
+    fi
+}

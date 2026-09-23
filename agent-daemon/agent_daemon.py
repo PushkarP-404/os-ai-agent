@@ -7,11 +7,11 @@ Handles two Netlink message types from the ai_agent kernel subsystem:
   AI_MSG_SYSCALL_QUERY  (2)  — Phase 4: synchronous agent_query responses
 
 Phase 5 additions:
-  - Default Ollama target is now http://127.0.0.1:11434 (in-guest inference).
-    Override with OLLAMA_URL env var to target the host (http://10.0.2.2:11434)
-    during development.
-  - LLM query timeout increased to 30s (kernel side-wait is 15s; daemon should
-    not cut off mid-inference).
+  - LLM backend: native musl llama.cpp (llama-server) running in-guest.
+    Default endpoint: http://127.0.0.1:11434/completion
+    Override with LLAMA_URL env var.
+  - Model is loaded by llama-server at startup (no model field in request).
+  - LLM query timeout increased to 30s (kernel side-wait is 15s).
   - All interactions are logged via logger.py to /var/ai-agent/.
 """
 
@@ -56,37 +56,41 @@ QUERY_SIZE   = struct.calcsize(QUERY_FORMAT)
 RESP_FORMAT = "=ii2048s"
 RESP_SIZE   = struct.calcsize(RESP_FORMAT)
 
-# ── LLM backend configuration ────────────────────────────────────────────────
-# Phase 5: default is in-guest local Ollama.
-# For development against host Ollama: OLLAMA_URL=http://10.0.2.2:11434/api/generate
-OLLAMA_URL   = os.environ.get("OLLAMA_URL",   "http://127.0.0.1:11434/api/generate")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b-instruct-q4_K_M")
+# ── LLM backend configuration — native musl llama-server (Phase 5) ──────────
+# llama-server exposes /completion (single-turn) and /v1/chat/completions.
+# Using /completion for maximum compatibility with small model builds.
+# The model is loaded at llama-server startup — no model field in request.
+# Override: LLAMA_URL=http://127.0.0.1:11434/completion
+LLAMA_URL   = os.environ.get("LLAMA_URL",   "http://127.0.0.1:11434/completion")
+LLAMA_MODEL = "smollm2-135m-instruct-q4_k_m"   # informational only
+
+# For logger.py compatibility we keep OLLAMA_MODEL pointing at LLAMA_MODEL
+OLLAMA_URL   = LLAMA_URL
+OLLAMA_MODEL = LLAMA_MODEL
 
 # Timeout for LLM HTTP call. Keep above the kernel's 15s wait_event timeout.
 LLM_TIMEOUT_S = 30
 
 
 def query_ollama(prompt):
-    """POST a generation request to Ollama; return the response text."""
+    """POST a completion request to llama-server; return the response text."""
     payload = {
-        "model":  OLLAMA_MODEL,
         "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.2,
-            "num_predict": 200,
-        },
+        "n_predict": 200,
+        "temperature": 0.2,
+        "stop": ["\n\n"],
     }
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(
-        OLLAMA_URL,
+        LLAMA_URL,
         data=data,
         headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-            return result.get("response", "").strip()
+            # llama-server /completion returns {"content": "...", ...}
+            return result.get("content", "").strip()
     except Exception as e:
         return (
             f"[AI AGENT FALLBACK] Local LLM unreachable ({e}). "

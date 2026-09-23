@@ -10,17 +10,16 @@ PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 AGENT_LOG="/var/log/ai-agent.log"
 AGENT_PIDFILE="/run/ai-agent.pid"
 
-# LLM backend — defaults to in-guest Ollama (Phase 5).
-# Override to http://10.0.2.2:11434/api/generate to use host Ollama.
-export OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434/api/generate}"
-export OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b-instruct-q4_K_M}"
+# LLM backend — native musl llama-server (Phase 5).
+# agent_daemon.py reads LLAMA_URL; OLLAMA_URL is set for logger.py compatibility.
+export LLAMA_URL="${LLAMA_URL:-http://127.0.0.1:11434/completion}"
 export AI_AGENT_LOG_DIR="${AI_AGENT_LOG_DIR:-/var/ai-agent}"
 
 depend() {
     need localmount
-    # Depend on ollama only if the service is installed
-    use ollama
-    after ollama
+    # Depend on llama-server for in-guest LLM inference
+    use llama-server
+    after llama-server
 }
 
 start_pre() {
