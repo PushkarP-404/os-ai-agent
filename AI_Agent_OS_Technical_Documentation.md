@@ -1,8 +1,8 @@
 # AI-Agent OS: Technical Design & Implementation Document
 
 **Project codename:** AI-Agent OS (working title)
-**Document version:** 0.3 (living document)
-**Status:** Phases 1–4 ✅ Complete & Validated — Phase 5 ✅ Validated (native musl llama.cpp in-guest inference)
+**Document version:** 0.4 (living document)
+**Status:** Phases 1–6 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1)
 **Base distro:** Alpine Linux 3.20.10 (musl libc, BusyBox userland)
 **Last updated:** 2026-09-24
 
@@ -383,8 +383,7 @@ During networking experimentation, the VM's root password was forgotten, and no 
 | **Phase 2** | Wire syscall data into an LLM for analysis/explanation | ✅ Complete & Validated — ptrace output piped into `syscall_analyzer.py`; querying local Ollama (`mistral:latest`, 7.2B Q4_K_M) via `http://10.0.2.2:11434`; 120s timeout; auto model detection |
 | **Phase 3** | Kernel module hooking `kernel_clone` to stream process-creation events to userspace agent daemon | ✅ Complete & Validated — LKM (`ai_process_hook.ko`) hooks `kernel_clone` via `kretprobe`; broadcasts `{parent_pid, child_pid, comm}` over Netlink protocol 31 to `agent_daemon.py`; 5 events captured in test |
 | **Phase 4** | Custom syscall `sys_agent_query` (#548) baked into the kernel — any process can query its AI agent directly, synchronously, with a 15-second timeout and kernel fallback | ✅ Complete & Validated — custom kernel `6.6.142-ai-agent` booted in Alpine VM; syscall 548 live; 5-thread concurrent stress test passing; Netlink live + fallback modes verified |
-| **Phase 5** | In-guest local LLM inference (no host dependency) + structured logging + LoRA fine-tuning pipeline for per-process-type model specialization | ✅ Validated — native musl `llama.cpp` compiled inside Alpine (GCC 13.2.1); `SmolLM2-135M-Instruct-Q4_K_M.gguf` running at 1.1–1.7 t/s; `llama-server` on port 11434; `test_phase5.sh`: 17 PASS / 0 FAIL / 5 WARN |
-| **Phase 6** | Bootable OS appliance image: custom kernel + LKM + agent daemon + pre-downloaded quantized model baked in, zero manual setup for end user | ⏳ Not started |
+| **Phase 6** | Bootable OS appliance image: custom kernel + llama-server + agent daemon + SmolLM2-135M model baked into compressed QCOW2 image; zero manual setup; one-command boot | ✅ Complete & Validated — hardened /usr/local system paths; OpenRC runlevels; RPATH fixed; syscall roundtrip: 4.4s; `test_phase6_boot.sh`: 13/13 PASS; compressed image `ai-agent-os-v0.1.qcow2` |
 
 ---
 
@@ -979,24 +978,97 @@ from trl import SFTTrainer
 
 ---
 
-## 14. Phase 6: OS Image Packaging & Distribution
+## 14. Phase 6: OS Image Packaging & Appliance Distribution (Completed & Validated)
 
-### 14.1 End-user experience goal
+### 14.1 Appliance Release Goal & Overview (v0.1)
 
-> "When users finally install this, they shouldn't have to go through all this [setup] process — it should be pre-installed for them."
+The objective of Phase 6 is to package the entire system built in Phases 1–5 into a self-contained, zero-configuration bootable appliance image (`ai-agent-os-v0.1.qcow2`). 
 
-This is a firm requirement, not a nice-to-have. Everything currently done manually during development (installing Ollama, pulling a model, compiling the monitor, wiring up the agent) must eventually be **baked into the OS image itself**, so that booting the final distribution gives a user a fully working, self-contained AI-integrated system with zero manual setup.
+When booted on any host running QEMU (Windows, Linux, macOS), the appliance:
+1. Boots directly into the custom kernel `6.6.142-ai-agent` with built-in syscall #548 (`sys_agent_query`).
+2. Automatically brings up the native musl `llama-server` background inference engine with 4-thread execution.
+3. Automatically launches `agent_daemon.py` via OpenRC, registering with kernel Netlink protocol 31.
+4. Hosts the 100.6MB quantized `SmolLM2-135M-Instruct-Q4_K_M.gguf` model in `/var/lib/ai-agent/models/`.
+5. Requires **zero manual configuration, zero dependency installation, and zero internet access** on first boot.
 
-### 14.2 What "baked in" means concretely
+### 14.2 System Path Normalization (Phase 6a)
 
-- The compiled kernel (with the Phase 3/4 hooks and custom syscall, once stable) ships as the default kernel of the image.
-- The agent-manager daemon and per-process shim binaries are installed as system services, started automatically at boot (e.g., via an Alpine/OpenRC or custom init script).
-- The local LLM runtime (Ollama or a lighter alternative) and a pre-selected quantized base model (e.g., Llama 3.2 3B) are included directly in the image, with no first-boot download step required.
-- Pre-trained LoRA adapters for common process categories (from accumulated development-time data) are shipped as part of the base image, with the system continuing to fine-tune further from the user's own usage over time.
+All binaries, libraries, and models were moved from transient user directories (`/root/`) into canonical system directories:
 
-### 14.3 Candidate build tooling for the final image
+| Component | Development Location | System Appliance Location |
+|---|---|---|
+| Inference Server | `/root/llama.cpp/build/bin/llama-server` | `/usr/local/bin/llama-server` |
+| CLI Diagnostic Tool | `/root/llama.cpp/build/bin/llama-cli` | `/usr/local/bin/llama-cli` |
+| Shared Libraries | `/root/llama.cpp/build/bin/*.so*` | `/usr/local/lib/` (`libllama.so`, `libggml*.so`, `libmtmd.so`) |
+| GGUF Model | `/root/models/*.gguf` | `/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf` |
+| Agent Daemon & Logger | `/root/os-ai-agent/agent-daemon/` | `/usr/local/lib/ai-agent/agent_daemon.py`, `logger.py` |
+| OpenRC Services | `/root/os-ai-agent/agent-daemon/openrc/` | `/etc/init.d/llama-server`, `/etc/init.d/ai-agent` |
+| Telemetry & Dataset | `/var/ai-agent/` | `/var/ai-agent/training_data/dataset.jsonl` |
 
-- **Buildroot** or **Alpine's own `mkimage`/`alpine-make-vm-image` tooling** are the leading candidates for producing a bootable, minimal image with the above components pre-installed. This decision is deferred until Phases 3–5 are functionally complete, since the final packaging approach depends on exactly what needs to be included (kernel modules vs. built-in kernel features, model file size, etc.).
+**Dynamic Linker RPATH Hardening:**  
+Binaries built with CMake had embedded build-tree RPATH references. Using `patchelf`, RPATH on all binaries and shared libraries was permanently updated to `/usr/local/lib/`, resulting in **0 build-tree references** and clean system resolution verified via `ldd`.
+
+### 14.3 Bootloader & OpenRC Service Orchestration (Phase 6b)
+
+- **Syslinux Bootloader:** Configured in `/boot/extlinux.conf` with `DEFAULT ai-os` pointing directly to `/boot/vmlinuz-ai-agent` and `initramfs-ai-agent`, enabling non-interactive boot.
+- **OpenRC Runlevel:** Services registered in `default` runlevel:
+  - `llama-server`: Starts native musl inference server on `127.0.0.1:11434` with 4 threads. Health check poll loop verifies server readiness before declaring `[ ok ]`.
+  - `ai-agent`: Starts unified daemon, connects to Netlink family 31, and registers PID with kernel.
+  - `sshd`: Enables secure management access over forwarded port 2222 (`root` / `aPushkar@12784`).
+
+### 14.4 Syscall Latency & Prompt Optimization
+
+On software CPU emulation (QEMU TCG without hardware virtualization), cold inference with multi-sentence generation previously required ~27 seconds, exceeding the kernel's 15-second `wait_event_interruptible_timeout`.
+
+**Optimizations implemented in `agent_daemon.py`:**
+1. **Thread count:** Configured `LLAMA_THREADS=4` matching the 4 vCPU configuration.
+2. **Early stopping:** Added stop tokens `[".", "\n", "\n\n"]` to truncate generation immediately upon completion of the verdict.
+3. **Token budget:** Reduced `n_predict` to 8 tokens.
+4. **Prompt streamlining:** `prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"`
+
+**Result:** End-to-end kernel `syscall(548)` round-trip latency dropped from 27,715ms to **4,434ms** — a 6.2x speedup that reliably completes well within the kernel timeout.
+
+### 14.5 Automated Boot Verification Test Suite
+
+A dedicated verification harness `test_phase6_boot.sh` validates the appliance state:
+
+```
+==================================================
+    AI-Agent OS: Phase 6 Boot Validation Harness  
+==================================================
+[PASS] Running custom kernel: 6.6.142-ai-agent
+[PASS] llama-server and llama-cli installed in /usr/local/bin
+[PASS] All dynamic library dependencies resolved for llama-server
+[PASS] GGUF model present at /var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf (size: 100.6M)
+[PASS] agent_daemon.py installed and executable at /usr/local/lib/ai-agent/agent_daemon.py
+[PASS] llama-server registered in default runlevel
+[PASS] ai-agent registered in default runlevel
+[PASS] sshd registered in default runlevel
+[PASS] llama-server /health returned healthy status
+[PASS] Kernel confirmed daemon registration in dmesg
+[PASS] syscall(548) successfully routed to LLM and returned response in 4434.92 ms
+[PASS] All kernel edge-case validations passed (NULL pointers, invalid memory)
+[PASS] Dataset exists at /var/ai-agent/training_data/dataset.jsonl with 18 records
+
+==================================================
+           Phase 6 Boot Validation Summary        
+==================================================
+  Total Passed: 13
+  Total Failed: 0
+  Warnings:     0
+  RESULT: ALL PHASE 6 BOOT VALIDATIONS PASSED! [SUCCESS]
+==================================================
+```
+
+### 14.6 Image Packaging & Single-Command Launchers (Phase 6c/6d)
+
+The appliance image is compressed via `qemu-img convert -O qcow2 -c`, reducing the 15.5GB disk image to an optimized distributable artifact.
+
+**Single-Command Boot Launchers:**
+- **Windows (PowerShell):** `.\boot.ps1`
+- **Linux / macOS (Bash):** `./boot.sh`
+
+Both scripts launch QEMU with 4GB RAM, 4 vCPUs, console stdio redirection, and SSH port forwarding (`localhost:2222 -> guest:22`).
 
 ---
 
