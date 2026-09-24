@@ -18,6 +18,7 @@ Modern AI assistants integrate with applications via plugins, APIs, or protocols
 > **The integration point is the operating system itself, not the application.**
 
 Every process — legacy binaries, CLI tools, services, scripts, containers — must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
+
 - **Universal Observability:** Intercept process events and syscall activity without application knowledge.
 - **Synchronous Kernel-AI Syscall (`sys_agent_query` #548):** Any program can query the operating system's built-in reasoning engine natively.
 - **Self-Contained In-Guest Inference:** Powered by native musl `llama.cpp` and SmolLM2, operating entirely offline with zero host or cloud dependencies.
@@ -71,29 +72,34 @@ graph TD
 The system is packaged into a self-contained, bootable QCOW2 disk image: `ai-agent-os-v0.1.qcow2`.
 
 ### Requirements
+
 - [QEMU](https://www.qemu.org/) (`qemu-system-x86_64`) installed.
 - 4GB RAM available on host.
 
 ### One-Command Boot
 
 **Windows (PowerShell):**
+
 ```powershell
 .\boot.ps1
 ```
 
 **Linux / macOS (Bash):**
+
 ```bash
 chmod +x boot.sh
 ./boot.sh
 ```
 
 The system automatically initializes:
+
 1. Boots `Linux 6.6.142-ai-agent` directly via Syslinux.
 2. Starts native `llama-server` on `127.0.0.1:11434`.
 3. Starts `agent_daemon.py` and registers PID with the kernel.
 4. Starts `sshd` and forwards SSH to `localhost:2222`.
 
 ### Accessing the Guest
+
 - **SSH:** `ssh -p 2222 root@127.0.0.1` (Password: `aPushkar@12784`)
 - **Web / API:** `http://127.0.0.1:11434/health` inside the guest.
 
@@ -108,6 +114,7 @@ The system includes an automated test harness that exercises all layers of the O
 ```
 
 ### Verification Output
+
 ```
 ==================================================
     AI-Agent OS: Phase 6 Boot Validation Harness  
@@ -194,10 +201,25 @@ os-ai-agent/
 
 ---
 
+## 🤝 Contributing & Security Vulnerabilities
+
+Since this project introduces deep, kernel-level changes (such as custom system calls and Netlink IPC hooks), there is a potential for security vulnerabilities or stability issues that we might have missed during initial development.
+
+We highly encourage the open-source community to review the code, look out for potential exploits, memory leaks, or race conditions, and contribute patches.
+
+If you discover a security vulnerability:
+
+- Please open an issue in the repository with a detailed reproduction case.
+- Alternatively, you can email me directly to report sensitive security issues before they are publicly disclosed.
+
+All contributions, whether they are security fixes, performance improvements, or documentation updates, are welcome!
+
+---
+
 ## 📜 Roadmap & Milestone Summary
 
 | Phase | Milestone | Status |
-|---|---|---|
+| --- | --- | --- |
 | **Phase 1** | Userspace `ptrace` syscall monitor | ✅ Validated |
 | **Phase 2** | LLM syscall explanation & analysis pipeline | ✅ Validated |
 | **Phase 3** | LKM `kernel_clone` hook + Netlink IPC (Proto 31) | ✅ Validated |
