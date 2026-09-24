@@ -76,7 +76,7 @@ def query_ollama(prompt):
     """POST a completion request to llama-server; return the response text."""
     payload = {
         "prompt": prompt,
-        "n_predict": 200,
+        "n_predict": 30,
         "temperature": 0.2,
         "stop": ["\n\n"],
     }
@@ -111,14 +111,8 @@ def handle_syscall_query(sock, query_payload):
     sys.stdout.flush()
 
     prompt = (
-        f"You are the operating system's kernel AI agent. "
-        f"A process is querying you via sys_agent_query:\n"
-        f"- Process Comm: {comm}\n"
-        f"- Caller PID: {caller_pid}\n"
-        f"- Target PID: {target_pid}\n"
-        f"- Query: {query}\n\n"
-        f"Provide a concise, direct, 2-3 sentence system safety analysis "
-        f"and actionable recommendation."
+        f"OS security check: {comm}(PID={caller_pid}) query: '{query[:80]}'"
+        f" 1-sentence verdict:"
     )
 
     t_start = time.monotonic()
