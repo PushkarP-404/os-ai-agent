@@ -76,9 +76,9 @@ def query_ollama(prompt):
     """POST a completion request to llama-server; return the response text."""
     payload = {
         "prompt": prompt,
-        "n_predict": 30,
-        "temperature": 0.2,
-        "stop": ["\n\n"],
+        "n_predict": 8,
+        "temperature": 0.1,
+        "stop": [".", "\n", "\n\n"],
     }
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(
@@ -110,10 +110,7 @@ def handle_syscall_query(sock, query_payload):
     print(f"  Query: \"{query}\"")
     sys.stdout.flush()
 
-    prompt = (
-        f"OS security check: {comm}(PID={caller_pid}) query: '{query[:80]}'"
-        f" 1-sentence verdict:"
-    )
+    prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
 
     t_start = time.monotonic()
     ai_verdict = query_ollama(prompt)
