@@ -9,8 +9,9 @@
 
 description="llama.cpp native musl inference server (HTTP)"
 
-LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/root/llama.cpp/build/bin/llama-server}"
-LLAMA_MODEL="${LLAMA_MODEL:-/root/models/smollm2-135m-instruct-q4_k_m.gguf}"
+# Phase 6: paths normalized to system locations
+LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/usr/local/bin/llama-server}"
+LLAMA_MODEL="${LLAMA_MODEL:-/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf}"
 LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 LLAMA_PORT="${LLAMA_PORT:-11434}"
 LLAMA_THREADS="${LLAMA_THREADS:-2}"
@@ -25,7 +26,7 @@ depend() {
 start_pre() {
     if [ ! -x "$LLAMA_SERVER_BIN" ]; then
         eerror "llama-server binary not found at $LLAMA_SERVER_BIN"
-        eerror "Build with: make -C /root/llama.cpp/build -j4 llama-server"
+        eerror "Install with: cp /root/llama.cpp/build/bin/llama-server /usr/local/bin/"
         return 1
     fi
     if [ ! -f "$LLAMA_MODEL" ]; then
@@ -55,8 +56,17 @@ start() {
         --n-predict 200 \
         --log-disable
     local ret=$?
-    # Wait briefly for server to initialise and bind port
-    sleep 3
+    # Poll /health until server is ready (up to 120s for slow hardware)
+    if [ $ret -eq 0 ]; then
+        local wait=0
+        while [ $wait -lt 120 ]; do
+            if curl -sf "http://$LLAMA_HOST:$LLAMA_PORT/health" 2>/dev/null | grep -q status; then
+                einfo "llama-server ready after ${wait}s"
+                break
+            fi
+            sleep 3; wait=$((wait+3))
+        done
+    fi
     eend $ret
 }
 

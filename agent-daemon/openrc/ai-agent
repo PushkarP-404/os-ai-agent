@@ -5,13 +5,13 @@
 
 description="AI-Agent OS kernel-userspace agent daemon"
 
-AGENT_SCRIPT="${AGENT_SCRIPT:-/root/os-ai-agent/agent-daemon/agent_daemon.py}"
+# Phase 6: paths normalized to system locations (/usr/local)
+AGENT_SCRIPT="${AGENT_SCRIPT:-/usr/local/lib/ai-agent/agent_daemon.py}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 AGENT_LOG="/var/log/ai-agent.log"
 AGENT_PIDFILE="/run/ai-agent.pid"
 
-# LLM backend — native musl llama-server (Phase 5).
-# agent_daemon.py reads LLAMA_URL; OLLAMA_URL is set for logger.py compatibility.
+# LLM backend — native musl llama-server (Phase 5/6).
 export LLAMA_URL="${LLAMA_URL:-http://127.0.0.1:11434/completion}"
 export AI_AGENT_LOG_DIR="${AI_AGENT_LOG_DIR:-/var/ai-agent}"
 
