@@ -1,6 +1,6 @@
 # AI-Agent OS
 
-> An operating system architecture where an AI agent is integrated directly into the Linux kernel and process lifecycle — allowing any process to be observed, understood, and directed without app-level APIs, plugins, or MCP.
+> An operating system architecture where an AI agent is integrated directly into the Linux kernel and process lifecycle, allowing any process to be observed, understood, and directed without app-level APIs, plugins, or MCP.
 
 [![Status](https://img.shields.io/badge/Status-Phases%201--6%20Complete%20%26%20Validated-brightgreen.svg)]()
 [![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent-blue.svg)]()
@@ -17,7 +17,7 @@ Modern AI assistants integrate with applications via plugins, APIs, or protocols
 **AI-Agent OS flips this model:**
 > **The integration point is the operating system itself, not the application.**
 
-Every process — legacy binaries, CLI tools, services, scripts, containers — must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
+Every process : legacy binaries, CLI tools, services, scripts, containers — must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
 
 - **Universal Observability:** Intercept process events and syscall activity without application knowledge.
 - **Synchronous Kernel-AI Syscall (`sys_agent_query` #548):** Any program can query the operating system's built-in reasoning engine natively.
@@ -100,7 +100,7 @@ The system automatically initializes:
 
 ### Accessing the Guest
 
-- **SSH:** `ssh -p 2222 root@127.0.0.1` (Password: `aPushkar@12784`)
+- **SSH:** `ssh -p 2222 root@127.0.0.1`
 - **Web / API:** `http://127.0.0.1:11434/health` inside the guest.
 
 ---
