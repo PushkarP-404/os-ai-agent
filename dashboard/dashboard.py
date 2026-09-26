@@ -8,6 +8,8 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
 CAPABILITIES_FILE = "/var/ai-agent/capabilities.json"
+MODELS_DIR = "/var/lib/ai-agent/models"
+LLAMA_CONF_FILE = "/etc/conf.d/llama-server"
 
 class SentinelDashboard(Gtk.Window):
     def __init__(self):
@@ -36,6 +38,7 @@ class SentinelDashboard(Gtk.Window):
         
         # Pages
         self.setup_status_page()
+        self.setup_llm_page()
         self.setup_capabilities_page()
         self.setup_remote_page()
         
@@ -86,6 +89,51 @@ class SentinelDashboard(Gtk.Window):
         except Exception as e:
             self.status_lbl.set_text(f"Error checking status: {e}")
         return True # keep timeout running
+
+    def setup_llm_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
+        box.set_margin_start(20)
+        box.set_margin_top(20)
+        self.stack.add_titled(box, "llm", "Local LLM Engine")
+        
+        title = Gtk.Label(label="<big><b>LLM Engine Settings</b></big>", use_markup=True)
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+        
+        lbl = Gtk.Label(label="Select the local .gguf model to run in the kernel:")
+        lbl.set_halign(Gtk.Align.START)
+        box.pack_start(lbl, False, False, 0)
+        
+        self.model_combo = Gtk.ComboBoxText()
+        box.pack_start(self.model_combo, False, False, 0)
+        
+        self.load_models()
+        
+        btn_apply = Gtk.Button(label="Apply & Restart Engine")
+        btn_apply.connect("clicked", self.on_apply_model)
+        box.pack_start(btn_apply, False, False, 0)
+        
+    def load_models(self):
+        self.model_combo.remove_all()
+        if os.path.exists(MODELS_DIR):
+            for f in os.listdir(MODELS_DIR):
+                if f.endswith(".gguf"):
+                    self.model_combo.append_text(f)
+        else:
+            self.model_combo.append_text("smollm2-135m-instruct-q4_k_m.gguf")
+        self.model_combo.set_active(0)
+
+    def on_apply_model(self, widget):
+        model = self.model_combo.get_active_text()
+        if not model: return
+        
+        full_path = os.path.join(MODELS_DIR, model)
+        conf_data = f'LLAMA_MODEL="{full_path}"\n'
+        
+        # Write to conf file using sudo
+        cmd = f"echo '{conf_data}' | sudo tee {LLAMA_CONF_FILE}"
+        subprocess.run(cmd, shell=True)
+        subprocess.run(["sudo", "rc-service", "llama-server", "restart"], capture_output=True)
 
     def setup_capabilities_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
