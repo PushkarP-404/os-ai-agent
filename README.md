@@ -2,7 +2,7 @@
 
 > An operating system architecture where an AI agent is integrated directly into the Linux kernel and process lifecycle, allowing any process to be observed, understood, and directed without app-level APIs, plugins, or MCP.
 
-[![Status](https://img.shields.io/badge/Status-Phases%201--6%20Complete%20%26%20Validated-brightgreen.svg)]()
+[![Status](https://img.shields.io/badge/Status-Phases%201--9%20Complete%20%26%20Validated-brightgreen.svg)]()
 [![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent-blue.svg)]()
 [![Distro](https://img.shields.io/badge/Base%20Distro-Alpine%203.20%20(musl)-blue.svg)]()
 [![Inference](https://img.shields.io/badge/Inference-llama.cpp%20(native%20musl)-orange.svg)]()
@@ -231,6 +231,7 @@ All contributions, whether they are security fixes, performance improvements, or
 | **Phase 6** | Self-contained compressed OS appliance image (`ai-agent-os-v0.1.qcow2`) | ✅ Validated |
 | **Phase 7** | OS Agent Fine-Tuning (LoRA) — The OS continuously learns from its own `.jsonl` logs | ✅ Validated |
 | **Phase 8** | Intent-Driven Execution (Orchestrator OS) — Automatic task delegation via sub-processes | ✅ Validated |
+| **Phase 9** | Universal Visual Orchestration — Computer Use and GUI Automation via Chrome DevTools Protocol | ✅ Validated |
 
 ---
 
