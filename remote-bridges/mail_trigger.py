@@ -14,11 +14,17 @@ import os
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
 EMAIL_ACCOUNT = os.environ.get("EMAIL_ACCOUNT", "your_agent_email@gmail.com")
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "your_app_password")
+AUTHORIZED_SENDER = os.environ.get("AUTHORIZED_SENDER", "owner@gmail.com")  # The 1 parent email ID
 SUBJECT_TRIGGER = "[AGENT-CMD]"
 POLL_INTERVAL_SEC = 60
 
 def process_email(msg):
-    """Extracts body and sends to agent-cli."""
+    """Extracts body and sends to agent-cli, verifying the sender first."""
+    sender = msg.get("From", "")
+    if AUTHORIZED_SENDER.lower() not in sender.lower():
+        print(f"[!] Rejected command from unauthorized sender: {sender}")
+        return
+        
     body = ""
     if msg.is_multipart():
         for part in msg.walk():
