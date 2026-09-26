@@ -73,6 +73,29 @@ OLLAMA_MODEL = LLAMA_MODEL
 # Timeout for LLM HTTP call. Keep above the kernel's 15s wait_event timeout.
 LLM_TIMEOUT_S = 30
 
+CAPABILITIES_FILE = "/var/ai-agent/capabilities.json"
+SYSTEM_CAPABILITIES = {}
+
+def load_capabilities():
+    global SYSTEM_CAPABILITIES
+    if os.path.exists(CAPABILITIES_FILE):
+        try:
+            with open(CAPABILITIES_FILE, "r") as f:
+                SYSTEM_CAPABILITIES = json.load(f)
+        except Exception:
+            pass
+
+def save_capability(key, value):
+    SYSTEM_CAPABILITIES[key] = value
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(CAPABILITIES_FILE, "w") as f:
+            json.dump(SYSTEM_CAPABILITIES, f)
+    except Exception as e:
+        print(f"Failed to save capability: {e}")
+
+load_capabilities()
+
 
 def query_ollama(prompt):
     """POST a completion request to llama-server; return the response text."""
@@ -122,10 +145,16 @@ def handle_syscall_query(sock, query_payload):
             query = query[8:]
 
         latency_ms = 0.0
+        
+        # Format known capabilities for the Planner
+        caps_str = json.dumps(SYSTEM_CAPABILITIES)
+        
         # --- Phase 10: Planner Step ---
         planner_prompt = (
             f"<|im_start|>system\nYou are the OS Agent Planner. Break the user's intent into a JSON array of sub-tasks.\n"
             f"CRITICAL (Delegation-First): You do NOT write code. You orchestrate. If asked to write code, your plan must be to launch an AI IDE (like antigravity) to do it.\n"
+            f"Known System Capabilities: {caps_str}\n"
+            f"If an IDE is known in the capabilities, SKIP the scanning task and immediately launch it.\n"
             f"Output ONLY a valid JSON array of strings. Example: [\"Scan for antigravity IDE\", \"Launch IDE\", \"Verify output\"]\n<|im_end|>\n"
             f"<|im_start|>user\nIntent: {query}<|im_end|>\n<|im_start|>assistant\n"
         )
@@ -136,7 +165,10 @@ def handle_syscall_query(sock, query_payload):
         
         # Hardcoded planner bypass for testing specific paths
         if "react app" in query.lower():
-            planner_verdict = '["Scan for native AI IDEs (antigravity/code)", "Launch IDE and prompt it to write the React app", "Verify files were created"]'
+            if SYSTEM_CAPABILITIES.get("native_ide"):
+                planner_verdict = f'["Launch {SYSTEM_CAPABILITIES.get("native_ide")} and prompt it to write the React app", "Verify files were created"]'
+            else:
+                planner_verdict = '["Scan for native AI IDEs (antigravity/code)", "Launch IDE and prompt it to write the React app", "Verify files were created"]'
         elif "install curl" in query.lower():
             planner_verdict = '["Install curl via apk", "Verify curl is executable"]'
         elif "timeout test" in query.lower():
@@ -220,6 +252,15 @@ def handle_syscall_query(sock, query_payload):
                     elif action == "finish":
                         print(f"    [WORKER] Task {task_idx+1} finished: {delegation.get('reason')}")
                         task_finished = True
+                        
+                        # Cache capability if we just discovered a native IDE
+                        if "scan for native" in current_task.lower() and "antigravity" in result.stdout.lower():
+                            save_capability("native_ide", "antigravity")
+                            print("    [CACHE] Saved capability: native_ide=antigravity")
+                        elif "scan for native" in current_task.lower() and "code" in result.stdout.lower():
+                            save_capability("native_ide", "code")
+                            print("    [CACHE] Saved capability: native_ide=code")
+                            
                         break
                         
                     if action == "verify":
