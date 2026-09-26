@@ -1502,7 +1502,9 @@ Pivot from passive "Observe Mode" (where the agent simply analyzes processes) in
      "args": ["add", "curl"]
    }
    ```
-3. **Execution Engine**: The daemon parses this JSON, executes it as a background subprocess, captures `STDOUT` and `STDERR`, and feeds the execution result back up through the kernel to the user's CLI.
+3. **Execution Engine & ReAct Loop**: The daemon parses this JSON and executes it as a background subprocess. If the command fails (`exit code != 0`), the daemon captures `STDERR` and feeds it *back* into the LLM as a new prompt to self-correct. It implements a hybrid safety model:
+   - **Dynamic Abort**: The LLM can choose to stop the loop by outputting `{"action": "abort", "reason": "..."}` if the error is unfixable.
+   - **Hard Limit**: A strict maximum of 2 retries is enforced to prevent the kernel's `sys_agent_query` 15-second wait queue from timing out.
 
 ### 16.3 Validation Results
 - Created `agent-cli.c` and updated `agent_daemon.py` to support subprocess delegation.
