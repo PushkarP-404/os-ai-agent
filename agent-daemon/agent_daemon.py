@@ -145,7 +145,6 @@ def handle_syscall_query(sock, query_payload):
             query = query[8:]
 
         latency_ms = 0.0
-        
         # Format known capabilities for the Planner
         caps_str = json.dumps(SYSTEM_CAPABILITIES)
         
@@ -154,7 +153,7 @@ def handle_syscall_query(sock, query_payload):
             f"<|im_start|>system\nYou are the OS Agent Planner. Break the user's intent into a JSON array of sub-tasks.\n"
             f"CRITICAL (Delegation-First): You do NOT write code. You orchestrate. If asked to write code, your plan must be to launch an AI IDE (like antigravity) to do it.\n"
             f"Known System Capabilities: {caps_str}\n"
-            f"If an IDE is known in the capabilities, SKIP the scanning task and immediately launch it.\n"
+            f"If 'primary_ide' is defined in capabilities, ALWAYS delegate to it first. Do not scan for other IDEs unless the primary one fails to launch.\n"
             f"Output ONLY a valid JSON array of strings. Example: [\"Scan for antigravity IDE\", \"Launch IDE\", \"Verify output\"]\n<|im_end|>\n"
             f"<|im_start|>user\nIntent: {query}<|im_end|>\n<|im_start|>assistant\n"
         )
@@ -165,7 +164,9 @@ def handle_syscall_query(sock, query_payload):
         
         # Hardcoded planner bypass for testing specific paths
         if "react app" in query.lower():
-            if SYSTEM_CAPABILITIES.get("native_ide"):
+            if SYSTEM_CAPABILITIES.get("primary_ide"):
+                planner_verdict = f'["Launch {SYSTEM_CAPABILITIES.get("primary_ide")} and prompt it to write the React app", "Verify files were created"]'
+            elif SYSTEM_CAPABILITIES.get("native_ide"):
                 planner_verdict = f'["Launch {SYSTEM_CAPABILITIES.get("native_ide")} and prompt it to write the React app", "Verify files were created"]'
             else:
                 planner_verdict = '["Scan for native AI IDEs (antigravity/code)", "Launch IDE and prompt it to write the React app", "Verify files were created"]'
