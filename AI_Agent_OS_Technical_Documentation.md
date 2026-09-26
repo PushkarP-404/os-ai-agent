@@ -2,7 +2,7 @@
 
 **Project codename:** AI-Agent OS (working title)
 **Document version:** 0.4 (living document)
-**Status:** Phases 1–6 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1)
+**Status:** Phases 1–7 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1) with LoRA Fine-Tuning
 **Base distro:** Alpine Linux 3.20.10 (musl libc, BusyBox userland)
 **Last updated:** 2026-09-24
 
@@ -383,7 +383,9 @@ During networking experimentation, the VM's root password was forgotten, and no 
 | **Phase 2** | Wire syscall data into an LLM for analysis/explanation | ✅ Complete & Validated — ptrace output piped into `syscall_analyzer.py`; querying local Ollama (`mistral:latest`, 7.2B Q4_K_M) via `http://10.0.2.2:11434`; 120s timeout; auto model detection |
 | **Phase 3** | Kernel module hooking `kernel_clone` to stream process-creation events to userspace agent daemon | ✅ Complete & Validated — LKM (`ai_process_hook.ko`) hooks `kernel_clone` via `kretprobe`; broadcasts `{parent_pid, child_pid, comm}` over Netlink protocol 31 to `agent_daemon.py`; 5 events captured in test |
 | **Phase 4** | Custom syscall `sys_agent_query` (#548) baked into the kernel — any process can query its AI agent directly, synchronously, with a 15-second timeout and kernel fallback | ✅ Complete & Validated — custom kernel `6.6.142-ai-agent` booted in Alpine VM; syscall 548 live; 5-thread concurrent stress test passing; Netlink live + fallback modes verified |
+| **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | ✅ Complete & Validated — Removed host Ollama dependency; local LLM inference running within QEMU. |
 | **Phase 6** | Bootable OS appliance image: custom kernel + llama-server + agent daemon + SmolLM2-135M model baked into compressed QCOW2 image; zero manual setup; one-command boot | ✅ Complete & Validated — hardened /usr/local system paths; OpenRC runlevels; RPATH fixed; syscall roundtrip: 4.4s; `test_phase6_boot.sh`: 13/13 PASS; compressed image `ai-agent-os-v0.1.qcow2` |
+| **Phase 7** | OS Agent Fine-Tuning (LoRA) | ✅ Complete & Validated — Automated host-to-guest fine-tuning; hot-reloaded `.gguf` adapter via `llama-server`. The OS learns mechanically from its own `dataset.jsonl` logs. |
 
 ---
 
@@ -1433,6 +1435,52 @@ On **real x86-64 hardware (AVX2)**:
 | `/etc/init.d/ai-agent` installed | ✅ PASS |
 | Cleanup | ✅ PASS |
 | **Total** | **17 PASS / 0 FAIL / 5 WARN** |
+
+---
+
+## 14. Phase 6: OS Image Packaging & Distribution
+
+**Status:** ✅ Validated (2026-09-24) — Bootable standalone OS appliance image (`ai-agent-os-v0.1.qcow2`)
+
+### 14.1 Objective
+Transform the fragile, manually-configured QEMU development environment into a standalone, hardened, bootable virtual appliance. A user should be able to download a single file, boot it in QEMU, and instantly have a working Linux kernel with a native AI agent integrated via syscall 548.
+
+### 14.2 Implementation
+- Hardened system paths (`/var/lib/ai-agent/models/`, `/etc/init.d/`)
+- Packaged the custom `6.6.142-ai-agent` kernel and compiled `llama.cpp` + `SmolLM2-135M-Instruct`
+- Configured OpenRC to automatically start the services in the correct sequence.
+- Exported and shrunk the disk image to `ai-agent-os-v0.1.qcow2`.
+
+---
+
+## 15. Phase 7: OS Agent Fine-Tuning (LoRA)
+
+**Status:** ✅ Validated (2026-09-26) — Automated host-to-guest fine-tuning and hot-reloading.
+
+### 15.1 Objective
+Enable the operating system to mechanically learn from its own observations and improve its decision-making over time without requiring large parameter models, full retraining, or internet connectivity.
+
+### 15.2 How exactly is it learning from its own observations?
+
+The learning cycle relies on a continuous feedback loop between the kernel, the agent daemon, and a host-side training pipeline utilizing Low-Rank Adaptation (LoRA):
+
+1. **Continuous Data Collection (The Observation):** 
+   Every time a process interacts with the kernel (e.g. making a syscall) and the AI agent daemon intercepts it, the daemon evaluates the process state. It records the exact prompt it was given (the syscall details, PID, etc.) and the outcome/response it generated. This is continuously appended to `/var/ai-agent/training_data/dataset.jsonl`.
+   
+2. **LoRA Fine-Tuning (The Learning):**
+   Instead of retraining the entire model, we use LoRA to freeze the pre-trained weights of the base model. A tiny set of "adapter" weights (Low-Rank matrices) is injected into the attention layers. During training, the model learns to map the specific structured syscall prompts it sees in `dataset.jsonl` to the correct analytical responses.
+   Because the OS generates its own localized JSONL dataset simply by running, the adapter becomes heavily specialized in recognizing the exact process behaviors that occur on *this specific machine*.
+
+3. **GGUF Conversion (The Packaging):**
+   Once the adapter is trained (e.g., for 50 steps), it is exported as PyTorch tensors. We run a script (`export_gguf.py`) that uses `llama.cpp` conversion tools to compress these new weights into a highly optimized 1.8MB `.gguf` file.
+
+4. **Hot-Reloading (The Application):**
+   The `.gguf` adapter is pushed back into the VM. The OS's `llama-server` is restarted with the `--lora os_agent_lora.gguf` flag. When the kernel routes the next syscall to the LLM, the model uses its new adapter weights, instantly exhibiting the behavior it just learned from its historical logs.
+
+### 15.3 Validation Results
+- **Training Setup:** `train_lora.py` successfully trained an adapter over 50 steps using the extracted `dataset.jsonl`.
+- **Conversion:** `convert_lora_to_gguf.py` successfully packed the adapter into a 1.8MB file.
+- **In-Guest Testing:** The adapter was loaded into the Alpine VM's `llama-server`. Syscall #548 successfully routed through the kernel, to the daemon, to the adapted LLM, and successfully responded in ~11.8s (under emulation).
 
 ---
 
