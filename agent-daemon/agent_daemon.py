@@ -64,6 +64,7 @@ RESP_SIZE   = struct.calcsize(RESP_FORMAT)
 # Override: LLAMA_URL=http://127.0.0.1:11434/completion
 LLAMA_URL   = os.environ.get("LLAMA_URL",   "http://127.0.0.1:11434/completion")
 LLAMA_MODEL = "smollm2-135m-instruct-q4_k_m"   # informational only
+AGENT_MODE  = os.environ.get("AGENT_MODE", "ASSIST") # "ASSIST" or "SUGGEST"
 
 # For logger.py compatibility we keep OLLAMA_MODEL pointing at LLAMA_MODEL
 OLLAMA_URL   = LLAMA_URL
@@ -112,23 +113,34 @@ def handle_syscall_query(sock, query_payload):
     sys.stdout.flush()
 
     if comm == "agent-cli":
-        max_retries = 2
-        retry_count = 0
+        mode = AGENT_MODE
+        if query.startswith("/suggest "):
+            mode = "SUGGEST"
+            query = query[9:]
+        elif query.startswith("/assist "):
+            mode = "ASSIST"
+            query = query[8:]
+
+        max_steps = 10
+        step_count = 0
         prompt_context = f"User Intent: {query}"
         final_response = ""
         latency_ms = 0.0
 
-        while retry_count <= max_retries:
+        while step_count < max_steps:
             sys_prompt = (
-                f"<|im_start|>system\nYou are an OS orchestrator. You dispatch tasks to shell commands.\n"
-                f"Output ONLY JSON: {{\"target_software\": \"sh\", \"action\": \"execute\", \"args\": [\"-c\", \"<command>\"]}}\n"
-                f"If the error is unfixable or it's a user error, output: {{\"action\": \"abort\", \"reason\": \"<reason>\"}}<|im_end|>\n"
+                f"<|im_start|>system\nYou are an OS orchestrator. You accomplish the user's intent by taking actions in a loop.\n"
+                f"Output ONLY JSON. Available actions:\n"
+                f"1. Shell: {{\"target_software\": \"sh\", \"action\": \"execute\", \"args\": [\"-c\", \"<command>\"]}}\n"
+                f"2. GUI: {{\"target_software\": \"cdp_controller.py\", \"action\": \"execute\", \"args\": [\"dump\" | \"click --id <id>\" | \"type --id <id> --text <text>\" | \"goto --url <url>\"]}}\n"
+                f"3. Finish: {{\"action\": \"finish\", \"reason\": \"<summary of what was achieved>\"}}\n"
+                f"4. Abort: {{\"action\": \"abort\", \"reason\": \"<reason for unrecoverable error>\"}}<|im_end|>\n"
                 f"<|im_start|>user\n{prompt_context}<|im_end|>\n<|im_start|>assistant\n"
             )
             
             t_start = time.monotonic()
             # Hardcoded bypasses to test orchestration logic without slow LLM emulation
-            if "install curl" in query.lower() and retry_count == 0:
+            if "install curl" in query.lower() and step_count == 0:
                 ai_verdict = '{"target_software": "apk", "action": "execute", "args": ["add", "curl"]}'
             elif "missing tool" in query.lower():
                 ai_verdict = '{"target_software": "nonexistent_tool", "action": "execute", "args": []}'
@@ -136,15 +148,15 @@ def handle_syscall_query(sock, query_payload):
                 ai_verdict = '{"target_software": "sleep", "action": "execute", "args": ["15"]}'
             elif "large output" in query.lower():
                 ai_verdict = '{"target_software": "dmesg", "action": "execute", "args": []}'
-            elif "error test" in query.lower() and retry_count == 0:
+            elif "error test" in query.lower() and step_count == 0:
                 ai_verdict = '{"target_software": "ls", "action": "execute", "args": ["/dir_does_not_exist"]}'
-            elif "error test" in query.lower() and retry_count == 1:
+            elif "error test" in query.lower() and step_count == 1:
                 ai_verdict = '{"action": "abort", "reason": "Directory /dir_does_not_exist does not exist, aborting."}'
             else:
                 ai_verdict = query_ollama(sys_prompt)
             latency_ms += (time.monotonic() - t_start) * 1000.0
 
-            print(f"  [AI] (Try {retry_count+1}): {ai_verdict}")
+            print(f"  [AI] (Step {step_count+1}): {ai_verdict}")
             sys.stdout.flush()
 
             try:
@@ -158,6 +170,10 @@ def handle_syscall_query(sock, query_payload):
                     reason = delegation.get("reason", "Unknown reason")
                     final_response = f"[ABORTED by AI] {reason}"
                     break
+                elif action == "finish":
+                    reason = delegation.get("reason", "Task finished")
+                    final_response = f"[COMPLETED by AI] {reason}"
+                    break
                     
                 target = delegation.get("target_software")
                 args = delegation.get("args", [])
@@ -165,27 +181,32 @@ def handle_syscall_query(sock, query_payload):
                 sys.stdout.flush()
                 
                 cmd = [target] + args
+                if target == "cdp_controller.py":
+                    cmd = ["python3", "/home/aiuser/cdp_controller.py"] + " ".join(args).split(" ")
+
+                if mode == "SUGGEST":
+                    print(f"  [SUGGEST MODE] Aborting execution and returning suggestion.")
+                    final_response = f"[SUGGESTION] The AI agent suggests taking the following action:\n{json.dumps(delegation, indent=2)}\nCommand: {' '.join(cmd)}"
+                    break
+
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 
                 if result.returncode == 0:
-                    final_response = f"[SUCCESS]\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-                    break
+                    print(f"  [STEP {step_count+1} SUCCESS] feeding back to LLM...")
+                    prompt_context += f"\n\nAction executed successfully:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nPlease output the NEXT JSON action, or finish."
                 else:
+                    print(f"  [STEP {step_count+1} FAILED] feeding back to LLM...")
                     err_msg = f"[FAILED] exit {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
-                    if retry_count < max_retries:
-                        print(f"  [RETRY] Command failed, feeding back to LLM...")
-                        prompt_context += f"\n\nPrevious attempt failed:\n{err_msg}\nPlease analyze and output fixed JSON, or abort."
-                    else:
-                        final_response = err_msg
-                    retry_count += 1
+                    prompt_context += f"\n\nAction failed:\n{err_msg}\nPlease analyze and output fixed JSON, or abort."
+                step_count += 1
             except Exception as e:
                 print(f"  [EXEC ERROR] {e}")
                 err_msg = f"Failed to execute: {e}\nRaw JSON: {ai_verdict}"
-                if retry_count < max_retries:
-                    prompt_context += f"\n\nExecution error:\n{err_msg}\nPlease output valid JSON."
-                else:
-                    final_response = err_msg
-                retry_count += 1
+                prompt_context += f"\n\nExecution error:\n{err_msg}\nPlease output valid JSON."
+                step_count += 1
+                
+        if not final_response:
+            final_response = f"[ABORTED] Reached maximum steps ({max_steps})."
                 
     else:
         prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
