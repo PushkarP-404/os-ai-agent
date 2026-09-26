@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Sentinel Control Center
+Comment=Manage the AI-Agent OS Kernel Daemon
+Exec=python3 /usr/local/lib/ai-agent/dashboard.py
+Icon=preferences-system
+Terminal=false
+Categories=System;Settings;
