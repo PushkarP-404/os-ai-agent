@@ -226,6 +226,7 @@ All contributions, whether they are security fixes, performance improvements, or
 | **Phase 4** | Custom kernel `6.6.142-ai-agent` + `sys_agent_query` (#548) | ✅ Validated |
 | **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | ✅ Validated |
 | **Phase 6** | Self-contained compressed OS appliance image (`ai-agent-os-v0.1.qcow2`) | ✅ Validated |
+| **Phase 7** | OS Agent Fine-Tuning (LoRA) — The OS continuously learns from its own `.jsonl` logs | ✅ Validated |
 
 ---
 
