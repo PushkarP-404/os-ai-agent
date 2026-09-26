@@ -26,6 +26,26 @@ Every process : legacy binaries, CLI tools, services, scripts, containers — mu
 
 ---
 
+## 💻 Hardware Requirements
+
+Because the AI Agent OS runs a local LLM inference engine (`llama-server`) directly inside the guest VM alongside a graphical desktop, hardware requirements scale based on the intelligence level you desire.
+
+### Minimum Requirements (Basic Harness)
+*Runs the default `SmolLM2-135M-Instruct` agent, Alpine Linux, and XFCE4.*
+* **CPU:** 2+ Cores (x86_64 or ARM64 with hardware virtualization VT-x/AMD-V enabled)
+* **RAM:** 2 GB 
+* **Storage:** 5 GB available space
+* **GPU:** None required (LLM runs on CPU, GUI uses software rendering)
+
+### Recommended Requirements (Sentinel Harness & Fine-Tuning)
+*Capable of running larger models (e.g. Llama-3.2-1B/3B) for the Planner/Worker architecture, complex browser automation, and in-guest LoRA fine-tuning.*
+* **CPU:** 4-8 Cores (Modern processor for fast `llama.cpp` CPU inference)
+* **RAM:** 8 GB+ 
+* **Storage:** 20 GB SSD (To store `.gguf` weights, LoRA adapters, and JSONL datasets)
+* **GPU:** Optional but highly recommended (GPU passthrough via VFIO, or host-side serving, drastically reduces latency for multi-step ReAct loops)
+
+---
+
 ## 🏗️ System Architecture
 
 ```mermaid
