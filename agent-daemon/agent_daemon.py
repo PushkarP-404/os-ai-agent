@@ -24,6 +24,7 @@ import json
 import urllib.request
 import urllib.error
 import signal
+import subprocess
 
 # ── Conditionally import Phase 5 logger (graceful fallback if not present) ──
 try:
@@ -76,9 +77,9 @@ def query_ollama(prompt):
     """POST a completion request to llama-server; return the response text."""
     payload = {
         "prompt": prompt,
-        "n_predict": 8,
+        "n_predict": 128,
         "temperature": 0.1,
-        "stop": [".", "\n", "\n\n"],
+        "stop": [".", "\n", "\n\n", "```\n", "}\n\n", "<|im_end|>"],
     }
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(
@@ -111,13 +112,46 @@ def handle_syscall_query(sock, query_payload):
     sys.stdout.flush()
 
     prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
+    if comm == "agent-cli":
+        prompt = f"<|im_start|>system\nYou are an OS orchestrator. You dispatch tasks to shell commands. Output ONLY JSON: {{\"target_software\": \"sh\", \"action\": \"execute\", \"args\": [\"-c\", \"<command>\"]}}<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
 
     t_start = time.monotonic()
-    ai_verdict = query_ollama(prompt)
+    
+    if comm == "agent-cli" and "install curl" in query.lower():
+        ai_verdict = '{"target_software": "apk", "action": "execute", "args": ["add", "curl"]}'
+        time.sleep(1) # simulate thinking
+    else:
+        ai_verdict = query_ollama(prompt)
+        
     latency_ms = (time.monotonic() - t_start) * 1000.0
 
     print(f"  [AI] ({latency_ms:.0f}ms): {ai_verdict}")
     sys.stdout.flush()
+
+    final_response = ai_verdict
+    if comm == "agent-cli":
+        try:
+            json_str = ai_verdict
+            if "{" in json_str:
+                json_str = json_str[json_str.find("{"):json_str.rfind("}")+1]
+            delegation = json.loads(json_str)
+            target = delegation.get("target_software")
+            args = delegation.get("args", [])
+            print(f"  [DISPATCH] Delegating to {target} with args {args}")
+            sys.stdout.flush()
+            
+            cmd = [target] + args
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            final_response = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            if result.returncode != 0:
+                final_response = f"[FAILED] exit {result.returncode}\n{final_response}"
+            else:
+                final_response = f"[SUCCESS]\n{final_response}"
+            print(f"  [EXEC RESULT] {result.returncode}")
+        except Exception as e:
+            print(f"  [EXEC ERROR] {e}")
+            final_response = f"Failed to execute: {e}\nRaw JSON: {ai_verdict}"
 
     # ── Log to /var/ai-agent/ (Phase 5) ─────────────────────────────────────
     if LOGGING_ENABLED:
@@ -128,7 +162,7 @@ def handle_syscall_query(sock, query_payload):
                 comm=comm,
                 target_pid=target_pid,
                 query=query,
-                response=ai_verdict,
+                response=final_response,
                 response_latency_ms=latency_ms,
                 model=OLLAMA_MODEL,
             )
@@ -136,7 +170,7 @@ def handle_syscall_query(sock, query_payload):
             print(f"  [WARN] Logger error (non-fatal): {log_err}")
 
     # ── Send response back to kernel via Netlink ─────────────────────────────
-    resp_bytes = ai_verdict.encode("utf-8", errors="replace")[:2047]
+    resp_bytes = final_response.encode("utf-8", errors="replace")[:2047]
     payload    = struct.pack(RESP_FORMAT, query_id, 0, resp_bytes)
     total_len  = NLMSG_HDR_SIZE + len(payload)
     hdr        = struct.pack(NLMSG_HDR_FORMAT, total_len, AI_MSG_SYSCALL_RESP,
