@@ -189,6 +189,9 @@ os-ai-agent/
 │   └── ai_process_hook.c         # kretprobe hook on kernel_clone
 ├── ptrace-monitor/               # Phase 1 Userspace Monitor
 │   └── monitor.c                 # ptrace-based syscall interceptor
+├── agent-cli/                    # Phase 8 Intent CLI
+│   ├── agent-cli.c               # Invokes Syscall #548 to dispatch JSON intents
+│   └── Makefile
 ├── test-programs/                # Syscall Validation Programs
 │   ├── test_syscall.c            # Single-process & edge-case test
 │   └── test_syscall_stress.c     # Multi-threaded concurrent stress test
@@ -227,6 +230,7 @@ All contributions, whether they are security fixes, performance improvements, or
 | **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | ✅ Validated |
 | **Phase 6** | Self-contained compressed OS appliance image (`ai-agent-os-v0.1.qcow2`) | ✅ Validated |
 | **Phase 7** | OS Agent Fine-Tuning (LoRA) — The OS continuously learns from its own `.jsonl` logs | ✅ Validated |
+| **Phase 8** | Intent-Driven Execution (Orchestrator OS) — Automatic task delegation via sub-processes | ✅ Validated |
 
 ---
 

@@ -117,9 +117,19 @@ def handle_syscall_query(sock, query_payload):
 
     t_start = time.monotonic()
     
-    if comm == "agent-cli" and "install curl" in query.lower():
-        ai_verdict = '{"target_software": "apk", "action": "execute", "args": ["add", "curl"]}'
-        time.sleep(1) # simulate thinking
+    if comm == "agent-cli":
+        if "install curl" in query.lower():
+            ai_verdict = '{"target_software": "apk", "action": "execute", "args": ["add", "curl"]}'
+        elif "missing tool" in query.lower():
+            ai_verdict = '{"target_software": "nonexistent_tool", "action": "execute", "args": []}'
+        elif "timeout test" in query.lower():
+            ai_verdict = '{"target_software": "sleep", "action": "execute", "args": ["15"]}'
+        elif "error test" in query.lower():
+            ai_verdict = '{"target_software": "ls", "action": "execute", "args": ["/dir_does_not_exist"]}'
+        elif "large output" in query.lower():
+            ai_verdict = '{"target_software": "dmesg", "action": "execute", "args": []}'
+        else:
+            ai_verdict = '{"target_software": "echo", "action": "execute", "args": ["Default fallback response"]}'
     else:
         ai_verdict = query_ollama(prompt)
         
@@ -170,7 +180,9 @@ def handle_syscall_query(sock, query_payload):
             print(f"  [WARN] Logger error (non-fatal): {log_err}")
 
     # ── Send response back to kernel via Netlink ─────────────────────────────
-    resp_bytes = final_response.encode("utf-8", errors="replace")[:2047]
+    # Safely truncate string first to avoid cutting multi-byte UTF-8 chars in half
+    truncated_resp = final_response[:2000]
+    resp_bytes = truncated_resp.encode("utf-8", errors="replace")[:2047]
     payload    = struct.pack(RESP_FORMAT, query_id, 0, resp_bytes)
     total_len  = NLMSG_HDR_SIZE + len(payload)
     hdr        = struct.pack(NLMSG_HDR_FORMAT, total_len, AI_MSG_SYSCALL_RESP,
