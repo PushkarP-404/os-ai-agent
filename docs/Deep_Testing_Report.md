@@ -97,16 +97,16 @@ has mixed model metadata - training data quality is inconsistent.
 
 ### LIVE TEST: Kernel Edge Cases
 All 4 edge case tests PASSED:
-- NULL query pointer: EINVAL âœ“
-- Zero-length query: EINVAL âœ“  
-- NULL response buffer: EINVAL âœ“
-- Invalid memory address: EFAULT âœ“
+- NULL query pointer: EINVAL ✓
+- Zero-length query: EINVAL ✓  
+- NULL response buffer: EINVAL ✓
+- Invalid memory address: EFAULT ✓
 
 ---
 
 ## CRITICAL BUGS
 
-### BUG-001: `result` Variable Undefined in IDE Scan Finish Handler âœ“
+### BUG-001: `result` Variable Undefined in IDE Scan Finish Handler ✓
 **File:** agent-daemon/agent_daemon.py, lines 258-262
 **Impact:** NameError crash when LLM returns action:finish for "scan for native" tasks
 
@@ -136,7 +136,7 @@ if "scan for native" in current_task.lower():
 
 ---
 
-### BUG-002: `LOG_DIR` Undefined in `save_capability()` âœ“
+### BUG-002: `LOG_DIR` Undefined in `save_capability()` ✓
 **File:** agent-daemon/agent_daemon.py, line 91
 **Impact:** NameError on every capability save - capabilities NEVER persist to disk
 
@@ -169,7 +169,7 @@ ssh.connect('127.0.0.1', port=2222, username='root', password='password')
 
 ---
 
-### BUG-004: LKM Cannot Coexist with Built-in Kernel Subsystem âœ“
+### BUG-004: LKM Cannot Coexist with Built-in Kernel Subsystem ✓
 **Files:** custom-kernel/kernel/ai_agent.c:252 | kernel-module/ai_process_hook.c:124
 **Impact:** Loading the LKM silently fails - process events never received
 
@@ -180,7 +180,7 @@ The LKM uses `NLMSG_DONE` as message type while the built-in uses custom types 0
 
 ---
 
-### BUG-005: Shell Injection in Dashboard Model Apply âœ“
+### BUG-005: Shell Injection in Dashboard Model Apply ✓
 **File:** dashboard/dashboard.py, line 134
 **Impact:** Root command execution via malformed model filename
 
@@ -203,7 +203,7 @@ subprocess.run(
 
 ---
 
-### BUG-006: WebSocket Infinite Hang in CDP Controller âœ“
+### BUG-006: WebSocket Infinite Hang in CDP Controller ✓
 **File:** agent-daemon/cdp_controller.py, line 36
 **Impact:** Agent daemon hangs indefinitely when Chrome disconnects
 
@@ -240,7 +240,7 @@ def call_cdp(ws, method, params=None, timeout=10.0):
 
 ---
 
-### BUG-007: No Auth on Netlink Registration - Any Process Can Hijack Daemon Slot âœ“
+### BUG-007: No Auth on Netlink Registration - Any Process Can Hijack Daemon Slot ✓
 **File:** custom-kernel/kernel/ai_agent.c, lines 43-48
 **Impact:** Malicious process registers as daemon, intercepts all agent queries
 
@@ -282,7 +282,7 @@ Events are never sent to the daemon. The entire Phase 10 feature is a stub.
 
 ---
 
-### BUG-009: LLM Produces Garbage Due to Stop Token Configuration âœ“
+### BUG-009: LLM Produces Garbage Due to Stop Token Configuration ✓
 **LIVE CONFIRMED:** Syscall returns "1" (single byte) as AI security verdict
 **Root cause:** stop tokens `[".", "\n", "\n\n", "```\n", "}\n\n", "<|im_end|>"]`
 
@@ -452,7 +452,7 @@ Security analysis prompts need more tokens for detailed reasoning.
 11. **FIX:** `mail_trigger.py:24` - Use `email.utils.parseaddr()` for sender auth
 12. **FIX:** `mail_trigger.py:44` - Use `["agent-cli", body]` not f-string argument
 13. **FIX:** `agent_daemon.py:397` - Add ThreadPoolExecutor for concurrent query handling
-14. **FIX:** Implement eBPFâ†’daemon IPC via Unix socket in `os_state_sensor.py`
+14. **FIX:** Implement eBPF→daemon IPC via Unix socket in `os_state_sensor.py`
 15. **FIX:** Load `os_agent_lora.gguf` in llama-server init script with `--lora` flag
 
 ### P3 - IMPROVEMENTS
@@ -496,7 +496,7 @@ Security analysis prompts need more tokens for detailed reasoning.
 | save_capability() | FAIL | NameError: LOG_DIR not defined |
 | IDE scan capability caching | FAIL | NameError: result not defined |
 | LKM load alongside built-in | FAIL | Netlink proto 31 conflict |
-| eBPF sensorâ†’daemon IPC | FAIL | Stub only - events not sent |
+| eBPF sensor→daemon IPC | FAIL | Stub only - events not sent |
 | LoRA adapter loading | FAIL | No --lora in llama-server init |
 | Dashboard model apply | RISK | Shell injection possible |
 | Mail trigger sender auth | WEAK | Substring-based check |

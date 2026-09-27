@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-agent_daemon.py â€” AI-Agent OS: Unified Kernel-Userspace Agent Daemon
+agent_daemon.py — AI-Agent OS: Unified Kernel-Userspace Agent Daemon
 
 Handles two Netlink message types from the ai_agent kernel subsystem:
-  AI_MSG_PROCESS_EVENT (1)  â€” Phase 3: process-creation events
-  AI_MSG_SYSCALL_QUERY  (2)  â€” Phase 4: synchronous agent_query responses
+  AI_MSG_PROCESS_EVENT (1)  — Phase 3: process-creation events
+  AI_MSG_SYSCALL_QUERY  (2)  — Phase 4: synchronous agent_query responses
 
 Phase 5 additions:
   - LLM backend: native musl llama.cpp (llama-server) running in-guest.
@@ -27,14 +27,14 @@ import signal
 import subprocess
 import concurrent.futures
 
-# â”€â”€ Conditionally import Phase 5 logger (graceful fallback if not present) â”€â”€
+# ── Conditionally import Phase 5 logger (graceful fallback if not present) ──
 try:
     import logger as agent_logger
     LOGGING_ENABLED = True
 except ImportError:
     LOGGING_ENABLED = False
 
-# â”€â”€ Netlink constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Netlink constants ────────────────────────────────────────────────────────
 NETLINK_AI_AGENT = 31
 
 AI_MSG_REGISTER      = 0
@@ -46,22 +46,22 @@ AI_MSG_SYSCALL_RESP  = 3
 NLMSG_HDR_FORMAT = "=IHHII"
 NLMSG_HDR_SIZE   = struct.calcsize(NLMSG_HDR_FORMAT)
 
-# struct process_event (Phase 3) â€” {parent_pid, child_pid, comm[16]}
+# struct process_event (Phase 3) — {parent_pid, child_pid, comm[16]}
 EVENT_FORMAT = "=ii16s"
 EVENT_SIZE   = struct.calcsize(EVENT_FORMAT)
 
-# struct ai_agent_query_msg (Phase 4) â€” {query_id, caller_pid, target_pid, comm[16], query[1024]}
+# struct ai_agent_query_msg (Phase 4) — {query_id, caller_pid, target_pid, comm[16], query[1024]}
 QUERY_FORMAT = "=iii16s1024s"
 QUERY_SIZE   = struct.calcsize(QUERY_FORMAT)
 
-# struct ai_agent_resp_msg (Phase 4) â€” {query_id, status, response[2048]}
+# struct ai_agent_resp_msg (Phase 4) — {query_id, status, response[2048]}
 RESP_FORMAT = "=ii2048s"
 RESP_SIZE   = struct.calcsize(RESP_FORMAT)
 
-# â”€â”€ LLM backend configuration â€” native musl llama-server (Phase 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── LLM backend configuration — native musl llama-server (Phase 5) ──────────
 # llama-server exposes /completion (single-turn) and /v1/chat/completions.
 # Using /completion for maximum compatibility with small model builds.
-# The model is loaded at llama-server startup â€” no model field in request.
+# The model is loaded at llama-server startup — no model field in request.
 # Override: LLAMA_URL=http://127.0.0.1:11434/completion
 LLAMA_URL   = os.environ.get("LLAMA_URL",   "http://127.0.0.1:11434/completion")
 LLAMA_MODEL = "smollm2-135m-instruct-q4_k_m"   # informational only
@@ -102,12 +102,12 @@ load_capabilities()
 def query_ollama(prompt, min_tokens=8, n_predict=200):
     """POST a completion request to llama-server; return the response text.
     
-    Bug fix (2026-09-27): Removed '.' from stop tokens â€” it caused the 135M model
+    Bug fix (2026-09-27): Removed '.' from stop tokens — it caused the 135M model
     to terminate after a single token (e.g. the model outputting '1.' immediately
     stops). Also increased n_predict from 128 to 200 to allow full JSON responses.
     Added retry if response is too short (garbage detection).
     """
-    # NOTE: Do NOT include '.' or single '\n' as stop tokens â€” the tiny SmolLM2
+    # NOTE: Do NOT include '.' or single '\n' as stop tokens — the tiny SmolLM2
     # model outputs these almost immediately, resulting in single-character responses.
     payload = {
         "prompt": prompt,
@@ -231,7 +231,7 @@ def handle_syscall_query(sock, query_payload):
         
         # Safety: cap plan length to prevent LLM-induced infinite loop
         if len(task_plan) > 10:
-            print(f"  [WARN] Plan has {len(task_plan)} tasks â€” capping to 10")
+            print(f"  [WARN] Plan has {len(task_plan)} tasks — capping to 10")
             task_plan = task_plan[:10]
         
         for task_idx, current_task in enumerate(task_plan):
@@ -391,7 +391,7 @@ def handle_syscall_query(sock, query_payload):
         print(f"  [AI] ({latency_ms:.0f}ms): {ai_verdict}")
         sys.stdout.flush()
 
-    # â”€â”€ Log to /var/ai-agent/ (Phase 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Log to /var/ai-agent/ (Phase 5) ─────────────────────────────────────
     if LOGGING_ENABLED:
         try:
             agent_logger.log_interaction(
@@ -407,7 +407,7 @@ def handle_syscall_query(sock, query_payload):
         except Exception as log_err:
             print(f"  [WARN] Logger error (non-fatal): {log_err}")
 
-    # â”€â”€ Send response back to kernel via Netlink â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Send response back to kernel via Netlink ─────────────────────────────
     # Safely truncate string first to avoid cutting multi-byte UTF-8 chars in half
     truncated_resp = final_response[:2000]
     resp_bytes = truncated_resp.encode("utf-8", errors="replace")[:2047]
@@ -431,7 +431,7 @@ def main():
     print(f"[AGENT DAEMON] LLM: {OLLAMA_URL} (model: {OLLAMA_MODEL})")
     print(f"[AGENT DAEMON] Logging: {'ENABLED -> /var/ai-agent/' if LOGGING_ENABLED else 'DISABLED (logger.py not found)'}")
 
-    # â”€â”€ Open Netlink socket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Open Netlink socket ──────────────────────────────────────────────────
     try:
         sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_AI_AGENT)
     except OSError as e:
@@ -446,7 +446,7 @@ def main():
         sock.close()
         sys.exit(1)
 
-    # â”€â”€ Register with kernel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Register with kernel ─────────────────────────────────────────────────
     reg_hdr = struct.pack(NLMSG_HDR_FORMAT, NLMSG_HDR_SIZE,
                           AI_MSG_REGISTER, 0, 1, os.getpid())
     try:
