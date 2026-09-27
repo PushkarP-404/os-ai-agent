@@ -1,5 +1,7 @@
 #include <linux/atomic.h>
 #include <linux/init.h>
+#include <linux/kref.h>
+#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netlink.h>
 #include <linux/sched.h>
@@ -25,7 +27,13 @@ struct ai_query_waiter {
   bool completed;
   wait_queue_head_t wq;
   struct list_head list;
+  struct kref refcnt;
 };
+
+static void ai_query_waiter_release(struct kref *ref) {
+  struct ai_query_waiter *w = container_of(ref, struct ai_query_waiter, refcnt);
+  kfree(w);
+}
 
 static LIST_HEAD(waiter_list);
 static DEFINE_SPINLOCK(waiter_lock);
@@ -41,6 +49,14 @@ static void ai_nl_recv_msg(struct sk_buff *skb) {
     return;
 
   if (nlh->nlmsg_type == AI_MSG_REGISTER) {
+    /* Only allow registration from privileged processes */
+    struct user_namespace *ns = sock_net(skb->sk)->user_ns;
+    if (!ns_capable(ns, CAP_SYS_ADMIN)) {
+      pr_warn("ai_agent: Registration rejected from unprivileged PID %d\n",
+              nlh->nlmsg_pid);
+      return;
+    }
+
     spin_lock(&daemon_lock);
     daemon_pid = nlh->nlmsg_pid;
     spin_unlock(&daemon_lock);
@@ -49,6 +65,7 @@ static void ai_nl_recv_msg(struct sk_buff *skb) {
   } else if (nlh->nlmsg_type == AI_MSG_SYSCALL_RESP) {
     struct ai_agent_resp_msg *resp;
     struct ai_query_waiter *w, *tmp;
+    struct ai_query_waiter *found = NULL;
     unsigned long flags;
 
     if (nlmsg_len(nlh) < sizeof(*resp))
@@ -59,16 +76,23 @@ static void ai_nl_recv_msg(struct sk_buff *skb) {
     spin_lock_irqsave(&waiter_lock, flags);
     list_for_each_entry_safe(w, tmp, &waiter_list, list) {
       if (w->query_id == resp->query_id) {
-        size_t len = strnlen(resp->response, sizeof(w->response) - 1);
-        memcpy(w->response, resp->response, len);
-        w->response[len] = '\0';
-        w->status = resp->status;
-        w->completed = true;
-        wake_up_interruptible(&w->wq);
+        kref_get(&w->refcnt);
+        found = w;
         break;
       }
     }
     spin_unlock_irqrestore(&waiter_lock, flags);
+
+    if (found) {
+      size_t len = strnlen(resp->response, sizeof(found->response) - 1);
+      memcpy(found->response, resp->response, len);
+      found->response[len] = '\0';
+      found->status = resp->status;
+      smp_wmb(); /* Ensure data is written before completing */
+      found->completed = true;
+      wake_up_interruptible(&found->wq);
+      kref_put(&found->refcnt, ai_query_waiter_release);
+    }
   }
 }
 
@@ -88,6 +112,9 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
 
   if (!query || !response)
     return -EINVAL;
+
+  if (!capable(CAP_SYS_ADMIN))
+    return -EPERM;
 
   if (query_len == 0 || query_len > AI_AGENT_MAX_QUERY_LEN)
     return -EINVAL;
@@ -157,6 +184,7 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
     return -ENOMEM;
   }
 
+  kref_init(&waiter->refcnt);
   qid = atomic_inc_return(&next_query_id);
   waiter->query_id = qid;
   waiter->completed = false;
@@ -171,7 +199,7 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
     spin_lock_irqsave(&waiter_lock, flags);
     list_del(&waiter->list);
     spin_unlock_irqrestore(&waiter_lock, flags);
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     kfree(kquery);
     return -ENOMEM;
   }
@@ -182,7 +210,7 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
     spin_lock_irqsave(&waiter_lock, flags);
     list_del(&waiter->list);
     spin_unlock_irqrestore(&waiter_lock, flags);
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     kfree(kquery);
     return -EMSGSIZE;
   }
@@ -202,16 +230,24 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
   if (ret < 0) {
     pr_warn("ai_agent: Failed to unicast query to daemon PID %d (ret=%ld)\n",
             current_daemon, ret);
+            
+    /* EDGE-002 Fix: Clear stale daemon_pid on unicast failure */
+    spin_lock_irqsave(&daemon_lock, flags);
+    if (daemon_pid == current_daemon) {
+      daemon_pid = 0;
+    }
+    spin_unlock_irqrestore(&daemon_lock, flags);
+
     spin_lock_irqsave(&waiter_lock, flags);
     list_del(&waiter->list);
     spin_unlock_irqrestore(&waiter_lock, flags);
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     return -EIO;
   }
 
-  /* Wait for daemon response (timeout: 15 seconds) */
+  /* Wait for daemon response (timeout: 120 seconds) */
   ret = wait_event_interruptible_timeout(waiter->wq, waiter->completed,
-                                         msecs_to_jiffies(15000));
+                                         msecs_to_jiffies(120000));
 
   spin_lock_irqsave(&waiter_lock, flags);
   list_del(&waiter->list);
@@ -219,10 +255,10 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
 
   if (ret == 0) {
     pr_warn("ai_agent: Query %d timed out waiting for daemon response\n", qid);
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     return -ETIMEDOUT;
   } else if (ret < 0) {
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     return -EINTR;
   }
 
@@ -231,16 +267,16 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
     copy_len = resp_len - 1;
 
   if (copy_to_user(response, waiter->response, copy_len)) {
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     return -EFAULT;
   }
 
   if (put_user('\0', response + copy_len)) {
-    kfree(waiter);
+    kref_put(&waiter->refcnt, ai_query_waiter_release);
     return -EFAULT;
   }
 
-  kfree(waiter);
+  kref_put(&waiter->refcnt, ai_query_waiter_release);
   return (long)copy_len;
 }
 
@@ -262,4 +298,13 @@ static int __init ai_agent_subsystem_init(void) {
   return 0;
 }
 
+static void __exit ai_agent_subsystem_exit(void) {
+  if (nl_sock) {
+    netlink_kernel_release(nl_sock);
+    nl_sock = NULL;
+  }
+  pr_info("ai_agent: Subsystem exited\n");
+}
+
 late_initcall(ai_agent_subsystem_init);
+module_exit(ai_agent_subsystem_exit);

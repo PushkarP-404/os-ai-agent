@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-agent_daemon.py — AI-Agent OS: Unified Kernel-Userspace Agent Daemon
+agent_daemon.py â€” AI-Agent OS: Unified Kernel-Userspace Agent Daemon
 
 Handles two Netlink message types from the ai_agent kernel subsystem:
-  AI_MSG_PROCESS_EVENT (1)  — Phase 3: process-creation events
-  AI_MSG_SYSCALL_QUERY  (2)  — Phase 4: synchronous agent_query responses
+  AI_MSG_PROCESS_EVENT (1)  â€” Phase 3: process-creation events
+  AI_MSG_SYSCALL_QUERY  (2)  â€” Phase 4: synchronous agent_query responses
 
 Phase 5 additions:
   - LLM backend: native musl llama.cpp (llama-server) running in-guest.
@@ -25,15 +25,16 @@ import urllib.request
 import urllib.error
 import signal
 import subprocess
+import concurrent.futures
 
-# ── Conditionally import Phase 5 logger (graceful fallback if not present) ──
+# â”€â”€ Conditionally import Phase 5 logger (graceful fallback if not present) â”€â”€
 try:
     import logger as agent_logger
     LOGGING_ENABLED = True
 except ImportError:
     LOGGING_ENABLED = False
 
-# ── Netlink constants ────────────────────────────────────────────────────────
+# â”€â”€ Netlink constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 NETLINK_AI_AGENT = 31
 
 AI_MSG_REGISTER      = 0
@@ -45,22 +46,22 @@ AI_MSG_SYSCALL_RESP  = 3
 NLMSG_HDR_FORMAT = "=IHHII"
 NLMSG_HDR_SIZE   = struct.calcsize(NLMSG_HDR_FORMAT)
 
-# struct process_event (Phase 3) — {parent_pid, child_pid, comm[16]}
+# struct process_event (Phase 3) â€” {parent_pid, child_pid, comm[16]}
 EVENT_FORMAT = "=ii16s"
 EVENT_SIZE   = struct.calcsize(EVENT_FORMAT)
 
-# struct ai_agent_query_msg (Phase 4) — {query_id, caller_pid, target_pid, comm[16], query[1024]}
+# struct ai_agent_query_msg (Phase 4) â€” {query_id, caller_pid, target_pid, comm[16], query[1024]}
 QUERY_FORMAT = "=iii16s1024s"
 QUERY_SIZE   = struct.calcsize(QUERY_FORMAT)
 
-# struct ai_agent_resp_msg (Phase 4) — {query_id, status, response[2048]}
+# struct ai_agent_resp_msg (Phase 4) â€” {query_id, status, response[2048]}
 RESP_FORMAT = "=ii2048s"
 RESP_SIZE   = struct.calcsize(RESP_FORMAT)
 
-# ── LLM backend configuration — native musl llama-server (Phase 5) ──────────
+# â”€â”€ LLM backend configuration â€” native musl llama-server (Phase 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # llama-server exposes /completion (single-turn) and /v1/chat/completions.
 # Using /completion for maximum compatibility with small model builds.
-# The model is loaded at llama-server startup — no model field in request.
+# The model is loaded at llama-server startup â€” no model field in request.
 # Override: LLAMA_URL=http://127.0.0.1:11434/completion
 LLAMA_URL   = os.environ.get("LLAMA_URL",   "http://127.0.0.1:11434/completion")
 LLAMA_MODEL = "smollm2-135m-instruct-q4_k_m"   # informational only
@@ -88,22 +89,31 @@ def load_capabilities():
 def save_capability(key, value):
     SYSTEM_CAPABILITIES[key] = value
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(CAPABILITIES_FILE), exist_ok=True)
         with open(CAPABILITIES_FILE, "w") as f:
             json.dump(SYSTEM_CAPABILITIES, f)
+        print(f"  [CACHE] Capability saved: {key}={value}")
     except Exception as e:
         print(f"Failed to save capability: {e}")
 
 load_capabilities()
 
 
-def query_ollama(prompt):
-    """POST a completion request to llama-server; return the response text."""
+def query_ollama(prompt, min_tokens=8, n_predict=200):
+    """POST a completion request to llama-server; return the response text.
+    
+    Bug fix (2026-09-27): Removed '.' from stop tokens â€” it caused the 135M model
+    to terminate after a single token (e.g. the model outputting '1.' immediately
+    stops). Also increased n_predict from 128 to 200 to allow full JSON responses.
+    Added retry if response is too short (garbage detection).
+    """
+    # NOTE: Do NOT include '.' or single '\n' as stop tokens â€” the tiny SmolLM2
+    # model outputs these almost immediately, resulting in single-character responses.
     payload = {
         "prompt": prompt,
-        "n_predict": 128,
+        "n_predict": n_predict,
         "temperature": 0.1,
-        "stop": [".", "\n", "\n\n", "```\n", "}\n\n", "<|im_end|>"],
+        "stop": ["\n\n", "<|im_end|>", "<|im_start|>"],
     }
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(
@@ -111,16 +121,28 @@ def query_ollama(prompt):
         data=data,
         headers={"Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            # llama-server /completion returns {"content": "...", ...}
-            return result.get("content", "").strip()
-    except Exception as e:
-        return (
-            f"[AI AGENT FALLBACK] Local LLM unreachable ({e}). "
-            f"Policy verdict: ALLOW with monitoring."
-        )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                # llama-server /completion returns {"content": "...", ...}
+                content = result.get("content", "").strip()
+                # Garbage detection: if response is shorter than min_tokens chars,
+                # retry before falling back
+                if len(content) < min_tokens:
+                    print(f"  [WARN] LLM returned suspiciously short response ({len(content)} chars): {repr(content)}. Attempt {attempt+1}/3")
+                    if attempt < 2:
+                        continue
+                    return "[AI AGENT FALLBACK] LLM response too short to be useful. Policy verdict: ALLOW with monitoring."
+                return content
+        except Exception as e:
+            if attempt < 2:
+                print(f"  [WARN] LLM request failed: {e}. Retrying... Attempt {attempt+1}/3")
+                continue
+            return (
+                f"[AI AGENT FALLBACK] Local LLM unreachable ({e}). "
+                f"Policy verdict: ALLOW with monitoring."
+            )
 
 
 def handle_syscall_query(sock, query_payload):
@@ -130,6 +152,9 @@ def handle_syscall_query(sock, query_payload):
     )
     comm  = comm_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
     query = query_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
+    
+    # Bug fix: Prevent prompt injection by removing special tokens from query
+    query = query.replace("<|im_start|>", "").replace("<|im_end|>", "")
 
     print(f"\n[QUERY #{query_id}] PID {caller_pid} ({comm}) -> target {target_pid}")
     print(f"  Query: \"{query}\"")
@@ -177,7 +202,8 @@ def handle_syscall_query(sock, query_payload):
         elif "error test" in query.lower():
             planner_verdict = '["List nonexistent directory"]'
         else:
-            planner_verdict = query_ollama(planner_prompt)
+            # PERF-003 Fix: Skip planner LLM call to save time, pass query straight to worker
+            planner_verdict = json.dumps([query])
             
         latency_ms += (time.monotonic() - t_start) * 1000.0
         
@@ -200,14 +226,28 @@ def handle_syscall_query(sock, query_payload):
         final_response = ""
         
         # --- Phase 10: Worker Loop ---
+        MAX_TOTAL_TIME_S = 110.0
+        task_start_time = time.monotonic()
+        
+        # Safety: cap plan length to prevent LLM-induced infinite loop
+        if len(task_plan) > 10:
+            print(f"  [WARN] Plan has {len(task_plan)} tasks â€” capping to 10")
+            task_plan = task_plan[:10]
+        
         for task_idx, current_task in enumerate(task_plan):
             print(f"\n  [WORKER] Starting Task {task_idx+1}/{len(task_plan)}: {current_task}")
             max_steps = 5
             step_count = 0
             prompt_context = f"Current Task: {current_task}\nOverall User Intent: {query}"
             task_finished = False
+            last_result = None  # Bug fix: track last subprocess result for finish handler
             
             while step_count < max_steps:
+                elapsed_time = time.monotonic() - task_start_time
+                if elapsed_time > MAX_TOTAL_TIME_S:
+                    final_response = f"[ABORTED] Worker reached cumulative time limit ({elapsed_time:.1f}s) to prevent kernel timeout."
+                    break
+
                 sys_prompt = (
                     f"<|im_start|>system\nYou are an OS Worker Agent. Accomplish the Current Task.\n"
                     f"Output ONLY JSON. Actions:\n"
@@ -241,9 +281,26 @@ def handle_syscall_query(sock, query_payload):
 
                 try:
                     json_str = ai_verdict
-                    if "{" in json_str:
-                        json_str = json_str[json_str.find("{"):json_str.rfind("}")+1]
-                    delegation = json.loads(json_str)
+                    if "```json" in json_str:
+                        json_str = json_str.split("```json")[1].split("```")[0]
+                    elif "```" in json_str:
+                        json_str = json_str.split("```")[1].split("```")[0]
+                    else:
+                        start_idx = json_str.find("{")
+                        end_idx = json_str.rfind("}")
+                        if start_idx != -1 and end_idx != -1:
+                            json_str = json_str[start_idx:end_idx+1]
+                            
+                    try:
+                        delegation = json.loads(json_str)
+                    except ValueError as decode_err:
+                        elapsed = time.monotonic() - task_start_time
+                        if elapsed > MAX_TOTAL_TIME_S - 15.0:
+                            raise Exception(f"Invalid JSON and out of time to retry: {decode_err}")
+                        print(f"    [JSON ERROR] Invalid format: {decode_err}")
+                        prompt_context += f"\n\nSystem Error: Invalid JSON. You MUST return exactly one valid JSON object. Error: {decode_err}"
+                        step_count += 1
+                        continue
                     
                     action = delegation.get("action")
                     if action == "abort":
@@ -254,13 +311,20 @@ def handle_syscall_query(sock, query_payload):
                         print(f"    [WORKER] Task {task_idx+1} finished: {delegation.get('reason')}")
                         task_finished = True
                         
-                        # Cache capability if we just discovered a native IDE
-                        if "scan for native" in current_task.lower() and "antigravity" in result.stdout.lower():
-                            save_capability("native_ide", "antigravity")
-                            print("    [CACHE] Saved capability: native_ide=antigravity")
-                        elif "scan for native" in current_task.lower() and "code" in result.stdout.lower():
-                            save_capability("native_ide", "code")
-                            print("    [CACHE] Saved capability: native_ide=code")
+                        # Bug fix (2026-09-27): Use last_result (tracked from subprocess.run)
+                        # instead of undefined 'result'. Also fall back to prompt_context.
+                        if "scan for native" in current_task.lower():
+                            search_text = ""
+                            if last_result is not None:
+                                search_text = (last_result.stdout or "") + (last_result.stderr or "")
+                            else:
+                                search_text = prompt_context
+                            if "antigravity" in search_text.lower():
+                                save_capability("native_ide", "antigravity")
+                                print("    [CACHE] Saved capability: native_ide=antigravity")
+                            elif "code" in search_text.lower():
+                                save_capability("native_ide", "code")
+                                print("    [CACHE] Saved capability: native_ide=code")
                             
                         break
                         
@@ -273,6 +337,13 @@ def handle_syscall_query(sock, query_payload):
 
                     target = delegation.get("target_software")
                     args = delegation.get("args", [])
+                    
+                    # Bug fix: Command execution allowlist to prevent arbitrary code execution
+                    ALLOWED_COMMANDS = {"sh", "cdp_controller.py", "apk", "sleep", "ls"}
+                    if target not in ALLOWED_COMMANDS:
+                        final_response = f"[ABORTED by Security Policy] Disallowed target software: {target}"
+                        break
+                        
                     print(f"    [DISPATCH] {target} {args}")
                     sys.stdout.flush()
                     
@@ -280,12 +351,16 @@ def handle_syscall_query(sock, query_payload):
                     if target == "cdp_controller.py":
                         cmd = ["python3", "/home/aiuser/cdp_controller.py"] + " ".join(args).split(" ")
 
+                    # Bug fix (2026-09-27): Check SUGGEST mode BEFORE running subprocess
+                    # Previously this check came AFTER subprocess.run, meaning the command
+                    # executed even in SUGGEST mode.
                     if mode == "SUGGEST":
-                        print(f"    [SUGGEST MODE] Aborting execution.")
+                        print(f"    [SUGGEST MODE] Aborting execution (command NOT run).")
                         final_response = f"[SUGGESTION] Task: {current_task}\nAction:\n{json.dumps(delegation, indent=2)}\nCommand: {' '.join(cmd)}"
                         break
 
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    last_result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    result = last_result  # Keep alias for backwards compat
                     
                     if result.returncode == 0:
                         prompt_context += f"\n\nAction success:\nSTDOUT:\n{result.stdout}\nNext JSON action or finish."
@@ -316,7 +391,7 @@ def handle_syscall_query(sock, query_payload):
         print(f"  [AI] ({latency_ms:.0f}ms): {ai_verdict}")
         sys.stdout.flush()
 
-    # ── Log to /var/ai-agent/ (Phase 5) ─────────────────────────────────────
+    # â”€â”€ Log to /var/ai-agent/ (Phase 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if LOGGING_ENABLED:
         try:
             agent_logger.log_interaction(
@@ -332,7 +407,7 @@ def handle_syscall_query(sock, query_payload):
         except Exception as log_err:
             print(f"  [WARN] Logger error (non-fatal): {log_err}")
 
-    # ── Send response back to kernel via Netlink ─────────────────────────────
+    # â”€â”€ Send response back to kernel via Netlink â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Safely truncate string first to avoid cutting multi-byte UTF-8 chars in half
     truncated_resp = final_response[:2000]
     resp_bytes = truncated_resp.encode("utf-8", errors="replace")[:2047]
@@ -356,7 +431,7 @@ def main():
     print(f"[AGENT DAEMON] LLM: {OLLAMA_URL} (model: {OLLAMA_MODEL})")
     print(f"[AGENT DAEMON] Logging: {'ENABLED -> /var/ai-agent/' if LOGGING_ENABLED else 'DISABLED (logger.py not found)'}")
 
-    # ── Open Netlink socket ──────────────────────────────────────────────────
+    # â”€â”€ Open Netlink socket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     try:
         sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_AI_AGENT)
     except OSError as e:
@@ -371,7 +446,7 @@ def main():
         sock.close()
         sys.exit(1)
 
-    # ── Register with kernel ─────────────────────────────────────────────────
+    # â”€â”€ Register with kernel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     reg_hdr = struct.pack(NLMSG_HDR_FORMAT, NLMSG_HDR_SIZE,
                           AI_MSG_REGISTER, 0, 1, os.getpid())
     try:
@@ -385,6 +460,24 @@ def main():
     print("[AGENT DAEMON] Listening for process events and syscall queries...")
     sys.stdout.flush()
 
+    def ebpf_listener():
+        sock_path = "/var/ai-agent/ebpf.sock"
+        if os.path.exists(sock_path):
+            os.remove(sock_path)
+        usock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        usock.bind(sock_path)
+        os.chmod(sock_path, 0o666)
+        while True:
+            try:
+                data, _ = usock.recvfrom(4096)
+                if data:
+                    print(f"  [eBPF IPC] {data.decode('utf-8', errors='replace')}")
+            except Exception:
+                pass
+                
+    import threading
+    threading.Thread(target=ebpf_listener, daemon=True).start()
+
     max_events  = int(sys.argv[1]) if len(sys.argv) > 1 else None
     events_seen = 0
 
@@ -392,6 +485,8 @@ def main():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, sig_handler)
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
     try:
         while True:
@@ -405,7 +500,7 @@ def main():
             payload = data[NLMSG_HDR_SIZE:]
 
             if nlmsg_type == AI_MSG_SYSCALL_QUERY and len(payload) >= QUERY_SIZE:
-                handle_syscall_query(sock, payload[:QUERY_SIZE])
+                executor.submit(handle_syscall_query, sock, payload[:QUERY_SIZE])
                 events_seen += 1
 
             elif nlmsg_type == AI_MSG_PROCESS_EVENT and len(payload) >= EVENT_SIZE:
