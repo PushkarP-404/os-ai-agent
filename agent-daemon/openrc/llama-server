@@ -40,6 +40,12 @@ start_pre() {
 
 start() {
     ebegin "Starting llama.cpp inference server"
+    LORA_ARGS=""
+    if [ -f "/var/lib/ai-agent/models/os_agent_lora.gguf" ]; then
+        LORA_ARGS="--lora /var/lib/ai-agent/models/os_agent_lora.gguf"
+        einfo "Found LoRA: os_agent_lora.gguf"
+    fi
+
     start-stop-daemon --start \
         --background \
         --make-pidfile \
@@ -49,11 +55,11 @@ start() {
         --exec "$LLAMA_SERVER_BIN" \
         -- \
         --model "$LLAMA_MODEL" \
+        $LORA_ARGS \
         --host "$LLAMA_HOST" \
         --port "$LLAMA_PORT" \
         --threads "$LLAMA_THREADS" \
         --ctx-size "$LLAMA_CTX" \
-        --n-predict 200 \
         --log-disable
     local ret=$?
     # Poll /health until server is ready (up to 120s for slow hardware)

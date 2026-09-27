@@ -1,8 +1,8 @@
-# AI-Agent OS: Technical Design & Implementation Document
+﻿# AI-Agent OS: Technical Design & Implementation Document
 
 **Project codename:** AI-Agent OS (working title)
 **Document version:** 0.4 (living document)
-**Status:** Phases 1–7 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1) with LoRA Fine-Tuning
+**Status:** Phases 1â€“7 âœ… Complete & Validated â€” Bootable Standalone OS Appliance Image (v0.1) with LoRA Fine-Tuning
 **Base distro:** Alpine Linux 3.20.10 (musl libc, BusyBox userland)
 **Last updated:** 2026-09-24
 
@@ -18,10 +18,10 @@
 6. Development Environment
 7. Networking Reference (Lessons Learned)
 8. Phased Roadmap
-9. Phase 1: Userspace Ptrace Monitor — Implementation Detail
+9. Phase 1: Userspace Ptrace Monitor â€” Implementation Detail
 10. Phase 2: AI Agent Integration
 11. Phase 3: Kernel Module Integration (Completed & Validated)
-12. Phase 4: Custom Syscall Interface (Code-Complete — Kernel Building)
+12. Phase 4: Custom Syscall Interface (Code-Complete â€” Kernel Building)
 13. Phase 5: Local LLM + Fine-Tuning Pipeline
 14. Phase 6: OS Image Packaging & Distribution
 15. Data Collection & Storage Schema
@@ -39,10 +39,10 @@
 
 This project is an attempt to build a custom Linux-based operating system in which an AI agent is woven into the process lifecycle itself, rather than bolted on as an application-layer feature. The stated goal has two parts:
 
-- **Learning goal:** Deeply understand systems programming — process management, syscalls, IPC, kernel internals, and how AI systems can be integrated with low-level infrastructure.
+- **Learning goal:** Deeply understand systems programming â€” process management, syscalls, IPC, kernel internals, and how AI systems can be integrated with low-level infrastructure.
 - **Product goal:** Build a genuinely novel OS where every process, regardless of whether it was designed with AI support in mind, can be observed, understood, and potentially directed by a built-in agent.
 
-The defining architectural principle is: **the integration point is the OS itself, not the application.** Because every piece of software running on the system — from a 30-year-old legacy binary to a modern containerized app — must go through the kernel to do anything meaningful (open files, use the network, allocate memory, spawn processes), placing the agent at the OS layer means it can observe and potentially influence *all* software uniformly, without requiring APIs, plugins, or MCP-style integration from the software itself.
+The defining architectural principle is: **the integration point is the OS itself, not the application.** Because every piece of software running on the system â€” from a 30-year-old legacy binary to a modern containerized app â€” must go through the kernel to do anything meaningful (open files, use the network, allocate memory, spawn processes), placing the agent at the OS layer means it can observe and potentially influence *all* software uniformly, without requiring APIs, plugins, or MCP-style integration from the software itself.
 
 This document captures every technical and architectural decision made so far, the reasoning behind each, the current state of the development environment, and the full roadmap from the current userspace prototype to an eventual kernel-integrated, locally-fine-tuned agent shipped as a pre-installed component of a custom OS image.
 
@@ -63,7 +63,7 @@ Instead, the agent's "hooks" into the world are OS primitives: syscalls, process
 
 ### 2.2 Why this matters as a design constraint
 
-Every implementation decision from here on should be evaluated against one question: **"Does this require the target application's cooperation?"** If yes, it is a stopgap (acceptable for Phase 1–2 prototyping) but not the final architecture. If no — if it works purely by observing/intercepting kernel-mediated events — it is aligned with the actual vision.
+Every implementation decision from here on should be evaluated against one question: **"Does this require the target application's cooperation?"** If yes, it is a stopgap (acceptable for Phase 1â€“2 prototyping) but not the final architecture. If no â€” if it works purely by observing/intercepting kernel-mediated events â€” it is aligned with the actual vision.
 
 ### 2.3 Why this is a good learning vehicle
 
@@ -79,7 +79,7 @@ Building this system forces confrontation with:
 
 ### 2.4 Why this is potentially novel
 
-No mainstream OS today embeds an AI agent as a first-class citizen of the process model. Existing "AI in the OS" efforts (Copilot-style assistants, AI browser extensions, MCP-based agent frameworks) are all application-layer or API-layer integrations that require the target software to cooperate. An OS where the kernel-adjacent layer itself understands and can act on process behavior — regardless of what that process is — does not have a direct mainstream analog. This is both the opportunity and the risk (see Security Model, Section 16).
+No mainstream OS today embeds an AI agent as a first-class citizen of the process model. Existing "AI in the OS" efforts (Copilot-style assistants, AI browser extensions, MCP-based agent frameworks) are all application-layer or API-layer integrations that require the target software to cooperate. An OS where the kernel-adjacent layer itself understands and can act on process behavior â€” regardless of what that process is â€” does not have a direct mainstream analog. This is both the opportunity and the risk (see Security Model, Section 16).
 
 ---
 
@@ -99,7 +99,7 @@ OS-level AI integration (this project):
   Hardware
 ```
 
-Because the OS/kernel layer is beneath every application, an agent embedded there inherits **universal reach** without needing per-application support. This is architecturally similar to how antivirus software, parental control software, or system-wide monitoring tools work today — they intercept at a layer the application cannot bypass. The difference is that instead of blocking threats, this agent is meant to *understand and potentially direct* process behavior.
+Because the OS/kernel layer is beneath every application, an agent embedded there inherits **universal reach** without needing per-application support. This is architecturally similar to how antivirus software, parental control software, or system-wide monitoring tools work today â€” they intercept at a layer the application cannot bypass. The difference is that instead of blocking threats, this agent is meant to *understand and potentially direct* process behavior.
 
 ### 3.1 What the agent can observe (by design, at full maturity)
 
@@ -133,64 +133,64 @@ Total visibility and total control implies the agent itself becomes the single l
 ### 4.1 Target end-state architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Custom Linux Distro                      │
-│                                                                │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐      │
-│  │  Process A   │   │  Process B   │   │  Process C   │      │
-│  │ (e.g. nginx) │   │ (e.g. gcc)   │   │ (e.g. game)  │      │
-│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘      │
-│         │  every syscall goes through the kernel              │
-│  ┌──────▼───────────────────▼───────────────────▼───────┐    │
-│  │                     Linux Kernel                       │    │
-│  │   ┌────────────────────────────────────────────────┐  │    │
-│  │   │  Custom Kernel Module / Hooks                    │  │    │
-│  │   │  - hooks copy_process() / do_fork()              │  │    │
-│  │   │  - hooks syscall table (or uses tracepoints)     │  │    │
-│  │   │  - spawns a paired "agent shim" per process       │  │    │
-│  │   └───────────────────┬────────────────────────────┘  │    │
-│  └───────────────────────┼────────────────────────────────┘    │
-│                           │  netlink / shared memory            │
-│  ┌────────────────────────▼───────────────────────────────┐   │
-│  │              Userspace Agent Daemon (per-process shim)   │   │
-│  │  - receives syscall/event stream                         │   │
-│  │  - maintains short-term context per process               │   │
-│  │  - queries local LLM (Ollama / llama.cpp)                  │   │
-│  │  - logs interaction + outcome for later fine-tuning        │   │
-│  └────────────────────────┬───────────────────────────────┘   │
-│                           │                                     │
-│  ┌────────────────────────▼───────────────────────────────┐   │
-│  │        Local LLM Runtime (Ollama, quantized model)        │   │
-│  │  - base model + per-process-type LoRA adapters             │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                     Custom Linux Distro                      â”‚
+â”‚                                                                â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”      â”‚
+â”‚  â”‚  Process A   â”‚   â”‚  Process B   â”‚   â”‚  Process C   â”‚      â”‚
+â”‚  â”‚ (e.g. nginx) â”‚   â”‚ (e.g. gcc)   â”‚   â”‚ (e.g. game)  â”‚      â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜   â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜      â”‚
+â”‚         â”‚  every syscall goes through the kernel              â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”    â”‚
+â”‚  â”‚                     Linux Kernel                       â”‚    â”‚
+â”‚  â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚    â”‚
+â”‚  â”‚   â”‚  Custom Kernel Module / Hooks                    â”‚  â”‚    â”‚
+â”‚  â”‚   â”‚  - hooks copy_process() / do_fork()              â”‚  â”‚    â”‚
+â”‚  â”‚   â”‚  - hooks syscall table (or uses tracepoints)     â”‚  â”‚    â”‚
+â”‚  â”‚   â”‚  - spawns a paired "agent shim" per process       â”‚  â”‚    â”‚
+â”‚  â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚    â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
+â”‚                           â”‚  netlink / shared memory            â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+â”‚  â”‚              Userspace Agent Daemon (per-process shim)   â”‚   â”‚
+â”‚  â”‚  - receives syscall/event stream                         â”‚   â”‚
+â”‚  â”‚  - maintains short-term context per process               â”‚   â”‚
+â”‚  â”‚  - queries local LLM (Ollama / llama.cpp)                  â”‚   â”‚
+â”‚  â”‚  - logs interaction + outcome for later fine-tuning        â”‚   â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+â”‚                           â”‚                                     â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+â”‚  â”‚        Local LLM Runtime (Ollama, quantized model)        â”‚   â”‚
+â”‚  â”‚  - base model + per-process-type LoRA adapters             â”‚   â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-### 4.2 Current (Phase 1) architecture — what actually exists today
+### 4.2 Current (Phase 1) architecture â€” what actually exists today
 
 ```
-┌───────────────────────────────────────────┐
-│  Alpine Linux VM (QEMU, user-mode network)  │
-│                                              │
-│  ┌────────────────────────────────────┐    │
-│  │  monitor (C binary, ptrace-based)   │    │
-│  │  - forks target process              │    │
-│  │  - PTRACE_TRACEME in child            │    │
-│  │  - parent uses PTRACE_SYSCALL loop    │    │
-│  │  - captures syscall num + 6 args      │    │
-│  │  - captures return value              │    │
-│  └───────────────┬────────────────────┘    │
-│                  │ (planned: pipe output)    │
-│  ┌───────────────▼────────────────────┐    │
-│  │  syscall_analyzer.py                 │    │
-│  │  - takes syscall data as CLI arg      │    │
-│  │  - sends prompt to local Ollama API   │    │
-│  │  - currently: local Ollama model      │    │
-│  └──────────────────────────────────────┘    │
-└───────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  Alpine Linux VM (QEMU, user-mode network)  â”‚
+â”‚                                              â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
+â”‚  â”‚  monitor (C binary, ptrace-based)   â”‚    â”‚
+â”‚  â”‚  - forks target process              â”‚    â”‚
+â”‚  â”‚  - PTRACE_TRACEME in child            â”‚    â”‚
+â”‚  â”‚  - parent uses PTRACE_SYSCALL loop    â”‚    â”‚
+â”‚  â”‚  - captures syscall num + 6 args      â”‚    â”‚
+â”‚  â”‚  - captures return value              â”‚    â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
+â”‚                  â”‚ (planned: pipe output)    â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”‚
+â”‚  â”‚  syscall_analyzer.py                 â”‚    â”‚
+â”‚  â”‚  - takes syscall data as CLI arg      â”‚    â”‚
+â”‚  â”‚  - sends prompt to local Ollama API   â”‚    â”‚
+â”‚  â”‚  - currently: local Ollama model      â”‚    â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-The current implementation is intentionally simple: it is a proof-of-concept that (a) a userspace process can be fully observed via ptrace without modification, and (b) syscall data can be meaningfully summarized/explained by an LLM. Neither piece is yet wired to act automatically — this is "Observe Mode" only (see Section 17).
+The current implementation is intentionally simple: it is a proof-of-concept that (a) a userspace process can be fully observed via ptrace without modification, and (b) syscall data can be meaningfully summarized/explained by an LLM. Neither piece is yet wired to act automatically â€” this is "Observe Mode" only (see Section 17).
 
 ---
 
@@ -216,8 +216,8 @@ The current implementation is intentionally simple: it is a proof-of-concept tha
 ### 5.3 Known Alpine-specific gotchas discovered during setup
 
 - Alpine does **not** ship OpenSSH, `curl`, `git`, `lsblk`, `pip`, or a full GCC toolchain by default. All had to be installed explicitly via `apk add`.
-- Alpine's default shell is `ash` (via BusyBox), not `bash`. Bash-specific syntax (e.g., brace expansion `{a,b,c}`) does **not** work in `ash`/BusyBox `sh` the way it does in bash — this caused a real bug during setup where `mkdir -p {ptrace-monitor,ai-agent,test-programs,logs}` created one literally-named directory instead of four.
-- Alpine's minimal ISO environment (before installing to disk) has an even more stripped down toolset — e.g., no `lsblk`, requiring `ls /dev/sda*` and manual `mount`/`ls` probing to identify the correct partition.
+- Alpine's default shell is `ash` (via BusyBox), not `bash`. Bash-specific syntax (e.g., brace expansion `{a,b,c}`) does **not** work in `ash`/BusyBox `sh` the way it does in bash â€” this caused a real bug during setup where `mkdir -p {ptrace-monitor,ai-agent,test-programs,logs}` created one literally-named directory instead of four.
+- Alpine's minimal ISO environment (before installing to disk) has an even more stripped down toolset â€” e.g., no `lsblk`, requiring `ls /dev/sda*` and manual `mount`/`ls` probing to identify the correct partition.
 - Python on Alpine does not ship `pip` by default; `py3-pip` may not always be resolvable depending on repository state, and `python3 -m pip` will fail with `No module named pip` if the module truly isn't present. The practical workaround used in this project was to avoid third-party Python packages entirely and use the standard-library `urllib.request` module instead of `requests`.
 
 ---
@@ -287,7 +287,7 @@ This section exists because a very large fraction of real development time on th
 2. Guest-to-host connectivity, so the guest can reach a locally-running Ollama server on the Windows host (port 11434).
 3. (Eventually) guest internet access, for `apk`, `git clone`, and model downloads.
 
-### 7.2 NAT + Port Forwarding (SSH) — worked
+### 7.2 NAT + Port Forwarding (SSH) â€” worked
 
 Configuration used successfully for SSH:
 
@@ -307,9 +307,9 @@ Client command from Windows:
 ssh -p 2222 root@127.0.0.1
 ```
 
-**Important operational note:** Adding a second port-forwarding rule (e.g., for Ollama) must be done by appending an additional `hostfwd` parameter in the QEMU launch command. This was a real incident during setup — overwriting the existing SSH `hostfwd` rule with the Ollama rule broke SSH access.
+**Important operational note:** Adding a second port-forwarding rule (e.g., for Ollama) must be done by appending an additional `hostfwd` parameter in the QEMU launch command. This was a real incident during setup â€” overwriting the existing SSH `hostfwd` rule with the Ollama rule broke SSH access.
 
-### 7.3 NAT + Port Forwarding (Ollama) — did NOT work reliably
+### 7.3 NAT + Port Forwarding (Ollama) â€” did NOT work reliably
 
 The equivalent rule for reaching a Windows-hosted Ollama server:
 ```
@@ -334,7 +334,7 @@ By default, Ollama on Windows binds strictly to `127.0.0.1:11434`. In QEMU SLIRP
    # Returns: "Ollama is running"
    ```
 
-### 7.4 Bridged Adapter — attempted, network unreachable (superseded)
+### 7.4 Bridged Adapter â€” attempted, network unreachable (superseded)
 
 Switching to a **Bridged/TAP Adapter** was originally attempted in VirtualBox, but proved unnecessarily complex and error-prone compared to QEMU's standard user-mode networking with `10.0.2.2` host access. With `OLLAMA_HOST=0.0.0.0` configured on the host, NAT networking provides all required connectivity without bridged adapters.
 
@@ -379,17 +379,17 @@ During networking experimentation, the VM's root password was forgotten, and no 
 
 | Phase | Goal | Status |
 |---|---|---|
-| **Phase 1** | Userspace ptrace syscall monitor — observe any process's syscalls without modifying it | ✅ Complete & Validated — traces `/bin/ls`, `/bin/echo`, and arbitrary unmodified binaries |
-| **Phase 2** | Wire syscall data into an LLM for analysis/explanation | ✅ Complete & Validated — ptrace output piped into `syscall_analyzer.py`; querying local Ollama (`mistral:latest`, 7.2B Q4_K_M) via `http://10.0.2.2:11434`; 120s timeout; auto model detection |
-| **Phase 3** | Kernel module hooking `kernel_clone` to stream process-creation events to userspace agent daemon | ✅ Complete & Validated — LKM (`ai_process_hook.ko`) hooks `kernel_clone` via `kretprobe`; broadcasts `{parent_pid, child_pid, comm}` over Netlink protocol 31 to `agent_daemon.py`; 5 events captured in test |
-| **Phase 4** | Custom syscall `sys_agent_query` (#548) baked into the kernel — any process can query its AI agent directly, synchronously, with a 15-second timeout and kernel fallback | ✅ Complete & Validated — custom kernel `6.6.142-ai-agent` booted in Alpine VM; syscall 548 live; 5-thread concurrent stress test passing; Netlink live + fallback modes verified |
-| **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | ✅ Complete & Validated — Removed host Ollama dependency; local LLM inference running within QEMU. |
-| **Phase 6** | Bootable OS appliance image: custom kernel + llama-server + agent daemon + SmolLM2-135M model baked into compressed QCOW2 image; zero manual setup; one-command boot | ✅ Complete & Validated — hardened /usr/local system paths; OpenRC runlevels; RPATH fixed; syscall roundtrip: 4.4s; `test_phase6_boot.sh`: 13/13 PASS; compressed image `ai-agent-os-v0.1.qcow2` |
-| **Phase 7** | OS Agent Fine-Tuning (LoRA) | ✅ Complete & Validated — Automated host-to-guest fine-tuning; hot-reloaded `.gguf` adapter via `llama-server`. The OS learns mechanically from its own `dataset.jsonl` logs. |
+| **Phase 1** | Userspace ptrace syscall monitor â€” observe any process's syscalls without modifying it | âœ… Complete & Validated â€” traces `/bin/ls`, `/bin/echo`, and arbitrary unmodified binaries |
+| **Phase 2** | Wire syscall data into an LLM for analysis/explanation | âœ… Complete & Validated â€” ptrace output piped into `syscall_analyzer.py`; querying local Ollama (`mistral:latest`, 7.2B Q4_K_M) via `http://10.0.2.2:11434`; 120s timeout; auto model detection |
+| **Phase 3** | Kernel module hooking `kernel_clone` to stream process-creation events to userspace agent daemon | âœ… Complete & Validated â€” LKM (`ai_process_hook.ko`) hooks `kernel_clone` via `kretprobe`; broadcasts `{parent_pid, child_pid, comm}` over Netlink protocol 31 to `agent_daemon.py`; 5 events captured in test |
+| **Phase 4** | Custom syscall `sys_agent_query` (#548) baked into the kernel â€” any process can query its AI agent directly, synchronously, with a 15-second timeout and kernel fallback | âœ… Complete & Validated â€” custom kernel `6.6.142-ai-agent` booted in Alpine VM; syscall 548 live; 5-thread concurrent stress test passing; Netlink live + fallback modes verified |
+| **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | âœ… Complete & Validated â€” Removed host Ollama dependency; local LLM inference running within QEMU. |
+| **Phase 6** | Bootable OS appliance image: custom kernel + llama-server + agent daemon + SmolLM2-135M model baked into compressed QCOW2 image; zero manual setup; one-command boot | âœ… Complete & Validated â€” hardened /usr/local system paths; OpenRC runlevels; RPATH fixed; syscall roundtrip: 4.4s; `test_phase6_boot.sh`: 13/13 PASS; compressed image `ai-agent-os-v0.1.qcow2` |
+| **Phase 7** | OS Agent Fine-Tuning (LoRA) | âœ… Complete & Validated â€” Automated host-to-guest fine-tuning; hot-reloaded `.gguf` adapter via `llama-server`. The OS learns mechanically from its own `dataset.jsonl` logs. |
 
 ---
 
-## 9. Phase 1: Userspace Ptrace Monitor — Implementation Detail
+## 9. Phase 1: Userspace Ptrace Monitor â€” Implementation Detail
 
 ### 9.1 Why ptrace first
 
@@ -544,7 +544,7 @@ Confirmed working: the monitor successfully traced a real `ls -la` invocation en
 
 ### 9.6 Limitations of the current Phase 1 approach (why it is not the end state)
 
-- **Performance overhead:** ptrace introduces a context switch on every syscall entry and exit, which is significant overhead — acceptable for a monitor/debug tool, unacceptable as a permanent architecture for every process on the system.
+- **Performance overhead:** ptrace introduces a context switch on every syscall entry and exit, which is significant overhead â€” acceptable for a monitor/debug tool, unacceptable as a permanent architecture for every process on the system.
 - **External, not intrinsic:** the target process must be launched *by* the monitor (as a child). It cannot attach retroactively to arbitrary already-running processes without `PTRACE_ATTACH` (which has its own permission and `ptrace_scope` restrictions on modern Linux), and it cannot apply universally to every process started by the OS without wrapping every launch path.
 - **No systemic guarantee:** because it's a userspace wrapper, any process not launched through it is invisible to the agent. This directly motivates Phase 3 (kernel-level hook into process creation, so *no* process can be started without a paired agent shim).
 
@@ -558,7 +558,7 @@ The syscall stream captured in Phase 1 needs to be turned into something meaning
 
 ### 10.2 Implemented: `ai-agent/syscall_analyzer.py`
 
-The project uses **Ollama** running on the Windows host, accessed from inside the Alpine VM via `http://10.0.2.2:11434` (QEMU SLIRP gateway). Uses **only** the Python standard library (`urllib.request`, `json`) — no `pip` or third-party packages, avoiding Alpine's unreliable `py3-pip`.
+The project uses **Ollama** running on the Windows host, accessed from inside the Alpine VM via `http://10.0.2.2:11434` (QEMU SLIRP gateway). Uses **only** the Python standard library (`urllib.request`, `json`) â€” no `pip` or third-party packages, avoiding Alpine's unreliable `py3-pip`.
 
 Key design decisions implemented:
 - **Auto model detection:** queries `/api/tags` on startup; prefers `llama3.2` if present, falls back to `mistral:latest`, then first available model, then hardcoded default.
@@ -693,17 +693,17 @@ Phase 3 replaces the external, opt-in ptrace-wrapper model with a **systemic, ke
 
 ```
 [ Any Uninstrumented Process (e.g. ls, sleep, sh) ]
-                         │
-                         ▼
+                         â”‚
+                         â–¼
         [ Linux Kernel 6.6 LTS (kernel_clone) ]
-                         │
-                         ▼
+                         â”‚
+                         â–¼
            [ kretprobe: clone_ret_handler ]
-                         │ (Extracts: parent_pid, child_pid, comm)
-                         ▼
+                         â”‚ (Extracts: parent_pid, child_pid, comm)
+                         â–¼
            [ Netlink Socket (protocol 31) ]
-                         │
-                         ▼
+                         â”‚
+                         â–¼
        [ Userspace agent_daemon.py (PID 3777) ]
 ```
 
@@ -779,11 +779,11 @@ This confirms that the operating system now has real-time, non-invasive process 
 
 ---
 
-## 12. Phase 4: Custom Syscall Interface (Code-Complete — Kernel Building)
+## 12. Phase 4: Custom Syscall Interface (Code-Complete â€” Kernel Building)
 
 ### 12.1 Objective
 
-Phase 4 adds a **custom syscall (`sys_agent_query`, number 548)** baked directly into the kernel image. Unlike ptrace (Phase 1, requires wrapping) or the LKM (Phase 3, passive observation only), this syscall gives any process a **synchronous, bidirectional channel** to its paired AI agent: send a natural-language query, block up to 15 seconds, receive a response — all mediated by the kernel, with no application-side daemon configuration required.
+Phase 4 adds a **custom syscall (`sys_agent_query`, number 548)** baked directly into the kernel image. Unlike ptrace (Phase 1, requires wrapping) or the LKM (Phase 3, passive observation only), this syscall gives any process a **synchronous, bidirectional channel** to its paired AI agent: send a natural-language query, block up to 15 seconds, receive a response â€” all mediated by the kernel, with no application-side daemon configuration required.
 
 ### 12.2 Why this requires a custom kernel build (not a module)
 
@@ -825,7 +825,7 @@ long n = syscall(__NR_agent_query, 0, query, strlen(query), response, sizeof(res
 if (n > 0) printf("Agent says: %s\n", response);
 ```
 
-### 12.4 IPC Protocol: Kernel ↔ Daemon
+### 12.4 IPC Protocol: Kernel â†” Daemon
 
 The syscall does not call the LLM directly. It uses the **Netlink socket (protocol 31)** established in Phase 3 to dispatch queries to the userspace daemon and synchronously wait for a response:
 
@@ -833,18 +833,18 @@ The syscall does not call the LLM directly. It uses the **Netlink socket (protoc
 [ Userspace Process ]
         | syscall(548, pid, query, query_len, resp, resp_len)
         v
-[ sys_agent_query() — kernel context ]
+[ sys_agent_query() â€” kernel context ]
         | 1. copy_from_user(query)
         | 2. alloc ai_query_waiter { query_id, wait_queue_head_t }
-        | 3. nlmsg_unicast(AI_MSG_SYSCALL_QUERY → daemon_pid)
+        | 3. nlmsg_unicast(AI_MSG_SYSCALL_QUERY â†’ daemon_pid)
         | 4. wait_event_interruptible_timeout(wq, completed, 15s)
         v
-[ agent_daemon.py — userspace ]
+[ agent_daemon.py â€” userspace ]
         | recv AI_MSG_SYSCALL_QUERY { query_id, caller_pid, comm, query }
         | POST http://10.0.2.2:11434/api/generate
         | send AI_MSG_SYSCALL_RESP { query_id, status, response }
         v
-[ ai_nl_recv_msg() — kernel, Netlink receive ]
+[ ai_nl_recv_msg() â€” kernel, Netlink receive ]
         | match query_id in waiter_list
         | copy response into waiter->response
         | wake_up_interruptible(wq)
@@ -860,10 +860,10 @@ The syscall does not call the LLM directly. It uses the **Netlink socket (protoc
 
 | Constant | Value | Direction | Purpose |
 |---|---|---|---|
-| `AI_MSG_REGISTER` | 0 | Daemon → Kernel | Daemon announces its PID on startup |
-| `AI_MSG_PROCESS_EVENT` | 1 | Kernel → Daemon | Phase 3 process-creation events |
-| `AI_MSG_SYSCALL_QUERY` | 2 | Kernel → Daemon | Phase 4 `sys_agent_query` dispatch |
-| `AI_MSG_SYSCALL_RESP` | 3 | Daemon → Kernel | Phase 4 response from LLM back to kernel |
+| `AI_MSG_REGISTER` | 0 | Daemon â†’ Kernel | Daemon announces its PID on startup |
+| `AI_MSG_PROCESS_EVENT` | 1 | Kernel â†’ Daemon | Phase 3 process-creation events |
+| `AI_MSG_SYSCALL_QUERY` | 2 | Kernel â†’ Daemon | Phase 4 `sys_agent_query` dispatch |
+| `AI_MSG_SYSCALL_RESP` | 3 | Daemon â†’ Kernel | Phase 4 response from LLM back to kernel |
 
 ### 12.5 Kernel Fallback Mode
 
@@ -882,7 +882,7 @@ This ensures any program calling the syscall always gets a valid response, even 
 | [`custom-kernel/include/uapi/linux/ai_agent.h`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/include/uapi/linux/ai_agent.h) | Shared UAPI header: constants, message structs, syscall number. Used by both kernel and userspace. |
 | [`custom-kernel/kernel/ai_agent.c`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/kernel/ai_agent.c) | Kernel-side `SYSCALL_DEFINE5(agent_query, ...)` implementation; Netlink receive handler; waiter list management. |
 | [`custom-kernel/patches/0001-add-ai-agent-syscall.patch`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/patches/0001-add-ai-agent-syscall.patch) | Reference patch showing all three kernel tree modifications (syscall table, header, Makefile). |
-| [`custom-kernel/build_kernel.sh`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/build_kernel.sh) | Automated build pipeline: inject sources → patch tree → configure → `make -j$(nproc) bzImage modules` → `make modules_install` → install to `/boot` → generate initramfs → update `extlinux.conf`. |
+| [`custom-kernel/build_kernel.sh`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/build_kernel.sh) | Automated build pipeline: inject sources â†’ patch tree â†’ configure â†’ `make -j$(nproc) bzImage modules` â†’ `make modules_install` â†’ install to `/boot` â†’ generate initramfs â†’ update `extlinux.conf`. |
 | [`agent-daemon/agent_daemon.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/agent_daemon.py) | Unified daemon: handles both Phase 3 `AI_MSG_PROCESS_EVENT` and Phase 4 `AI_MSG_SYSCALL_QUERY`. Queries Ollama on `http://10.0.2.2:11434`, sends `AI_MSG_SYSCALL_RESP` back to kernel. |
 | [`test-programs/test_syscall.c`](file:///c:/qemu-alpine/os-ai-agent/test-programs/test_syscall.c) | Userspace test program that calls `syscall(548, ...)` directly, prints response, and runs 4 edge-case validation tests (NULL query, zero length, NULL response, invalid memory address). |
 | [`test_phase4.sh`](file:///c:/qemu-alpine/os-ai-agent/test_phase4.sh) | Full test harness: verify kernel version, compile `test_syscall`, check `dmesg`, test fallback mode (daemon offline), test live AI mode (daemon online + Ollama), capture daemon logs. |
@@ -897,8 +897,8 @@ This ensures any program calling the syscall always gets a valid response, even 
 ### 12.8 Current Status (as of 2026-09-16)
 
 All source files are committed and injected into the kernel source tree inside the Alpine VM (`/usr/src/linux-6.6.142`). The `make -j4 bzImage modules` compilation is currently running inside the QEMU guest. Once complete:
-1. `make modules_install` → install to `/lib/modules/6.6.142-ai-agent/`
-2. Copy `arch/x86/boot/bzImage` → `/boot/vmlinuz-ai-agent`
+1. `make modules_install` â†’ install to `/lib/modules/6.6.142-ai-agent/`
+2. Copy `arch/x86/boot/bzImage` â†’ `/boot/vmlinuz-ai-agent`
 3. `mkinitfs -o /boot/initramfs-ai-agent 6.6.142-ai-agent`
 4. Update `/boot/extlinux.conf` (root UUID `df0e2a96-2b9e-4bdc-a08c-5cba0a781c6c`) to boot the AI-Agent kernel by default with stock LTS as fallback.
 5. Reboot and run `test_phase4.sh` to validate end-to-end.
@@ -924,10 +924,10 @@ More usage
 
 ### 13.3 Fine-tuning method: LoRA (Low-Rank Adaptation)
 
-Full fine-tuning updates every weight in the base model — expensive, slow, and impractical on consumer hardware. **LoRA** freezes the base model and trains a small set of additional low-rank adapter weights on top, which:
+Full fine-tuning updates every weight in the base model â€” expensive, slow, and impractical on consumer hardware. **LoRA** freezes the base model and trains a small set of additional low-rank adapter weights on top, which:
 - Trains in hours, not days/weeks
 - Runs on modest consumer hardware (as little as ~8GB VRAM for small base models)
-- Allows **multiple adapters** to coexist — e.g., a separate LoRA adapter specialized per process type (`gcc.lora`, `nginx.lora`, `python.lora`), loaded dynamically depending on which process the agent is currently paired with
+- Allows **multiple adapters** to coexist â€” e.g., a separate LoRA adapter specialized per process type (`gcc.lora`, `nginx.lora`, `python.lora`), loaded dynamically depending on which process the agent is currently paired with
 
 ```python
 # Conceptual runtime flow
@@ -939,25 +939,25 @@ response = model.generate(process.context)
 
 ### 13.4 Planned categories of fine-tuning signal
 
-1. **Syscall pattern recognition** — recognizing normal vs. anomalous syscall sequences for known programs (e.g., a `read()` loop immediately followed by `SIGSEGV` is a strong signal of a buffer overflow, and the fine-tuned model should learn to flag this pattern specifically, rather than reasoning about it generically each time).
-2. **Process-specific specialization** — separate LoRA adapters per major process category (compilers, web servers, interpreters, games), each fine-tuned on that category's typical behavior and typical failure modes.
-3. **Feedback-loop / RLHF-style learning** — logging whether a suggested fix was applied, and whether applying it actually resolved the issue, as a reward signal for periodic re-fine-tuning. This is explicitly framed as "RLHF at the OS level."
-4. **Kernel event language modeling** — a smaller, specialized model (or adapter) trained specifically on `dmesg`/kernel log output paired with human-readable explanations of what actually happened, since no existing general-purpose model is deeply trained on this specific log format and vocabulary.
+1. **Syscall pattern recognition** â€” recognizing normal vs. anomalous syscall sequences for known programs (e.g., a `read()` loop immediately followed by `SIGSEGV` is a strong signal of a buffer overflow, and the fine-tuned model should learn to flag this pattern specifically, rather than reasoning about it generically each time).
+2. **Process-specific specialization** â€” separate LoRA adapters per major process category (compilers, web servers, interpreters, games), each fine-tuned on that category's typical behavior and typical failure modes.
+3. **Feedback-loop / RLHF-style learning** â€” logging whether a suggested fix was applied, and whether applying it actually resolved the issue, as a reward signal for periodic re-fine-tuning. This is explicitly framed as "RLHF at the OS level."
+4. **Kernel event language modeling** â€” a smaller, specialized model (or adapter) trained specifically on `dmesg`/kernel log output paired with human-readable explanations of what actually happened, since no existing general-purpose model is deeply trained on this specific log format and vocabulary.
 
 ### 13.5 Data collection schema (planned directory layout inside the OS)
 
 ```
 /var/ai-agent/
-├── logs/
-│   ├── raw_syscalls/        <- raw ptrace/kernel-hook output
-│   ├── agent_responses/     <- what the model said, verbatim
-│   └── outcomes/            <- what actually happened afterward (success/failure/ignored)
-├── training_data/
-│   └── dataset.jsonl        <- formatted (prompt, completion, outcome) records
-└── adapters/
-    ├── gcc.lora
-    ├── nginx.lora
-    └── python.lora
+â”œâ”€â”€ logs/
+â”‚   â”œâ”€â”€ raw_syscalls/        <- raw ptrace/kernel-hook output
+â”‚   â”œâ”€â”€ agent_responses/     <- what the model said, verbatim
+â”‚   â””â”€â”€ outcomes/            <- what actually happened afterward (success/failure/ignored)
+â”œâ”€â”€ training_data/
+â”‚   â””â”€â”€ dataset.jsonl        <- formatted (prompt, completion, outcome) records
+â””â”€â”€ adapters/
+    â”œâ”€â”€ gcc.lora
+    â”œâ”€â”€ nginx.lora
+    â””â”€â”€ python.lora
 ```
 
 ### 13.6 Toolchain for fine-tuning (planned)
@@ -967,7 +967,7 @@ pip install transformers peft datasets trl
 ```
 
 ```python
-# Skeleton only — actual training script to be developed in Phase 5
+# Skeleton only â€” actual training script to be developed in Phase 5
 from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer
 # Load accumulated dataset.jsonl, configure LoRA rank/alpha,
@@ -984,7 +984,7 @@ from trl import SFTTrainer
 
 ### 14.1 Appliance Release Goal & Overview (v0.1)
 
-The objective of Phase 6 is to package the entire system built in Phases 1–5 into a self-contained, zero-configuration bootable appliance image (`ai-agent-os-v0.1.qcow2`). 
+The objective of Phase 6 is to package the entire system built in Phases 1â€“5 into a self-contained, zero-configuration bootable appliance image (`ai-agent-os-v0.1.qcow2`). 
 
 When booted on any host running QEMU (Windows, Linux, macOS), the appliance:
 1. Boots directly into the custom kernel `6.6.142-ai-agent` with built-in syscall #548 (`sys_agent_query`).
@@ -1016,7 +1016,7 @@ Binaries built with CMake had embedded build-tree RPATH references. Using `patch
 - **OpenRC Runlevel:** Services registered in `default` runlevel:
   - `llama-server`: Starts native musl inference server on `127.0.0.1:11434` with 4 threads. Health check poll loop verifies server readiness before declaring `[ ok ]`.
   - `ai-agent`: Starts unified daemon, connects to Netlink family 31, and registers PID with kernel.
-  - `sshd`: Enables secure management access over forwarded port 2222 (`root` / `aPushkar@12784`).
+  - `sshd`: Enables secure management access over forwarded port 2222 (`root` / `password`).
 
 ### 14.4 Syscall Latency & Prompt Optimization
 
@@ -1028,7 +1028,7 @@ On software CPU emulation (QEMU TCG without hardware virtualization), cold infer
 3. **Token budget:** Reduced `n_predict` to 8 tokens.
 4. **Prompt streamlining:** `prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"`
 
-**Result:** End-to-end kernel `syscall(548)` round-trip latency dropped from 27,715ms to **4,434ms** — a 6.2x speedup that reliably completes well within the kernel timeout.
+**Result:** End-to-end kernel `syscall(548)` round-trip latency dropped from 27,715ms to **4,434ms** â€” a 6.2x speedup that reliably completes well within the kernel timeout.
 
 ### 14.5 Automated Boot Verification Test Suite
 
@@ -1078,9 +1078,9 @@ Both scripts launch QEMU with 4GB RAM, 4 vCPUs, console stdio redirection, and S
 
 (See also Section 13.5 for the training-data-specific schema.) At a broader level, the system's logging philosophy is:
 
-- **Every interaction is logged** — every syscall stream observed, every prompt sent to the LLM, every response received, and (where determinable) every outcome.
+- **Every interaction is logged** â€” every syscall stream observed, every prompt sent to the LLM, every response received, and (where determinable) every outcome.
 - Logs are the raw material for fine-tuning (Section 13) and also serve as an audit trail for security review (Section 16).
-- Given the sensitivity of this data (it may contain file contents, network destinations, or other process-internal information), log storage location, retention, and access control need explicit design attention before Phase 3 gives the agent write/kill/redirect authority over real processes — this is currently an **open item** (Section 21).
+- Given the sensitivity of this data (it may contain file contents, network destinations, or other process-internal information), log storage location, retention, and access control need explicit design attention before Phase 3 gives the agent write/kill/redirect authority over real processes â€” this is currently an **open item** (Section 21).
 
 ---
 
@@ -1090,20 +1090,20 @@ Both scripts launch QEMU with 4GB RAM, 4 vCPUs, console stdio redirection, and S
 
 > "Total visibility + total control = total responsibility."
 
-An agent with the reach described in Section 3 is, by construction, the single most powerful and most dangerous component in the system. If compromised, misconfigured, or simply wrong in a high-confidence way, it has the same reach as a rootkit — because architecturally, that is almost exactly what it is (a system-wide, kernel-adjacent observer/controller). This must be treated as a first-class design constraint, not an afterthought bolted on after the "cool" parts are built.
+An agent with the reach described in Section 3 is, by construction, the single most powerful and most dangerous component in the system. If compromised, misconfigured, or simply wrong in a high-confidence way, it has the same reach as a rootkit â€” because architecturally, that is almost exactly what it is (a system-wide, kernel-adjacent observer/controller). This must be treated as a first-class design constraint, not an afterthought bolted on after the "cool" parts are built.
 
 ### 16.2 Specific risks to design against
 
 - **The agent becomes the biggest attack surface.** A vulnerability in the agent's LLM-serving stack, its kernel module, or its IPC channel could be leveraged for privilege escalation or system-wide compromise.
-- **Wrong decisions have system-wide consequences.** Because the agent can (at full maturity) kill processes, redirect network traffic, or modify file contents, an incorrect or hallucinated decision is not contained to one application — it can affect the whole system.
+- **Wrong decisions have system-wide consequences.** Because the agent can (at full maturity) kill processes, redirect network traffic, or modify file contents, an incorrect or hallucinated decision is not contained to one application â€” it can affect the whole system.
 - **Prompt-injection-style risks from observed data.** If the agent ingests file contents, network payloads, or process output as context for its LLM calls, a malicious process could craft data specifically designed to manipulate the agent's own reasoning (an OS-level analog of prompt injection).
 - **Novelty itself is a risk factor.** Because no mainstream OS does this today, there is limited prior art or established best practice to lean on; threat modeling here is comparatively green-field.
 
 ### 16.3 Mitigations planned
 
-- Strict staged rollout of authority via **Agent Autonomy Levels** (Section 17) — the agent starts with zero ability to affect anything and only gains authority incrementally, based on demonstrated reliability.
+- Strict staged rollout of authority via **Agent Autonomy Levels** (Section 17) â€” the agent starts with zero ability to affect anything and only gains authority incrementally, based on demonstrated reliability.
 - Logging (Section 15) of every decision and its outcome, to support after-the-fact audit and to build the training signal needed for fine-tuning trust more safely over time.
-- Isolation of the agent's own runtime (LLM server, agent-manager daemon) with the least privilege necessary for its current autonomy level — e.g., an agent in "Observe Mode" should not run with kernel-level write access at all.
+- Isolation of the agent's own runtime (LLM server, agent-manager daemon) with the least privilege necessary for its current autonomy level â€” e.g., an agent in "Observe Mode" should not run with kernel-level write access at all.
 
 ---
 
@@ -1114,11 +1114,11 @@ A four-stage model for how much authority the agent has, to be implemented as an
 | Mode | Behavior |
 |---|---|
 | **Observe Mode** (current/default) | Agent watches syscalls/events, logs them, and can explain them, but takes no action of any kind. |
-| **Suggest Mode** | Agent recommends specific actions (e.g., "this process's read loop looks unbounded — consider adding a length check") but a human must explicitly approve before anything happens. |
+| **Suggest Mode** | Agent recommends specific actions (e.g., "this process's read loop looks unbounded â€” consider adding a length check") but a human must explicitly approve before anything happens. |
 | **Assist Mode** | Agent acts autonomously only on decisions above a defined confidence threshold, and logs every such action for later review. |
 | **Autonomous Mode** | Agent acts freely within explicitly defined boundaries (e.g., "may throttle network connections from unrecognized processes, but may never delete files"). |
 
-**Current project status: Observe Mode only.** No component built so far (ptrace monitor, syscall analyzer) takes any action on the traced process; it only reads and reports. Escalating to Suggest Mode or beyond should be treated as a deliberate, explicit future milestone — not a side effect of adding new features.
+**Current project status: Observe Mode only.** No component built so far (ptrace monitor, syscall analyzer) takes any action on the traced process; it only reads and reports. Escalating to Suggest Mode or beyond should be treated as a deliberate, explicit future milestone â€” not a side effect of adding new features.
 
 ---
 
@@ -1128,35 +1128,35 @@ Actual layout as of Phase 4 (all files tracked in git at `~/os-ai-agent`, pushed
 
 ```
 os-ai-agent/
-├── README.md
-├── docs/
-│   └── AI_Agent_OS_Technical_Documentation.md   <- this document
-├── ptrace-monitor/
-│   ├── monitor.c                                <- Phase 1: ptrace syscall tracer
-│   └── monitor                                  <- compiled binary (should be .gitignore'd)
-├── ai-agent/
-│   └── syscall_analyzer.py                      <- Phase 2: Ollama-backed LLM analyzer
-├── kernel-module/
-│   ├── ai_process_hook.c                        <- Phase 3: LKM kretprobe on kernel_clone
-│   └── Makefile
-├── agent-daemon/
-│   └── agent_daemon.py                          <- Unified Phase 3+4 Netlink daemon
-├── custom-kernel/
-│   ├── build_kernel.sh                          <- Phase 4: automated kernel build pipeline
-│   ├── include/
-│   │   └── uapi/linux/
-│   │       └── ai_agent.h                       <- Shared UAPI header (kernel + userspace)
-│   ├── kernel/
-│   │   └── ai_agent.c                           <- sys_agent_query implementation
-│   └── patches/
-│       └── 0001-add-ai-agent-syscall.patch    <- Reference patch for syscall table + header + Makefile
-├── test-programs/
-│   ├── test_syscall.c                           <- Phase 4: userspace syscall(548) test program
-│   └── Makefile
-├── test_pipeline.sh                             <- Phase 1+2 integration test
-├── test_phase3.sh                               <- Phase 3 verification harness
-├── test_phase4.sh                               <- Phase 4 verification harness
-└── .git/
+â”œâ”€â”€ README.md
+â”œâ”€â”€ docs/
+â”‚   â””â”€â”€ AI_Agent_OS_Technical_Documentation.md   <- this document
+â”œâ”€â”€ ptrace-monitor/
+â”‚   â”œâ”€â”€ monitor.c                                <- Phase 1: ptrace syscall tracer
+â”‚   â””â”€â”€ monitor                                  <- compiled binary (should be .gitignore'd)
+â”œâ”€â”€ ai-agent/
+â”‚   â””â”€â”€ syscall_analyzer.py                      <- Phase 2: Ollama-backed LLM analyzer
+â”œâ”€â”€ kernel-module/
+â”‚   â”œâ”€â”€ ai_process_hook.c                        <- Phase 3: LKM kretprobe on kernel_clone
+â”‚   â””â”€â”€ Makefile
+â”œâ”€â”€ agent-daemon/
+â”‚   â””â”€â”€ agent_daemon.py                          <- Unified Phase 3+4 Netlink daemon
+â”œâ”€â”€ custom-kernel/
+â”‚   â”œâ”€â”€ build_kernel.sh                          <- Phase 4: automated kernel build pipeline
+â”‚   â”œâ”€â”€ include/
+â”‚   â”‚   â””â”€â”€ uapi/linux/
+â”‚   â”‚       â””â”€â”€ ai_agent.h                       <- Shared UAPI header (kernel + userspace)
+â”‚   â”œâ”€â”€ kernel/
+â”‚   â”‚   â””â”€â”€ ai_agent.c                           <- sys_agent_query implementation
+â”‚   â””â”€â”€ patches/
+â”‚       â””â”€â”€ 0001-add-ai-agent-syscall.patch    <- Reference patch for syscall table + header + Makefile
+â”œâ”€â”€ test-programs/
+â”‚   â”œâ”€â”€ test_syscall.c                           <- Phase 4: userspace syscall(548) test program
+â”‚   â””â”€â”€ Makefile
+â”œâ”€â”€ test_pipeline.sh                             <- Phase 1+2 integration test
+â”œâ”€â”€ test_phase3.sh                               <- Phase 3 verification harness
+â”œâ”€â”€ test_phase4.sh                               <- Phase 4 verification harness
+â””â”€â”€ .git/
 ```
 
 **Git history milestones:**
@@ -1238,35 +1238,35 @@ This section tracks unresolved items. Items that have been resolved are marked ~
 
 1. ~~**VM-to-host Ollama networking:** NAT port-forward `Connection refused` was never conclusively identified.~~ **RESOLVED:** Root cause was Ollama binding only to `127.0.0.1`. Fixed by setting `OLLAMA_HOST=0.0.0.0` on the Windows host. Guest reaches Ollama at `http://10.0.2.2:11434`.
 2. ~~**Guest internet access** was inconsistent.~~ **RESOLVED:** QEMU SLIRP user-mode networking provides full outbound access. `apk`, `git`, and `curl` all work from the guest.
-3. **Choice of final in-guest model** — currently using host-side `mistral:latest`. Once Phase 4 is validated, the next step is installing Ollama or `llama.cpp` directly inside the guest (requires more RAM — currently 2GB, may need 4GB for a 7B model). Smaller option: Phi-3 Mini 3.8B or Llama 3.2 3B at 4-bit quantization.
-4. ~~**Kernel module hook point** (tracepoints vs. direct function hook) — needed a firm decision before Phase 3.~~ **RESOLVED:** Used `kretprobe` on `kernel_clone`, which is the safe, upstream-supported approach (no symbol manipulation).
-5. ~~**Custom syscall numbering/ABI stability** across kernel versions.~~ **RESOLVED for development:** Used syscall number 548 (appended after the last upstream entry 452, with a gap to reduce collision risk). ABI stability for a shipping product remains an open question — the gap approach is not a long-term solution.
+3. **Choice of final in-guest model** â€” currently using host-side `mistral:latest`. Once Phase 4 is validated, the next step is installing Ollama or `llama.cpp` directly inside the guest (requires more RAM â€” currently 2GB, may need 4GB for a 7B model). Smaller option: Phi-3 Mini 3.8B or Llama 3.2 3B at 4-bit quantization.
+4. ~~**Kernel module hook point** (tracepoints vs. direct function hook) â€” needed a firm decision before Phase 3.~~ **RESOLVED:** Used `kretprobe` on `kernel_clone`, which is the safe, upstream-supported approach (no symbol manipulation).
+5. ~~**Custom syscall numbering/ABI stability** across kernel versions.~~ **RESOLVED for development:** Used syscall number 548 (appended after the last upstream entry 452, with a gap to reduce collision risk). ABI stability for a shipping product remains an open question â€” the gap approach is not a long-term solution.
 6. **Security review process** for escalating from Observe Mode to Suggest Mode has not yet been designed in detail. This must be addressed before Phase 5 logging begins capturing real process data and before any action authority is granted to the daemon.
-7. **IDE/editor choice** — currently using `vim` over SSH. Antigravity IDE (this tool) is now being used for host-side editing and coordination. Decision reached: use Antigravity for design/documentation work on host, keep `vim` for in-VM kernel editing.
-8. **Licensing and distribution model** for the eventual OS image — not yet decided (open-source license choice, Alpine license attribution, model weights licensing).
-9. **Agent daemon startup ordering** — currently started manually. Before Phase 6, the daemon must be an OpenRC service that starts before user sessions, so syscall 548 responses are available at login time.
-10. **Daemon crash recovery** — if `agent_daemon.py` dies, `daemon_pid` in the kernel becomes stale. The kernel already handles this (delivery failure clears `daemon_pid`, fallback mode activates), but a supervisor/watchdog process should be added in Phase 5.
-11. **Waiter timeout interaction with signal handling** — `wait_event_interruptible_timeout` returns `-EINTR` if a signal arrives. Long-running processes that send many queries may need a retry wrapper in userspace.
-12. **Syscall 548 ABI across kernel versions** — if the OS image is updated to a newer kernel in the future, syscall 548 must be re-registered in that kernel's table. A long-term plan for ABI versioning is needed before Phase 6.
+7. **IDE/editor choice** â€” currently using `vim` over SSH. Antigravity IDE (this tool) is now being used for host-side editing and coordination. Decision reached: use Antigravity for design/documentation work on host, keep `vim` for in-VM kernel editing.
+8. **Licensing and distribution model** for the eventual OS image â€” not yet decided (open-source license choice, Alpine license attribution, model weights licensing).
+9. **Agent daemon startup ordering** â€” currently started manually. Before Phase 6, the daemon must be an OpenRC service that starts before user sessions, so syscall 548 responses are available at login time.
+10. **Daemon crash recovery** â€” if `agent_daemon.py` dies, `daemon_pid` in the kernel becomes stale. The kernel already handles this (delivery failure clears `daemon_pid`, fallback mode activates), but a supervisor/watchdog process should be added in Phase 5.
+11. **Waiter timeout interaction with signal handling** â€” `wait_event_interruptible_timeout` returns `-EINTR` if a signal arrives. Long-running processes that send many queries may need a retry wrapper in userspace.
+12. **Syscall 548 ABI across kernel versions** â€” if the OS image is updated to a newer kernel in the future, syscall 548 must be re-registered in that kernel's table. A long-term plan for ABI versioning is needed before Phase 6.
 
 ---
 
 ## 22. Glossary
 
-- **ptrace** — a Linux syscall (`ptrace(2)`) that allows one process to observe and control the execution of another, used by debuggers (`gdb`) and tracers (`strace`) alike.
-- **syscall (system call)** — the mechanism by which a userspace program requests a service from the kernel (e.g., opening a file, reading from a socket).
-- **orig_rax** — the x86-64 register field (captured via `PTRACE_GETREGS`) that holds the syscall number at syscall-entry, distinct from `rax` which holds the return value at syscall-exit.
-- **LKM (Loadable Kernel Module)** — a piece of code that can be dynamically inserted into or removed from a running kernel without rebooting, via `insmod`/`rmmod`.
-- **kretprobe** — a Linux kernel mechanism (part of the `kprobes` infrastructure) that fires a callback on the *return* of a specified kernel function. Used in Phase 3 to intercept `kernel_clone()` returns and capture the newly created child PID.
-- **SYSCALL_DEFINE5** — a Linux kernel macro that declares a syscall with 5 arguments, handling the architecture-specific calling convention details. Phase 4's `sys_agent_query` uses `SYSCALL_DEFINE5(agent_query, pid_t, ..., size_t, ...)`.
-- **netlink socket** — a Linux IPC mechanism specifically designed for communication between the kernel and userspace processes, used in Phases 3 and 4 via protocol 31 (`NETLINK_AI_AGENT`).
-- **wait queue (`wait_queue_head_t`)** — a kernel data structure that allows a process/thread to sleep until a condition is met. Used in `sys_agent_query` to block the calling userspace process until the daemon responds.
-- **LoRA (Low-Rank Adaptation)** — a parameter-efficient fine-tuning technique that trains a small set of additional weights on top of a frozen base model, dramatically reducing the compute/memory needed compared to full fine-tuning.
-- **Quantization** — reducing the numerical precision of a model's weights (e.g., from 16-bit to 4-bit) to shrink memory footprint and speed up inference, at some cost to output quality.
-- **musl libc** — a lightweight, standards-conformant C standard library used by Alpine Linux, as an alternative to glibc.
-- **BusyBox** — a single executable that implements many common Unix utilities (`ls`, `mount`, `ping`, etc.) as a multi-call binary, commonly used in minimal/embedded Linux distributions such as Alpine.
-- **extlinux / SYSLINUX** — the bootloader used by Alpine Linux. Boot menu entries are configured in `/boot/extlinux.conf`. Adding a new kernel requires adding a new `LABEL` block with `LINUX`, `INITRD`, and `APPEND` fields.
-- **Observe / Suggest / Assist / Autonomous Mode** — this project's four-tier model (Section 17) for how much authority the AI agent has, ranging from pure logging to fully autonomous action within defined boundaries.
+- **ptrace** â€” a Linux syscall (`ptrace(2)`) that allows one process to observe and control the execution of another, used by debuggers (`gdb`) and tracers (`strace`) alike.
+- **syscall (system call)** â€” the mechanism by which a userspace program requests a service from the kernel (e.g., opening a file, reading from a socket).
+- **orig_rax** â€” the x86-64 register field (captured via `PTRACE_GETREGS`) that holds the syscall number at syscall-entry, distinct from `rax` which holds the return value at syscall-exit.
+- **LKM (Loadable Kernel Module)** â€” a piece of code that can be dynamically inserted into or removed from a running kernel without rebooting, via `insmod`/`rmmod`.
+- **kretprobe** â€” a Linux kernel mechanism (part of the `kprobes` infrastructure) that fires a callback on the *return* of a specified kernel function. Used in Phase 3 to intercept `kernel_clone()` returns and capture the newly created child PID.
+- **SYSCALL_DEFINE5** â€” a Linux kernel macro that declares a syscall with 5 arguments, handling the architecture-specific calling convention details. Phase 4's `sys_agent_query` uses `SYSCALL_DEFINE5(agent_query, pid_t, ..., size_t, ...)`.
+- **netlink socket** â€” a Linux IPC mechanism specifically designed for communication between the kernel and userspace processes, used in Phases 3 and 4 via protocol 31 (`NETLINK_AI_AGENT`).
+- **wait queue (`wait_queue_head_t`)** â€” a kernel data structure that allows a process/thread to sleep until a condition is met. Used in `sys_agent_query` to block the calling userspace process until the daemon responds.
+- **LoRA (Low-Rank Adaptation)** â€” a parameter-efficient fine-tuning technique that trains a small set of additional weights on top of a frozen base model, dramatically reducing the compute/memory needed compared to full fine-tuning.
+- **Quantization** â€” reducing the numerical precision of a model's weights (e.g., from 16-bit to 4-bit) to shrink memory footprint and speed up inference, at some cost to output quality.
+- **musl libc** â€” a lightweight, standards-conformant C standard library used by Alpine Linux, as an alternative to glibc.
+- **BusyBox** â€” a single executable that implements many common Unix utilities (`ls`, `mount`, `ping`, etc.) as a multi-call binary, commonly used in minimal/embedded Linux distributions such as Alpine.
+- **extlinux / SYSLINUX** â€” the bootloader used by Alpine Linux. Boot menu entries are configured in `/boot/extlinux.conf`. Adding a new kernel requires adding a new `LABEL` block with `LINUX`, `INITRD`, and `APPEND` fields.
+- **Observe / Suggest / Assist / Autonomous Mode** â€” this project's four-tier model (Section 17) for how much authority the AI agent has, ranging from pure logging to fully autonomous action within defined boundaries.
 
 ---
 
@@ -1274,35 +1274,35 @@ This section tracks unresolved items. Items that have been resolved are marked ~
 
 ---
 
-## 12. Phase 4: Custom Syscall Interface — Implementation Detail
+## 12. Phase 4: Custom Syscall Interface â€” Implementation Detail
 
-**Status:** ✅ Complete & Validated (2026-09-20)
+**Status:** âœ… Complete & Validated (2026-09-20)
 
 ### 12.1 Goal
 
-Bake `sys_agent_query` (syscall #548) directly into the kernel so any unmodified userspace process can call it to query the AI agent synchronously. No library, no IPC socket management, no daemon awareness — just `syscall(548, ...)`.
+Bake `sys_agent_query` (syscall #548) directly into the kernel so any unmodified userspace process can call it to query the AI agent synchronously. No library, no IPC socket management, no daemon awareness â€” just `syscall(548, ...)`.
 
 ### 12.2 Architecture
 
 ```
 Userspace process
-    │
-    │  syscall(548, query, query_len, resp_buf, resp_len, target_pid)
-    ▼
+    â”‚
+    â”‚  syscall(548, query, query_len, resp_buf, resp_len, target_pid)
+    â–¼
 Kernel: sys_agent_query()
-    │  1. Validate pointers (copy_from_user / access_ok)
-    │  2. Build ai_agent_request, enqueue on wait_queue
-    │  3. Send Netlink msg to daemon_pid
-    │  4. wait_event_interruptible_timeout(15s)
-    │  5a. Daemon replied → copy_to_user, return bytes written
-    │  5b. Timeout → kernel fallback message returned
-    ▼
+    â”‚  1. Validate pointers (copy_from_user / access_ok)
+    â”‚  2. Build ai_agent_request, enqueue on wait_queue
+    â”‚  3. Send Netlink msg to daemon_pid
+    â”‚  4. wait_event_interruptible_timeout(15s)
+    â”‚  5a. Daemon replied â†’ copy_to_user, return bytes written
+    â”‚  5b. Timeout â†’ kernel fallback message returned
+    â–¼
 Netlink socket (NETLINK_AI_AGENT, protocol 31)
-    │
-    ▼
+    â”‚
+    â–¼
 agent_daemon.py
-    │  Receives query → calls llama-server → sends Netlink reply
-    ▼
+    â”‚  Receives query â†’ calls llama-server â†’ sends Netlink reply
+    â–¼
 Kernel: wakes wait_queue, copies response to userspace
 ```
 
@@ -1317,23 +1317,23 @@ Kernel: wakes wait_queue, copies response to userspace
 
 ### 12.4 Validation results (`test_phase4.sh`)
 
-- Kernel version: `6.6.142-ai-agent` ✅
-- Syscall 548 live: response returned < 6ms (fallback mode) ✅
-- Edge cases: NULL query, zero-len, NULL buf, bad address → all correctly rejected with `-EINVAL`/`-EFAULT` ✅
-- 5-thread concurrent stress test: **ALL 5 PASS**, sub-ms fallback latency ✅
-- Netlink live mode (daemon registered): Daemon receives and responds ✅
+- Kernel version: `6.6.142-ai-agent` âœ…
+- Syscall 548 live: response returned < 6ms (fallback mode) âœ…
+- Edge cases: NULL query, zero-len, NULL buf, bad address â†’ all correctly rejected with `-EINVAL`/`-EFAULT` âœ…
+- 5-thread concurrent stress test: **ALL 5 PASS**, sub-ms fallback latency âœ…
+- Netlink live mode (daemon registered): Daemon receives and responds âœ…
 
 ### 12.5 Design decisions
 
 - **Syscall number 548**: Appended after last upstream entry 452. Gap to 548 reduces collision risk with future upstream additions.
 - **15-second `wait_event_interruptible_timeout`**: Long enough for a slow in-guest LLM on real hardware; provides guaranteed response (kernel fallback) so no userspace process ever hangs indefinitely.
-- **Kernel fallback message**: If daemon is offline or times out, kernel returns `[KERNEL-AI-SUBSYSTEM] ... Daemon offline; kernel status: NORMAL.` — the caller always gets a useful response.
+- **Kernel fallback message**: If daemon is offline or times out, kernel returns `[KERNEL-AI-SUBSYSTEM] ... Daemon offline; kernel status: NORMAL.` â€” the caller always gets a useful response.
 
 ---
 
-## 13. Phase 5: In-Guest Native LLM Inference — Implementation Detail
+## 13. Phase 5: In-Guest Native LLM Inference â€” Implementation Detail
 
-**Status:** ✅ Validated (2026-09-24) — `test_phase5.sh`: 17 PASS / 0 FAIL / 5 WARN
+**Status:** âœ… Validated (2026-09-24) â€” `test_phase5.sh`: 17 PASS / 0 FAIL / 5 WARN
 
 ### 13.1 Goal
 
@@ -1356,29 +1356,29 @@ SIMD flags are disabled because QEMU's emulated x86 CPU does not support AVX/AVX
 
 **SmolLM2-135M-Instruct-Q4_K_M.gguf** (100.6MB)
 - Smallest usable instruct model with coherent JSON-style output
-- Q4_K_M: 4-bit quantization, Medium variant — best quality/size tradeoff in the <200MB range
-- Performance on QEMU x86 (no AVX): **1.1–1.7 t/s** (generation), **~647ms/token** (prompt processing)
-- On real hardware with AVX2: projected **10–50 t/s** (sub-second responses within 15s kernel timeout)
+- Q4_K_M: 4-bit quantization, Medium variant â€” best quality/size tradeoff in the <200MB range
+- Performance on QEMU x86 (no AVX): **1.1â€“1.7 t/s** (generation), **~647ms/token** (prompt processing)
+- On real hardware with AVX2: projected **10â€“50 t/s** (sub-second responses within 15s kernel timeout)
 
 ### 13.4 Service architecture
 
 ```
 /etc/init.d/llama-server   (OpenRC, starts at boot)
-    │  /root/llama.cpp/build/bin/llama-server
-    │  --model /root/models/smollm2-135m-instruct-q4_k_m.gguf
-    │  --port 11434 --threads 2 --ctx-size 512
-    ▼
+    â”‚  /root/llama.cpp/build/bin/llama-server
+    â”‚  --model /root/models/smollm2-135m-instruct-q4_k_m.gguf
+    â”‚  --port 11434 --threads 2 --ctx-size 512
+    â–¼
 HTTP :11434
-    /health  →  {"status":"ok"}
-    /completion  →  {"content": "...", "tokens_predicted": N, ...}
+    /health  â†’  {"status":"ok"}
+    /completion  â†’  {"content": "...", "tokens_predicted": N, ...}
 
 /etc/init.d/ai-agent  (OpenRC, depends on llama-server)
-    │  agent_daemon.py
-    │  LLAMA_URL=http://127.0.0.1:11434/completion
-    ▼
+    â”‚  agent_daemon.py
+    â”‚  LLAMA_URL=http://127.0.0.1:11434/completion
+    â–¼
 Kernel Netlink (NETLINK_AI_AGENT, protocol 31)
-    │
-    ▼
+    â”‚
+    â–¼
 sys_agent_query (syscall 548)
 ```
 
@@ -1404,13 +1404,13 @@ This dataset accumulates per-process-type examples and will be used for LoRA fin
 ### 13.6 Performance constraints & hardware note
 
 On **QEMU emulated x86 (no AVX/AVX2)**:
-- Prompt processing: ~647ms/token → 25-token prompt ≈ 16s
-- Generation: ~907ms/token → 30-token response ≈ 27s
-- **Total per query: ~20–45s** — exceeds the kernel's 15s `wait_event_timeout`
+- Prompt processing: ~647ms/token â†’ 25-token prompt â‰ˆ 16s
+- Generation: ~907ms/token â†’ 30-token response â‰ˆ 27s
+- **Total per query: ~20â€“45s** â€” exceeds the kernel's 15s `wait_event_timeout`
 - Kernel correctly returns `ETIMEDOUT` (errno 110); fallback message delivered; no hang
 
 On **real x86-64 hardware (AVX2)**:
-- Projected 10–50 t/s → full query completes in **<2 seconds**
+- Projected 10â€“50 t/s â†’ full query completes in **<2 seconds**
 - Fits comfortably within 15s kernel wait window
 - Phase 5 is architecturally complete; only the emulation environment is slow
 
@@ -1418,29 +1418,29 @@ On **real x86-64 hardware (AVX2)**:
 
 | Step | Result |
 |------|--------|
-| Kernel `6.6.142-ai-agent` detected | ✅ PASS |
-| `llama-server` binary (musl, 20KB) | ✅ PASS |
-| GGUF model (100.6MB) present | ✅ PASS |
-| `llama-cli --single-turn` → `"Hola!"` @ 1.7 t/s | ✅ PASS |
-| `llama-server` startup (polled `/health`) | ✅ PASS |
-| `/health` → `{"status":"ok"}` | ✅ PASS |
-| `/completion` returned generated text | ✅ PASS |
-| Test programs compiled | ✅ PASS |
-| `agent_daemon.py` started & registered with kernel | ✅ PASS |
-| syscall 548 response (ETIMEDOUT = HW limit) | ⚠️ WARN (expected on QEMU) |
-| 5-thread stress test: ALL PASS | ✅ PASS |
-| JSONL dataset: 14 records, valid schema | ✅ PASS |
-| Agent responses log exists | ✅ PASS |
-| `/etc/init.d/llama-server` installed | ✅ PASS |
-| `/etc/init.d/ai-agent` installed | ✅ PASS |
-| Cleanup | ✅ PASS |
+| Kernel `6.6.142-ai-agent` detected | âœ… PASS |
+| `llama-server` binary (musl, 20KB) | âœ… PASS |
+| GGUF model (100.6MB) present | âœ… PASS |
+| `llama-cli --single-turn` â†’ `"Hola!"` @ 1.7 t/s | âœ… PASS |
+| `llama-server` startup (polled `/health`) | âœ… PASS |
+| `/health` â†’ `{"status":"ok"}` | âœ… PASS |
+| `/completion` returned generated text | âœ… PASS |
+| Test programs compiled | âœ… PASS |
+| `agent_daemon.py` started & registered with kernel | âœ… PASS |
+| syscall 548 response (ETIMEDOUT = HW limit) | âš ï¸ WARN (expected on QEMU) |
+| 5-thread stress test: ALL PASS | âœ… PASS |
+| JSONL dataset: 14 records, valid schema | âœ… PASS |
+| Agent responses log exists | âœ… PASS |
+| `/etc/init.d/llama-server` installed | âœ… PASS |
+| `/etc/init.d/ai-agent` installed | âœ… PASS |
+| Cleanup | âœ… PASS |
 | **Total** | **17 PASS / 0 FAIL / 5 WARN** |
 
 ---
 
 ## 14. Phase 6: OS Image Packaging & Distribution
 
-**Status:** ✅ Validated (2026-09-24) — Bootable standalone OS appliance image (`ai-agent-os-v0.1.qcow2`)
+**Status:** âœ… Validated (2026-09-24) â€” Bootable standalone OS appliance image (`ai-agent-os-v0.1.qcow2`)
 
 ### 14.1 Objective
 Transform the fragile, manually-configured QEMU development environment into a standalone, hardened, bootable virtual appliance. A user should be able to download a single file, boot it in QEMU, and instantly have a working Linux kernel with a native AI agent integrated via syscall 548.
@@ -1455,7 +1455,7 @@ Transform the fragile, manually-configured QEMU development environment into a s
 
 ## 15. Phase 7: OS Agent Fine-Tuning (LoRA)
 
-**Status:** ✅ Validated (2026-09-26) — Automated host-to-guest fine-tuning and hot-reloading.
+**Status:** âœ… Validated (2026-09-26) â€” Automated host-to-guest fine-tuning and hot-reloading.
 
 ### 15.1 Objective
 Enable the operating system to mechanically learn from its own observations and improve its decision-making over time without requiring large parameter models, full retraining, or internet connectivity.
@@ -1487,7 +1487,7 @@ The learning cycle relies on a continuous feedback loop between the kernel, the 
 *End of document. This is a living record and should be updated as each phase progresses.*
 
 ## 16. Phase 8: Intent-Driven Execution (The Orchestrator OS)
-**Status:** ✅ Validated (2026-09-26) — The OS agent can autonomously orchestrate and execute shell commands to fulfill user intents.
+**Status:** âœ… Validated (2026-09-26) â€” The OS agent can autonomously orchestrate and execute shell commands to fulfill user intents.
 
 ### 16.1 Objective
 Pivot from passive "Observe Mode" (where the agent simply analyzes processes) into "Assist Mode" (autonomous operation). Instead of the LLM trying to micromanage files or execute complex tasks by writing raw bytes itself, the OS acts as an **Orchestrator**. It translates high-level user intents into structured delegation commands, delegating the actual work to existing software (like `sh`, `apk`, `gcc`, etc.).

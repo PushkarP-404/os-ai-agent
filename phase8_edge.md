@@ -1,4 +1,4 @@
-
+﻿
 ### 16.4 Edge Case Handling & Hardening
 During Phase 8 development, we identified and hardened several critical execution edge cases to ensure the daemon doesn't crash or corrupt the kernel subsystem when delegated tasks fail:
 1. **Missing Target Software:** If the LLM delegates to a tool that isn't installed (e.g., `{"target_software": "nonexistent_tool"}`), the `FileNotFoundError` is caught by Python, preventing a daemon crash, and returning the exact error text to the kernel.

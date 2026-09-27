@@ -1,5 +1,5 @@
-#!/bin/sh
-# test_phase5.sh — AI-Agent OS Phase 5 Verification Harness
+﻿#!/bin/sh
+# test_phase5.sh â€” AI-Agent OS Phase 5 Verification Harness
 #
 # Phase 5 (native musl llama.cpp): validates:
 #   1. Custom ai-agent kernel is running
@@ -28,7 +28,7 @@ WARNINGS=0
 ok()   { echo "[PASS] $1"; PASS=$((PASS+1)); }
 fail() { echo "[FAIL] $1"; FAIL=$((FAIL+1)); }
 warn() { echo "[WARN] $1"; WARNINGS=$((WARNINGS+1)); }
-step() { echo ""; echo "── $1 ──────────────────────────────────────────"; }
+step() { echo ""; echo "â”€â”€ $1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€"; }
 
 LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/root/llama.cpp/build/bin/llama-server}"
 LLAMA_CLI_BIN="${LLAMA_CLI_BIN:-/root/llama.cpp/build/bin/llama-cli}"
@@ -41,7 +41,7 @@ echo "      AI-Agent OS: Phase 5 Verification Test      "
 echo "      (Native musl llama.cpp + SmolLM2-135M)      "
 echo "=================================================="
 
-# ── Step 1: Kernel version ────────────────────────────────────────────────────
+# â”€â”€ Step 1: Kernel version â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 1: Kernel Version"
 KERNEL=$(uname -r)
 echo "Running kernel: $KERNEL"
@@ -50,11 +50,11 @@ case "$KERNEL" in
         ok "Custom ai-agent kernel detected"
         ;;
     *)
-        warn "Not on ai-agent kernel ($KERNEL) — syscall 548 tests may fail"
+        warn "Not on ai-agent kernel ($KERNEL) â€” syscall 548 tests may fail"
         ;;
 esac
 
-# ── Step 2: llama-server binary ───────────────────────────────────────────────
+# â”€â”€ Step 2: llama-server binary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 2: llama-server Binary"
 if [ -x "$LLAMA_SERVER_BIN" ]; then
     ok "llama-server binary found: $LLAMA_SERVER_BIN"
@@ -65,7 +65,7 @@ else
     echo "  -> Build with: make -C /root/llama.cpp/build -j4 llama-server"
 fi
 
-# ── Step 3: GGUF model file ───────────────────────────────────────────────────
+# â”€â”€ Step 3: GGUF model file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 3: GGUF Model File"
 if [ -f "$MODEL_PATH" ]; then
     MODEL_SIZE=$(du -h "$MODEL_PATH" | cut -f1)
@@ -76,7 +76,7 @@ else
     echo "     curl -L -o $MODEL_PATH https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf"
 fi
 
-# ── Step 4: llama-cli smoke test (offline, no HTTP) ──────────────────────────
+# â”€â”€ Step 4: llama-cli smoke test (offline, no HTTP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 4: llama-cli Direct Inference Smoke Test"
 if [ -x "$LLAMA_CLI_BIN" ] && [ -f "$MODEL_PATH" ]; then
     echo "  -> Testing llama-cli with --single-turn (timeout 180s)"
@@ -91,13 +91,13 @@ if [ -x "$LLAMA_CLI_BIN" ] && [ -f "$MODEL_PATH" ]; then
     if [ -n "$CLI_OUT" ]; then
         ok "llama-cli produced output"
     else
-        warn "llama-cli returned empty output within 180s — will verify via llama-server in Step 7"
+        warn "llama-cli returned empty output within 180s â€” will verify via llama-server in Step 7"
     fi
 else
     warn "Skipping llama-cli test (binary or model missing)"
 fi
 
-# ── Step 5: Start llama-server ────────────────────────────────────────────────
+# â”€â”€ Step 5: Start llama-server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 5: Start llama-server on :$LLAMA_PORT"
 # Kill any lingering llama-server
 pkill -9 -f llama-server 2>/dev/null || true
@@ -126,7 +126,7 @@ while [ $WAIT -lt 90 ]; do
         break
     fi
     if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
-        fail "llama-server exited unexpectedly during startup — check $LLAMA_LOG"
+        fail "llama-server exited unexpectedly during startup â€” check $LLAMA_LOG"
         cat "$LLAMA_LOG"
         exit 1
     fi
@@ -138,12 +138,12 @@ done
 if [ "$READY" -eq 1 ]; then
     ok "llama-server is running (ready in ${WAIT}s)"
 else
-    fail "llama-server not ready after 90s — check $LLAMA_LOG"
+    fail "llama-server not ready after 90s â€” check $LLAMA_LOG"
     cat "$LLAMA_LOG"
     exit 1
 fi
 
-# ── Step 6: llama-server /health ─────────────────────────────────────────────
+# â”€â”€ Step 6: llama-server /health â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 6: llama-server HTTP /health"
 HEALTH=$(curl -sf "http://$LLAMA_HOST:$LLAMA_PORT/health" 2>/dev/null || true)
 echo "  -> /health response: $HEALTH"
@@ -153,7 +153,7 @@ else
     fail "llama-server /health did not respond (got: $HEALTH)"
 fi
 
-# ── Step 7: llama-server /completion ─────────────────────────────────────────
+# â”€â”€ Step 7: llama-server /completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 7: llama-server /completion API"
 COMPLETION=$(curl -sf -X POST "http://$LLAMA_HOST:$LLAMA_PORT/completion" \
     -H "Content-Type: application/json" \
@@ -167,14 +167,14 @@ else
     fail "llama-server /completion returned empty content"
 fi
 
-# ── Step 8: Compile test programs ────────────────────────────────────────────
+# â”€â”€ Step 8: Compile test programs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 8: Compile Test Programs"
 make -C test-programs clean > /dev/null 2>&1 || true
 make -C test-programs
 ok "test_syscall and test_syscall_stress compiled"
 
-# ── Step 9: Start agent_daemon.py against llama-server ───────────────────────
-step "STEP 9: Agent Daemon Startup (→ llama-server)"
+# â”€â”€ Step 9: Start agent_daemon.py against llama-server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+step "STEP 9: Agent Daemon Startup (â†’ llama-server)"
 DAEMON_LOG="/tmp/agent_daemon_phase5.log"
 LLAMA_URL="http://$LLAMA_HOST:$LLAMA_PORT/completion" \
   python3 agent-daemon/agent_daemon.py > "$DAEMON_LOG" 2>&1 &
@@ -185,12 +185,12 @@ sleep 2
 if kill -0 "$DAEMON_PID" 2>/dev/null; then
     ok "Daemon is running"
 else
-    fail "Daemon exited unexpectedly — check $DAEMON_LOG"
+    fail "Daemon exited unexpectedly â€” check $DAEMON_LOG"
     cat "$DAEMON_LOG"
 fi
 
-# ── Step 10: sys_agent_query (syscall 548) → in-guest LLM ───────────────────
-step "STEP 10: sys_agent_query — Live In-Guest LLM (Native musl)"
+# â”€â”€ Step 10: sys_agent_query (syscall 548) â†’ in-guest LLM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+step "STEP 10: sys_agent_query â€” Live In-Guest LLM (Native musl)"
 echo "  -> Firing syscall 548 with daemon + llama-server online..."
 SYSCALL_OUT=$(./test-programs/test_syscall \
     "Phase 5 validation. Process is opening a socket to 8.8.8.8:53 for DNS. Assess risk." \
@@ -199,7 +199,7 @@ echo "$SYSCALL_OUT"
 if echo "$SYSCALL_OUT" | grep -q "SUCCESS"; then
     ok "syscall 548 returned a live LLM response (within kernel 15s timeout)"
 elif echo "$SYSCALL_OUT" | grep -q "timed out\|ETIMEDOUT\|errno: 110\|110"; then
-    warn "syscall 548 timed out (errno 110) — expected on emulated x86 without AVX"
+    warn "syscall 548 timed out (errno 110) â€” expected on emulated x86 without AVX"
     warn "  LLM prompt processing: ~647ms/token on QEMU x86 (no AVX/AVX2)"
     warn "  Kernel wait_event_timeout: 15s; actual LLM latency: ~20-30s"
     warn "  On real hardware with AVX2 this would run at 10-50 t/s and pass easily"
@@ -209,7 +209,7 @@ else
     fail "syscall 548 returned unexpected error: $SYSCALL_OUT"
 fi
 
-# ── Step 11: Concurrent stress test ──────────────────────────────────────────
+# â”€â”€ Step 11: Concurrent stress test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 11: Concurrent Stress Test (5 threads)"
 echo "  -> This may take up to 90s (5 x 15s kernel timeout worst case)..."
 STRESS_OUT=$(./test-programs/test_syscall_stress 2>&1) || true
@@ -220,7 +220,7 @@ else
     warn "Stress test did not report ALL PASS (check output above)"
 fi
 
-# ── Step 12: Structured log files ────────────────────────────────────────────
+# â”€â”€ Step 12: Structured log files â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 12: Structured Logging (/var/ai-agent/)"
 if [ -d /var/ai-agent ]; then
     ok "/var/ai-agent/ directory exists"
@@ -244,7 +244,7 @@ else
     warn "/var/ai-agent/ not created yet"
 fi
 
-# ── Step 13: OpenRC scripts ───────────────────────────────────────────────────
+# â”€â”€ Step 13: OpenRC scripts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 13: OpenRC Service Scripts"
 NEED_RC=0
 for svc in llama-server ai-agent; do
@@ -263,7 +263,7 @@ if [ "$NEED_RC" -eq 1 ]; then
     echo "     rc-update add llama-server default && rc-update add ai-agent default"
 fi
 
-# ── Step 14: Cleanup ──────────────────────────────────────────────────────────
+# â”€â”€ Step 14: Cleanup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 step "STEP 14: Cleanup"
 kill -TERM "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID" 2>/dev/null || true
@@ -285,9 +285,9 @@ echo ""
 echo "  Phase 5 Verification Summary"
 echo "  PASS: $PASS   FAIL: $FAIL   WARNINGS: $WARNINGS"
 if [ "$FAIL" -eq 0 ]; then
-    echo "  RESULT: PHASE 5 VALIDATED ✓ (native musl llama.cpp)"
+    echo "  RESULT: PHASE 5 VALIDATED âœ“ (native musl llama.cpp)"
 else
-    echo "  RESULT: $FAIL FAILURE(S) — see output above"
+    echo "  RESULT: $FAIL FAILURE(S) â€” see output above"
 fi
 echo "=================================================="
 

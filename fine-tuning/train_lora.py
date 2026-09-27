@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import torch
 from datasets import Dataset
@@ -63,7 +63,7 @@ def main():
     lora_config = LoraConfig(
         r=8,                     # Rank of the adapter (size)
         lora_alpha=16,           # Scaling factor
-        target_modules=["q_proj", "v_proj"], # Which layers to target in attention
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], # Extended target modules for better convergence
         lora_dropout=0.05,
         bias="none",
         task_type=TaskType.CAUSAL_LM

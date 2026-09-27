@@ -36,6 +36,18 @@ int trace_sys_openat(struct pt_regs *ctx, int dfd, const char __user *filename, 
     events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
+
+// Hook for sys_connect
+int trace_sys_connect(struct pt_regs *ctx, int fd, struct sockaddr __user *uservaddr, int addrlen) {
+    struct data_t data = {};
+    data.pid = bpf_get_current_pid_tgid() >> 32;
+    data.type = 2; // Network Connect
+    bpf_get_current_comm(&data.comm, sizeof(data.comm));
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), "network_connect");
+    
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
 """
 
 def process_event(cpu, data, size):
@@ -49,9 +61,14 @@ def process_event(cpu, data, size):
         "target": event.filename.decode('utf-8', 'replace')
     }
     
-    # In full implementation, this sends via UDP or Unix Socket to agent_daemon.py
-    # to update SYSTEM_CAPABILITIES or OS_STATE_GRAPH
+    # Send via Unix Socket to agent_daemon.py
     print(f"[eBPF SENSOR] {json.dumps(msg)}")
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.sendto(json.dumps(msg).encode('utf-8'), "/var/ai-agent/ebpf.sock")
+        s.close()
+    except Exception as e:
+        pass
 
 if __name__ == "__main__":
     print("Loading eBPF Senses...")
@@ -59,6 +76,7 @@ if __name__ == "__main__":
     
     # Attach kprobes
     b.attach_kprobe(event=b.get_syscall_fnname("openat"), fn_name="trace_sys_openat")
+    b.attach_kprobe(event=b.get_syscall_fnname("connect"), fn_name="trace_sys_connect")
     
     print("eBPF Sensors Active. Streaming OS state to Agent Daemon...")
     

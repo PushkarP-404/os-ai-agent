@@ -8,7 +8,7 @@
 #include <linux/string.h>
 #include <net/sock.h>
 
-#define NETLINK_AI_AGENT 31
+#define NETLINK_AI_AGENT 30
 #define COMM_LEN 16
 
 MODULE_LICENSE("GPL");

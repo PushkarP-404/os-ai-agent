@@ -1,5 +1,5 @@
-#!/bin/sh
-# test_phase6_boot.sh — AI-Agent OS Phase 6 Boot & Appliance Validation Test Harness
+﻿#!/bin/sh
+# test_phase6_boot.sh â€” AI-Agent OS Phase 6 Boot & Appliance Validation Test Harness
 #
 # Validates:
 #   1. Custom kernel: 6.6.142-ai-agent running
@@ -25,7 +25,7 @@ WARNINGS=0
 ok()   { echo "[PASS] $1"; PASS=$((PASS+1)); }
 fail() { echo "[FAIL] $1"; FAIL=$((FAIL+1)); }
 warn() { echo "[WARN] $1"; WARNINGS=$((WARNINGS+1)); }
-step() { echo ""; echo "── $1 ──────────────────────────────────────────"; }
+step() { echo ""; echo "â”€â”€ $1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€"; }
 
 LLAMA_SERVER_BIN="/usr/local/bin/llama-server"
 LLAMA_CLI_BIN="/usr/local/bin/llama-cli"
@@ -38,7 +38,7 @@ echo "=================================================="
 echo "    AI-Agent OS: Phase 6 Boot Validation Harness  "
 echo "=================================================="
 
-# ── Step 1: Kernel Version ──
+# â”€â”€ Step 1: Kernel Version â”€â”€
 step "STEP 1: Custom Kernel Verification"
 KVER=$(uname -r)
 echo "  -> Running kernel: $KVER"
@@ -48,7 +48,7 @@ else
     fail "Unexpected kernel: $KVER (expected 6.6.142-ai-agent)"
 fi
 
-# ── Step 2: System Paths & Binary Installation ──
+# â”€â”€ Step 2: System Paths & Binary Installation â”€â”€
 step "STEP 2: System Paths & Dynamic Linker Verification"
 if [ -x "$LLAMA_SERVER_BIN" ] && [ -x "$LLAMA_CLI_BIN" ]; then
     ok "llama-server and llama-cli installed in /usr/local/bin"
@@ -63,7 +63,7 @@ else
     fail "$MISSING_LIBS unresolved library dependencies"
 fi
 
-# ── Step 3: Model Verification ──
+# â”€â”€ Step 3: Model Verification â”€â”€
 step "STEP 3: Model Storage Verification"
 if [ -f "$MODEL_PATH" ]; then
     SIZE=$(ls -lh "$MODEL_PATH" | awk '{print $5}')
@@ -72,7 +72,7 @@ else
     fail "Model missing at $MODEL_PATH"
 fi
 
-# ── Step 4: Daemon Installation ──
+# â”€â”€ Step 4: Daemon Installation â”€â”€
 step "STEP 4: Agent Daemon System Installation"
 if [ -f "$AGENT_SCRIPT" ] && [ -x "$AGENT_SCRIPT" ]; then
     ok "agent_daemon.py installed and executable at $AGENT_SCRIPT"
@@ -80,14 +80,14 @@ else
     fail "agent_daemon.py missing at $AGENT_SCRIPT"
 fi
 
-# ── Step 5: OpenRC Service Runlevels ──
+# â”€â”€ Step 5: OpenRC Service Runlevels â”€â”€
 step "STEP 5: OpenRC Default Runlevel Services"
 SERVICES=$(rc-update show default)
 echo "$SERVICES" | grep -q llama-server && ok "llama-server registered in default runlevel" || fail "llama-server not in default runlevel"
 echo "$SERVICES" | grep -q ai-agent && ok "ai-agent registered in default runlevel" || fail "ai-agent not in default runlevel"
 echo "$SERVICES" | grep -q sshd && ok "sshd registered in default runlevel" || fail "sshd not in default runlevel"
 
-# ── Step 6: HTTP Health Check ──
+# â”€â”€ Step 6: HTTP Health Check â”€â”€
 step "STEP 6: llama-server HTTP /health Endpoint"
 HEALTH=$(curl -sf http://127.0.0.1:11434/health 2>/dev/null || true)
 echo "  -> /health: $HEALTH"
@@ -97,7 +97,7 @@ else
     fail "llama-server /health failed or unreachable"
 fi
 
-# ── Step 7: Kernel Daemon Registration ──
+# â”€â”€ Step 7: Kernel Daemon Registration â”€â”€
 step "STEP 7: Kernel Netlink Agent Registration"
 REG_CHECK=$(dmesg | grep "ai_agent: Userspace agent daemon registered" | tail -n 1 || true)
 if [ -n "$REG_CHECK" ]; then
@@ -106,7 +106,7 @@ else
     fail "No daemon registration found in dmesg"
 fi
 
-# ── Step 8: End-to-End Syscall 548 Execution ──
+# â”€â”€ Step 8: End-to-End Syscall 548 Execution â”€â”€
 step "STEP 8: End-to-End Syscall 548 (sys_agent_query) Verification"
 if [ -x "$TEST_SYSCALL_BIN" ]; then
     OUT=$("$TEST_SYSCALL_BIN" 2>&1)
@@ -125,7 +125,7 @@ else
     fail "test_syscall binary missing at $TEST_SYSCALL_BIN"
 fi
 
-# ── Step 9: Structured Dataset & Logging ──
+# â”€â”€ Step 9: Structured Dataset & Logging â”€â”€
 step "STEP 9: Telemetry & JSONL Dataset Verification"
 if [ -f "$DATASET_PATH" ]; then
     RECS=$(wc -l < "$DATASET_PATH")
@@ -136,7 +136,7 @@ else
     fail "Dataset missing at $DATASET_PATH"
 fi
 
-# ── Summary ──
+# â”€â”€ Summary â”€â”€
 echo ""
 echo "=================================================="
 echo "           Phase 6 Boot Validation Summary        "

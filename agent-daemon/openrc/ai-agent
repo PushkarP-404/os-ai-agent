@@ -39,6 +39,9 @@ start_pre() {
             ;;
     esac
     mkdir -p /var/ai-agent/logs /var/ai-agent/training_data
+    chown -R ai-agent:ai-agent /var/ai-agent
+    touch "$AGENT_LOG"
+    chown ai-agent:ai-agent "$AGENT_LOG"
 }
 
 start() {
@@ -47,6 +50,7 @@ start() {
         --background \
         --make-pidfile \
         --pidfile "$AGENT_PIDFILE" \
+        --user ai-agent:ai-agent \
         --stdout "$AGENT_LOG" \
         --stderr "$AGENT_LOG" \
         --exec "$PYTHON_BIN" \

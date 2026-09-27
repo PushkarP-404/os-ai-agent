@@ -1,4 +1,4 @@
-#!/bin/sh
+﻿#!/bin/sh
 set -e
 
 echo "=== 1. Tracing /bin/ls with ptrace monitor ==="

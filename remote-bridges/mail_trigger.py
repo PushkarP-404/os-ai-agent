@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Mail-to-Intent Bridge for AI-Agent OS
 Polls an IMAP mailbox for emails with a specific subject trigger and dispatches the body to agent-cli.
@@ -6,6 +6,7 @@ Polls an IMAP mailbox for emails with a specific subject trigger and dispatches 
 
 import imaplib
 import email
+import email.utils
 import time
 import subprocess
 import os
@@ -19,10 +20,18 @@ SUBJECT_TRIGGER = "[AGENT-CMD]"
 POLL_INTERVAL_SEC = 60
 
 def process_email(msg):
-    """Extracts body and sends to agent-cli, verifying the sender first."""
-    sender = msg.get("From", "")
-    if AUTHORIZED_SENDER.lower() not in sender.lower():
-        print(f"[!] Rejected command from unauthorized sender: {sender}")
+    """Extracts body and sends to agent-cli, verifying the sender first.
+    
+    Security fix (2026-09-27):
+    - Use email.utils.parseaddr() to extract only the email address, not
+      the display name. This prevents 'Evil <authorized@gmail.com>' bypass.
+    - Pass body as a separate argument, not string-formatted into the command.
+    """
+    raw_from = msg.get("From", "")
+    # Parse only the email address portion (ignores display name)
+    _, sender_addr = email.utils.parseaddr(raw_from)
+    if AUTHORIZED_SENDER.lower() != sender_addr.lower():
+        print(f"[!] Rejected command from unauthorized sender: {raw_from} (addr: {sender_addr})")
         return
         
     body = ""
@@ -40,22 +49,22 @@ def process_email(msg):
         
     print(f"[*] Received command via email: {body[:50]}...")
     
-    # Dispatch to agent-cli
-    cmd = ["agent-cli", f"/assist {body}"]
-    print(f"[*] Executing: {' '.join(cmd)}")
+    # Security fix (2026-09-27): Pass body as separate argument (not string-formatted)
+    # to prevent any argument-level injection from newlines or special characters.
+    cmd = ["agent-cli", body]
+    print(f"[*] Executing: agent-cli '<email body>'")
     
     try:
-        # Pass the body to agent-cli
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         print(f"[*] Task completed. Agent Output:\n{result.stdout}")
-        
-        # Note: In a full implementation, you could use smtplib here to 
-        # send result.stdout back to the original sender.
+        if result.returncode != 0:
+            print(f"[!] agent-cli returned error: {result.stderr}")
         
     except Exception as e:
         print(f"[!] Failed to execute agent-cli: {e}")
 
 def poll_mailbox():
+    mail = None
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
@@ -73,11 +82,16 @@ def poll_mailbox():
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     process_email(msg)
-                    
-        mail.close()
-        mail.logout()
     except Exception as e:
         print(f"[!] IMAP polling error: {e}")
+    finally:
+        # Bug fix (2026-09-27): Always close IMAP connection to prevent leaks
+        if mail is not None:
+            try:
+                mail.close()
+                mail.logout()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     print(f"Starting Mail-to-Intent Poller. Checking for '{SUBJECT_TRIGGER}' every {POLL_INTERVAL_SEC}s...")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-logger.py — AI-Agent OS Structured Interaction Logger
+logger.py â€” AI-Agent OS Structured Interaction Logger
 
 Writes JSONL records of every agent interaction to /var/ai-agent/.
 These records form the raw training data corpus for the Phase 5 LoRA
@@ -8,12 +8,12 @@ fine-tuning pipeline.
 
 Directory layout created automatically on first use:
   /var/ai-agent/
-  ├── logs/
-  │   ├── raw_syscalls/        <- ptrace / kernel-hook raw output (future)
-  │   ├── agent_responses/     <- one .jsonl file per day, all LLM responses
-  │   └── outcomes/            <- outcome labels (populated in Phase 6)
-  └── training_data/
-      └── dataset.jsonl        <- (prompt, completion, metadata) tuples
+  â”œâ”€â”€ logs/
+  â”‚   â”œâ”€â”€ raw_syscalls/        <- ptrace / kernel-hook raw output (future)
+  â”‚   â”œâ”€â”€ agent_responses/     <- one .jsonl file per day, all LLM responses
+  â”‚   â””â”€â”€ outcomes/            <- outcome labels (populated in Phase 6)
+  â””â”€â”€ training_data/
+      â””â”€â”€ dataset.jsonl        <- (prompt, completion, metadata) tuples
 """
 
 import json
@@ -21,7 +21,7 @@ import os
 import time
 import datetime
 
-# ── Directory layout ─────────────────────────────────────────────────────────
+# â”€â”€ Directory layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 AI_AGENT_BASE     = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
 RAW_SYSCALL_DIR   = os.path.join(AI_AGENT_BASE, "logs", "raw_syscalls")
 RESPONSES_DIR     = os.path.join(AI_AGENT_BASE, "logs", "agent_responses")
@@ -30,10 +30,15 @@ TRAINING_DATA_DIR = os.path.join(AI_AGENT_BASE, "training_data")
 DATASET_JSONL     = os.path.join(TRAINING_DATA_DIR, "dataset.jsonl")
 
 
+_dirs_initialized = False
+
 def _ensure_dirs():
     """Create the /var/ai-agent/ directory tree if it doesn't exist."""
-    for d in (RAW_SYSCALL_DIR, RESPONSES_DIR, OUTCOMES_DIR, TRAINING_DATA_DIR):
-        os.makedirs(d, mode=0o750, exist_ok=True)
+    global _dirs_initialized
+    if not _dirs_initialized:
+        for d in (RAW_SYSCALL_DIR, RESPONSES_DIR, OUTCOMES_DIR, TRAINING_DATA_DIR):
+            os.makedirs(d, mode=0o750, exist_ok=True)
+        _dirs_initialized = True
 
 
 def _responses_file():
@@ -49,7 +54,7 @@ def _write_jsonl(path, record):
         f.write(line + "\n")
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def log_interaction(
     query_id,
@@ -141,7 +146,7 @@ def log_raw_syscalls(pid, comm, syscall_data):
         f.write(f"[{datetime.datetime.utcnow().isoformat()}Z] {syscall_data}\n")
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_prompt(comm, caller_pid, target_pid, query):
     """
@@ -165,9 +170,9 @@ def get_stats():
     _ensure_dirs()
     try:
         with open(DATASET_JSONL, "r", encoding="utf-8") as f:
-            lines = [l for l in f if l.strip()]
+            total_lines = sum(1 for line in f if line.strip())
         return {
-            "total_interactions": len(lines),
+            "total_interactions": total_lines,
             "dataset_path":       DATASET_JSONL,
             "responses_dir":      RESPONSES_DIR,
         }

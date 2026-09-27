@@ -1,11 +1,11 @@
-#!/bin/bash
-# boot.sh — Launch AI-Agent OS Appliance v0.1 in QEMU (Linux/macOS)
+﻿#!/bin/bash
+# boot.sh â€” Launch AI-Agent OS Appliance v0.1 in QEMU (Linux/macOS)
 #
 # Usage:
 #   ./boot.sh [image_path]
 #
 # Default SSH port forward: localhost:2222 -> guest:22
-# Default credentials: root / aPushkar@12784
+# Default credentials: root / password
 
 IMAGE="${1:-ai-agent-os-v0.1.qcow2}"
 MEMORY="${MEMORY:-4G}"
@@ -35,7 +35,7 @@ echo "=================================================="
 echo "  Image:    $IMAGE"
 echo "  RAM:      $MEMORY"
 echo "  vCPUs:    $CPUS"
-echo "  SSH Port: $SSH_PORT (root / aPushkar@12784)"
+echo "  SSH Port: $SSH_PORT (root / password)"
 echo "--------------------------------------------------"
 
 exec qemu-system-x86_64 \

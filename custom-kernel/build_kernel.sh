@@ -90,12 +90,12 @@ mkinitfs -o /boot/initramfs-ai-agent 6.6.142-ai-agent
 echo "  -> Generated /boot/initramfs-ai-agent"
 
 echo "[STEP 7] Updating extlinux.conf bootloader..."
-UUID=$(awk '$2 == "/" {print $1}' /etc/fstab | sed 's/UUID=//')
-if [ -z "$UUID" ]; then
-    UUID=$(findmnt -n -o UUID /)
+ROOT_DEV=$(awk '$2 == "/" {print $1}' /etc/fstab)
+if [ -z "$ROOT_DEV" ]; then
+    ROOT_DEV=$(findmnt -n -o SOURCE /)
 fi
 
-echo "Root filesystem UUID: $UUID"
+echo "Root filesystem device: $ROOT_DEV"
 
 cat << EOF > /boot/extlinux.conf
 # AI-Agent OS Bootloader Configuration
@@ -109,13 +109,13 @@ LABEL ai-os
   MENU LABEL Linux 6.6.142-ai-agent (AI-Agent OS Kernel)
   LINUX vmlinuz-ai-agent
   INITRD initramfs-ai-agent
-  APPEND root=UUID=${UUID} modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4
+  APPEND root=${ROOT_DEV} modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4
 
 LABEL lts
   MENU LABEL Linux lts (Fallback Stock Kernel)
   LINUX vmlinuz-lts
   INITRD initramfs-lts
-  APPEND root=UUID=${UUID} modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4
+  APPEND root=${ROOT_DEV} modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4
 
 MENU SEPARATOR
 EOF

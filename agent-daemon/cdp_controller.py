@@ -1,10 +1,16 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 import urllib.request
 import json
 import websocket
 import sys
 import argparse
 import time
+import threading
+
+# Bug fix (2026-09-27): Use a monotonic counter for request IDs to prevent
+# duplicate IDs when multiple calls happen within 1ms.
+_cdp_id_lock = threading.Lock()
+_cdp_id_counter = 0
 
 def get_websocket():
     try:
@@ -26,17 +32,37 @@ def get_websocket():
         
     return websocket.create_connection(ws_url), page
 
-def call_cdp(ws, method, params=None):
-    req_id = int(time.time() * 1000) % 1000000
+def call_cdp(ws, method, params=None, timeout=10.0):
+    """Send a Chrome DevTools Protocol command and wait for its response.
+    
+    Bug fix (2026-09-27): Previously used an infinite while True loop with no
+    timeout, causing the daemon to hang forever if Chrome disconnects. Now uses
+    a deadline-based loop with ws.settimeout().
+    """
+    global _cdp_id_counter
+    with _cdp_id_lock:
+        _cdp_id_counter += 1
+        req_id = _cdp_id_counter
+    
     req = {"id": req_id, "method": method}
     if params:
         req["params"] = params
+    ws.settimeout(timeout)
     ws.send(json.dumps(req))
     
-    while True:
-        res = json.loads(ws.recv())
-        if res.get('id') == req_id:
-            return res.get('result', {})
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            res = json.loads(ws.recv())
+            if res.get('id') == req_id:
+                return res.get('result', {})
+            # Ignore events/notifications (they have no 'id')
+        except websocket.WebSocketTimeoutException:
+            break
+        except Exception as e:
+            print(f"CDP recv error: {e}")
+            break
+    raise TimeoutError(f"CDP call '{method}' timed out after {timeout}s")
 
 def cmd_dump(ws, page):
     result = call_cdp(ws, "Accessibility.getFullAXTree")
@@ -64,8 +90,7 @@ def cmd_dump(ws, page):
                 print(f"  [{node['nodeId']}] {role}")
 
 def cmd_click(ws, backend_node_id):
-    # Resolve backend node to DOM node
-    dom_doc = call_cdp(ws, "DOM.getDocument")
+    # Bug fix (2026-09-27): Removed unused dom_doc call that wasted a CDP round-trip
     node_result = call_cdp(ws, "DOM.resolveNode", {"backendNodeId": int(backend_node_id)})
     
     obj_id = node_result.get('object', {}).get('objectId')
@@ -87,8 +112,8 @@ def cmd_click(ws, backend_node_id):
     print(f"Clicked node {backend_node_id}")
 
 def cmd_type(ws, backend_node_id, text):
-    # Resolve backend node to DOM node
-    dom_doc = call_cdp(ws, "DOM.getDocument")
+    # Bug fix (2026-09-27): Removed unused dom_doc call + now sends full text in 1 CDP call
+    # Previously typed one character at a time (100 WebSocket calls for 100-char string).
     node_result = call_cdp(ws, "DOM.resolveNode", {"backendNodeId": int(backend_node_id)})
     
     obj_id = node_result.get('object', {}).get('objectId')
@@ -108,9 +133,8 @@ def cmd_type(ws, backend_node_id, text):
         "functionDeclaration": "function() { this.value = ''; }",
     })
     
-    # Insert text
-    for char in text:
-        call_cdp(ws, "Input.insertText", {"text": char})
+    # Insert entire text in a single CDP call (was: one call per character)
+    call_cdp(ws, "Input.insertText", {"text": text})
     print(f"Typed '{text}' into node {backend_node_id}")
     
 def cmd_goto(ws, url):

@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
         }
 
         printf("\n=====================================\n");
-        printf("Total syscalls captured: %d\n", syscall_count);
+        printf("Total syscalls captured: %d (recorded: %d)\n", syscall_count, syscall_count > MAX_SYSCALLS ? MAX_SYSCALLS : syscall_count);
     } 
     else {
         perror("fork failed");

@@ -1,10 +1,10 @@
-<#
+﻿<#
 .SYNOPSIS
     Boots the AI-Agent OS appliance image in QEMU.
 .DESCRIPTION
     Launches QEMU x86_64 with 4GB RAM, 4 vCPUs, and boots into AI-Agent OS v0.1.
     All system services (llama-server, ai-agent, sshd) initialize automatically.
-    SSH access is forwarded to localhost:2222 (user: root, pass: aPushkar@12784).
+    SSH access is forwarded to localhost:2222 (user: root, pass: password).
 #>
 param(
     [string]$Image = "ai-agent-os-v0.1.qcow2",
@@ -41,7 +41,7 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "  Image:    $Image"
 Write-Host "  RAM:      $MemoryMB MB"
 Write-Host "  vCPUs:    $Cores"
-Write-Host "  SSH Port: $SshPort (root / aPushkar@12784)"
+Write-Host "  SSH Port: $SshPort (root / password)"
 Write-Host "--------------------------------------------------" -ForegroundColor Gray
 
 & $QemuExe `

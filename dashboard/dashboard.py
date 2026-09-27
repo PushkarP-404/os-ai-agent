@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 import gi
 import json
 import os
@@ -83,9 +83,9 @@ class SentinelDashboard(Gtk.Window):
         try:
             res = subprocess.run(["sudo", "rc-service", "ai-agent", "status"], capture_output=True, text=True)
             if "started" in res.stdout:
-                self.status_lbl.set_markup("<span foreground='green'>● RUNNING</span>")
+                self.status_lbl.set_markup("<span foreground='green'>â— RUNNING</span>")
             else:
-                self.status_lbl.set_markup("<span foreground='red'>● STOPPED</span>")
+                self.status_lbl.set_markup("<span foreground='red'>â— STOPPED</span>")
         except Exception as e:
             self.status_lbl.set_text(f"Error checking status: {e}")
         return True # keep timeout running
@@ -130,10 +130,19 @@ class SentinelDashboard(Gtk.Window):
         full_path = os.path.join(MODELS_DIR, model)
         conf_data = f'LLAMA_MODEL="{full_path}"\n'
         
-        # Write to conf file using sudo
-        cmd = f"echo '{conf_data}' | sudo tee {LLAMA_CONF_FILE}"
-        subprocess.run(cmd, shell=True)
-        subprocess.run(["sudo", "rc-service", "llama-server", "restart"], capture_output=True)
+        # Security fix (2026-09-27): Removed shell=True which allowed shell injection
+        # via malformed model filenames. Now uses list-form subprocess with piped input.
+        try:
+            subprocess.run(
+                ["sudo", "tee", LLAMA_CONF_FILE],
+                input=conf_data,
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(["sudo", "rc-service", "llama-server", "restart"], capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[ERROR] Failed to apply model: {e}")
 
     def setup_capabilities_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
@@ -176,7 +185,8 @@ class SentinelDashboard(Gtk.Window):
             try:
                 with open(CAPABILITIES_FILE, "r") as f:
                     caps = json.load(f)
-            except: pass
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                print(f"[WARN] Failed to load capabilities: {e}")
             
         for k, v in caps.items():
             row = Gtk.ListBoxRow()
@@ -200,14 +210,16 @@ class SentinelDashboard(Gtk.Window):
             try:
                 with open(CAPABILITIES_FILE, "r") as f:
                     caps = json.load(f)
-            except: pass
+            except (json.JSONDecodeError, IOError, OSError) as e:
+                print(f"[WARN] Failed to load capabilities: {e}")
             
         caps["primary_ide"] = ide_name
         
         try:
             with open(CAPABILITIES_FILE, "w") as f:
                 json.dump(caps, f)
-        except: pass
+        except (IOError, OSError) as e:
+            print(f"[WARN] Failed to save capabilities: {e}")
         
         self.ide_entry.set_text("")
         self.load_capabilities_ui()

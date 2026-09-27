@@ -1,13 +1,17 @@
-import paramiko
+﻿import paramiko
 import time
 import sys
+import os
 
 def main():
     print("Connecting to VM...")
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+    password = os.environ.get('VM_PASSWORD', '')
+    if not password:
+        print("WARN: VM_PASSWORD not set in environment.")
     try:
-        ssh.connect('127.0.0.1', port=2222, username='root', password='aPushkar@12784', timeout=10)
+        ssh.connect('127.0.0.1', port=2222, username='root', password=password, timeout=10)
     except Exception as e:
         print(f"Failed to connect to VM: {e}")
         sys.exit(1)
