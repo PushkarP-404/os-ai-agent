@@ -123,6 +123,20 @@ The system automatically initializes:
 - **SSH:** `ssh -p 2222 root@127.0.0.1`
 - **Web / API:** `http://127.0.0.1:11434/health` inside the guest.
 
+### Accessing the Sentinel Control Center (GUI)
+
+By default, the OS appliance boots in headless mode (`-nographic`). To use the graphical desktop and the Sentinel dashboard:
+
+1. **Modify the boot script:** Open `boot.sh` or `boot.ps1` and remove the `-nographic` and `-serial stdio` flags. You may optionally add a display backend like `-display gtk` or `-display sdl`.
+2. **Launch the Dashboard:** The GUI auto-logs in as `aiuser`. To access the agent's files, open a terminal and switch to root using `su`:
+   ```bash
+   su
+   # (enter password 'password')
+   python3 /root/os-ai-agent/dashboard/dashboard.py
+   ```
+   > **Note:** If `su` says "incorrect password", it is because `aiuser` is not in the `wheel` group. You can fix this by opening a terminal on your **host Windows machine** and running:
+   > `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@127.0.0.1 "addgroup aiuser wheel"` (password: `password`), then try `su` again.
+
 ---
 
 ## 🧪 Automated Boot & System Verification
