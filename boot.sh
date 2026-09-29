@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # boot.sh â€” Launch AI-Agent OS Appliance v0.1 in QEMU (Linux/macOS)
 #
 # Usage:
@@ -43,7 +43,5 @@ exec qemu-system-x86_64 \
     -smp "$CPUS" \
     -hda "$IMAGE" \
     -boot c \
-    -net "user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
-    -net nic \
-    -serial stdio \
-    -nographic
+    -netdev user,id=n1,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
+    -device e1000,netdev=n1
