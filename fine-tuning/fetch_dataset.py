@@ -1,8 +1,8 @@
-﻿import os
+import os
 import paramiko
 
 ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 ssh.connect('127.0.0.1', port=2222, username='root', password=os.environ.get('VM_PASSWORD', 'password'))
 
 sftp = ssh.open_sftp()

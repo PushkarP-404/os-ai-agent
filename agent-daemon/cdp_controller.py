@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 import urllib.request
 import json
 import websocket
@@ -7,9 +7,8 @@ import argparse
 import time
 import threading
 
-# Bug fix (2026-09-27): Use a monotonic counter for request IDs to prevent
-# duplicate IDs when multiple calls happen within 1ms.
-_cdp_id_lock = threading.Lock()
+# Bug fix (2026-09-27): Use a monotonic counter for request IDs.
+# Note: The lock is unnecessary as this script is executed fresh per-command.
 _cdp_id_counter = 0
 
 def get_websocket():
@@ -40,9 +39,8 @@ def call_cdp(ws, method, params=None, timeout=10.0):
     a deadline-based loop with ws.settimeout().
     """
     global _cdp_id_counter
-    with _cdp_id_lock:
-        _cdp_id_counter += 1
-        req_id = _cdp_id_counter
+    _cdp_id_counter += 1
+    req_id = _cdp_id_counter
     
     req = {"id": req_id, "method": method}
     if params:

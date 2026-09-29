@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 import gi
 import json
 import os
@@ -250,7 +250,16 @@ class SentinelDashboard(Gtk.Window):
         box.pack_start(btn_save, False, False, 0)
         
     def on_save_remote(self, widget):
-        print(f"Saved authorized sender: {self.entry_sender.get_text()}")
+        sender = self.entry_sender.get_text().strip()
+        if not sender: return
+        
+        conf_data = f'AUTHORIZED_SENDER="{sender}"\n'
+        try:
+            with open("/etc/conf.d/mail-trigger", "w") as f:
+                f.write(conf_data)
+            print(f"Saved authorized sender to config: {sender}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save config: {e}")
 
 if __name__ == "__main__":
     win = SentinelDashboard()

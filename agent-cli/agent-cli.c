@@ -15,6 +15,7 @@ int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("Usage: %s \"<your instruction or intent>\"\n", argv[0]);
         printf("Example: %s \"install curl and download the weather for New York\"\n", argv[0]);
+        printf("Advanced prefixes: /assist (default execution), /suggest (dry-run plan only)\n");
         return 1;
     }
 

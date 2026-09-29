@@ -43,7 +43,7 @@ def _ensure_dirs():
 
 def _responses_file():
     """Return the daily responses log path (one file per UTC date)."""
-    date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
     return os.path.join(RESPONSES_DIR, f"responses_{date_str}.jsonl")
 
 
@@ -86,7 +86,7 @@ def log_interaction(
     """
     _ensure_dirs()
 
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z"
 
     record = {
         "timestamp":           timestamp,
@@ -126,7 +126,7 @@ def log_process_event(parent_pid, child_pid, comm):
     """
     _ensure_dirs()
     record = {
-        "timestamp":  datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp":  datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z",
         "msg_type":   "AI_MSG_PROCESS_EVENT",
         "parent_pid": parent_pid,
         "child_pid":  child_pid,
@@ -143,7 +143,7 @@ def log_raw_syscalls(pid, comm, syscall_data):
     _ensure_dirs()
     path = os.path.join(RAW_SYSCALL_DIR, f"pid_{pid}_{comm}.log")
     with open(path, "a", encoding="utf-8") as f:
-        f.write(f"[{datetime.datetime.utcnow().isoformat()}Z] {syscall_data}\n")
+        f.write(f"[{datetime.datetime.now(datetime.timezone.utc).isoformat()}Z] {syscall_data}\n")
 
 
 # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

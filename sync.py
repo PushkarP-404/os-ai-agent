@@ -1,4 +1,4 @@
-﻿import paramiko
+import paramiko
 import os
 
 host = '127.0.0.1'
@@ -7,20 +7,27 @@ user = 'root'
 pwd = os.environ.get('VM_PASSWORD', 'password')
 
 ssh = paramiko.SSHClient()
-ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 print("Connecting...")
 ssh.connect(host, port=port, username=user, password=pwd)
 
 sftp = ssh.open_sftp()
 
-print("Uploading agent_daemon.py...")
+print("Uploading agent_daemon files...")
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\agent_daemon.py", "/usr/local/lib/ai-agent/agent_daemon.py")
+sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\logger.py", "/usr/local/lib/ai-agent/logger.py")
+sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\cdp_controller.py", "/home/aiuser/cdp_controller.py")
 
 print("Uploading agent-cli files...")
 _, out, _ = ssh.exec_command("mkdir -p /root/os-ai-agent/agent-cli")
 out.read()
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-cli\agent-cli.c", "/root/os-ai-agent/agent-cli/agent-cli.c")
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-cli\Makefile", "/root/os-ai-agent/agent-cli/Makefile")
+
+print("Uploading dashboard files...")
+ssh.exec_command("mkdir -p /root/os-ai-agent/dashboard")
+sftp.put(r"C:\qemu-alpine\os-ai-agent\dashboard\dashboard.py", "/root/os-ai-agent/dashboard/dashboard.py")
+sftp.put(r"C:\qemu-alpine\os-ai-agent\dashboard\ai-agent-dashboard.desktop", "/root/os-ai-agent/dashboard/ai-agent-dashboard.desktop")
 
 sftp.close()
 

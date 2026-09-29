@@ -210,7 +210,10 @@ def handle_syscall_query(sock, query_payload):
         try:
             json_str = planner_verdict
             if "[" in json_str:
-                json_str = json_str[json_str.find("["):json_str.rfind("]")+1]
+                start = json_str.find("[")
+                end = json_str.rfind("]")
+                if start != -1:
+                    json_str = json_str[start:end+1 if end != -1 else None]
             task_plan = json.loads(json_str)
             if not isinstance(task_plan, list):
                 task_plan = [query]
@@ -248,6 +251,8 @@ def handle_syscall_query(sock, query_payload):
                     final_response = f"[ABORTED] Worker reached cumulative time limit ({elapsed_time:.1f}s) to prevent kernel timeout."
                     break
 
+                ebpf_context = "\nRecent OS Events:\n" + "\n".join(EBPF_EVENTS) if EBPF_EVENTS else ""
+
                 sys_prompt = (
                     f"<|im_start|>system\nYou are an OS Worker Agent. Accomplish the Current Task.\n"
                     f"Output ONLY JSON. Actions:\n"
@@ -256,7 +261,7 @@ def handle_syscall_query(sock, query_payload):
                     f"3. Verify: {{\"action\": \"verify\", \"condition\": \"<what to check>\"}}\n"
                     f"4. Finish: {{\"action\": \"finish\", \"reason\": \"<summary>\"}}\n"
                     f"5. Abort: {{\"action\": \"abort\", \"reason\": \"<error>\"}}<|im_end|>\n"
-                    f"<|im_start|>user\n{prompt_context}<|im_end|>\n<|im_start|>assistant\n"
+                    f"<|im_start|>user\n{prompt_context}{ebpf_context}<|im_end|>\n<|im_start|>assistant\n"
                 )
                 
                 t_start = time.monotonic()
@@ -349,7 +354,7 @@ def handle_syscall_query(sock, query_payload):
                     
                     cmd = [target] + args
                     if target == "cdp_controller.py":
-                        cmd = ["python3", "/home/aiuser/cdp_controller.py"] + " ".join(args).split(" ")
+                        cmd = ["python3", "/home/aiuser/cdp_controller.py"] + args
 
                     # Bug fix (2026-09-27): Check SUGGEST mode BEFORE running subprocess
                     # Previously this check came AFTER subprocess.run, meaning the command
@@ -460,6 +465,7 @@ def main():
     print("[AGENT DAEMON] Listening for process events and syscall queries...")
     sys.stdout.flush()
 
+    EBPF_EVENTS = []
     def ebpf_listener():
         sock_path = "/var/ai-agent/ebpf.sock"
         if os.path.exists(sock_path):
@@ -471,7 +477,11 @@ def main():
             try:
                 data, _ = usock.recvfrom(4096)
                 if data:
-                    print(f"  [eBPF IPC] {data.decode('utf-8', errors='replace')}")
+                    msg = data.decode('utf-8', errors='replace')
+                    print(f"  [eBPF IPC] {msg}")
+                    EBPF_EVENTS.append(msg)
+                    if len(EBPF_EVENTS) > 10:
+                        EBPF_EVENTS.pop(0)
             except Exception:
                 pass
                 
