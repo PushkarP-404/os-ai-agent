@@ -113,14 +113,29 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
   if (!query || !response)
     return -EINVAL;
 
-  if (!capable(CAP_SYS_ADMIN))
-    return -EPERM;
-
+  /* 1a: Validate size bounds first (before any pointer operations) */
   if (query_len == 0 || query_len > AI_AGENT_MAX_QUERY_LEN)
     return -EINVAL;
 
   if (resp_len == 0 || resp_len > AI_AGENT_MAX_RESP_LEN)
     return -EINVAL;
+
+  /* 1b: access_ok() – verify user pointers are readable/writable
+   *     before we attempt any copy_from/to_user. This prevents
+   *     kernel faults on garbage pointers from unprivileged callers. */
+  if (!access_ok(query, query_len)) {
+    pr_warn("ai_agent: access_ok(query) failed for PID %d\n", current->pid);
+    return -EFAULT;
+  }
+
+  if (!access_ok(response, resp_len)) {
+    pr_warn("ai_agent: access_ok(response) failed for PID %d\n", current->pid);
+    return -EFAULT;
+  }
+
+  /* 1c: Privilege check – must hold CAP_SYS_ADMIN to use this syscall */
+  if (!capable(CAP_SYS_ADMIN))
+    return -EPERM;
 
   kquery = kmalloc(query_len + 1, GFP_KERNEL);
   if (!kquery)
@@ -134,6 +149,35 @@ SYSCALL_DEFINE5(agent_query, pid_t, target_pid, const char __user *, query,
 
   if (target_pid == 0)
     target_pid = current->pid;
+
+  /* 1d: Validate target_pid refers to an existing process.
+   *     find_task_by_vpid() requires RCU read lock. */
+  if (target_pid != current->pid) {
+    struct task_struct *target_task;
+    kuid_t target_uid;
+
+    rcu_read_lock();
+    target_task = find_task_by_vpid(target_pid);
+    if (!target_task) {
+      rcu_read_unlock();
+      kfree(kquery);
+      pr_warn("ai_agent: PID %d queried non-existent target %d\n",
+              current->pid, target_pid);
+      return -ESRCH;
+    }
+    target_uid = task_uid(target_task);
+    rcu_read_unlock();
+
+    /* 1e: Cross-user check – non-root callers may only query their
+     *     own UID's processes. CAP_SYS_ADMIN bypasses this. */
+    if (!uid_eq(current_uid(), target_uid) && !capable(CAP_SYS_ADMIN)) {
+      kfree(kquery);
+      pr_warn("ai_agent: PID %d (uid %d) denied cross-user query on PID %d (uid %d)\n",
+              current->pid, __kuid_val(current_uid()),
+              target_pid, __kuid_val(target_uid));
+      return -EPERM;
+    }
+  }
 
   pr_info("ai_agent: [PID %d: %s] queried agent for target %d: \"%s\"\n",
           current->pid, current->comm, target_pid, kquery);

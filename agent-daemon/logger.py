@@ -16,8 +16,11 @@ Directory layout created automatically on first use:
       â””â”€â”€ dataset.jsonl        <- (prompt, completion, metadata) tuples
 """
 
+import gzip
 import json
 import os
+import random
+import threading
 import time
 import datetime
 
@@ -52,6 +55,206 @@ def _write_jsonl(path, record):
     line = json.dumps(record, ensure_ascii=False, separators=(',', ':'))
     with open(path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+
+# ── Part 2a: Sensitive-data sanitization ───────────────────────────────────────
+
+def sanitize_path(path):
+    """Remove sensitive parts from file paths before logging.
+
+    Replaces user-specific path components with safe placeholders so that
+    passwords, SSH keys, and home-directory contents are never stored in logs.
+    """
+    if not isinstance(path, str):
+        return path
+    if path.startswith("/home/"):
+        return "/home/***"
+    if path.startswith("/root/"):
+        return "/root/***"
+    if path.startswith("/proc/"):
+        parts = path.split("/")
+        if len(parts) >= 3 and parts[2].isdigit():
+            parts[2] = "*"
+        return "/".join(parts)
+    if path.startswith("/run/user/"):
+        return "/run/user/***"
+    return path
+
+
+def sanitize_syscall_arg(arg_num, syscall_name, value):
+    """Sanitize a specific syscall argument based on its position and syscall."""
+    path_syscalls = {"open", "openat", "unlink", "mkdir", "rmdir",
+                     "rename", "stat", "lstat", "execve", "execveat",
+                     "chdir", "access", "creat", "link", "symlink"}
+    if syscall_name in path_syscalls and arg_num == 0 and isinstance(value, str):
+        return sanitize_path(value)
+    return value
+
+
+# ── Part 2a: Adaptive sampling strategy ────────────────────────────────────────
+
+# Syscalls classified by importance level.
+_ALWAYS_SAMPLE = frozenset([
+    "fork", "clone", "clone3", "execve", "execveat",
+    "exit", "exit_group", "kill", "tkill", "tgkill",
+    "setuid", "setgid", "setcap", "prctl", "ptrace",
+    "mount", "umount2", "chroot", "pivot_root",
+])
+_HIGH_SAMPLE = frozenset([
+    "connect", "bind", "listen", "accept", "accept4",
+    "sendto", "recvfrom", "socket", "socketpair",
+    "chmod", "chown", "fchmod", "fchown",
+    "mprotect", "mmap",
+])
+_LOW_SAMPLE = frozenset(["open", "openat", "read", "write", "close", "pread64", "pwrite64"])
+
+# Sample rates: 1 = always, N = 1-in-N probability
+SAMPLE_RATE_ALWAYS = 1
+SAMPLE_RATE_HIGH   = 10   # 10%
+SAMPLE_RATE_NORMAL = 50   # 2%
+SAMPLE_RATE_LOW    = 100  # 1%
+
+
+def should_sample(syscall_name):
+    """Return True if this syscall event should be recorded.
+
+    Implements the adaptive sampling strategy from the hardening doc:
+    - Critical lifecycle events (fork, execve, setuid): always sampled
+    - Network + privilege syscalls: ~10% sample rate
+    - High-volume file I/O (read/write): ~1% sample rate
+    - All others: ~2% sample rate
+    """
+    if syscall_name in _ALWAYS_SAMPLE:
+        return True
+    if syscall_name in _HIGH_SAMPLE:
+        return random.randint(1, SAMPLE_RATE_HIGH) == 1
+    if syscall_name in _LOW_SAMPLE:
+        return random.randint(1, SAMPLE_RATE_LOW) == 1
+    return random.randint(1, SAMPLE_RATE_NORMAL) == 1
+
+
+# ── Part 2b: Local gzip buffer with rotation and upload worker ─────────────────
+
+class LocalBuffer:
+    """Write syscall records to gzip-compressed JSONL files with rotation.
+
+    Files are named syscall-buffer-{timestamp}.jsonl.gz and rotate every
+    *rotate_after_records* records. A background upload worker thread
+    periodically calls *upload_fn* on completed files and deletes them.
+
+    Usage::
+
+        buf = LocalBuffer()
+        buf.start_upload_worker(my_upload_function)  # optional
+        buf.append({"syscall_name": "read", "pid": 1234, ...})
+    """
+
+    def __init__(self, buffer_dir=None, rotate_after_records=1000):
+        if buffer_dir is None:
+            buffer_dir = os.path.join(
+                os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent"),
+                "syscall-buffer",
+            )
+        self.buffer_dir = buffer_dir
+        self.rotate_after_records = rotate_after_records
+        self._lock = threading.Lock()
+        self._current_file = None
+        self._current_path = None
+        self._record_count = 0
+        os.makedirs(buffer_dir, exist_ok=True)
+
+    def append(self, record):
+        """Append a syscall record dict to the current gzip buffer."""
+        with self._lock:
+            if self._current_file is None or self._record_count >= self.rotate_after_records:
+                self._rotate()
+            line = json.dumps(record, ensure_ascii=False, separators=(',', ':')) + "\n"
+            try:
+                self._current_file.write(line.encode("utf-8"))
+                self._current_file.flush()
+                self._record_count += 1
+            except IOError as exc:
+                print(f"[LocalBuffer] Write error (record dropped): {exc}")
+
+    def _rotate(self):
+        """Close current gzip file and open a new one."""
+        if self._current_file is not None:
+            try:
+                self._current_file.close()
+            except Exception:
+                pass
+        ts = int(time.time())
+        filename = f"syscall-buffer-{ts}.jsonl.gz"
+        self._current_path = os.path.join(self.buffer_dir, filename)
+        self._current_file = gzip.open(self._current_path, "ab")
+        self._record_count = 0
+
+    def list_pending_files(self):
+        """Return sorted list of completed buffer files ready for upload."""
+        pending = []
+        with self._lock:
+            current = self._current_path
+        for fname in sorted(os.listdir(self.buffer_dir)):
+            if not fname.startswith("syscall-buffer-") or not fname.endswith(".jsonl.gz"):
+                continue
+            full = os.path.join(self.buffer_dir, fname)
+            if full != current:
+                pending.append(full)
+        return pending
+
+    def upload_and_delete(self, filepath, upload_fn):
+        """Call *upload_fn(filepath)* and delete the file on success."""
+        try:
+            upload_fn(filepath)
+            os.remove(filepath)
+            print(f"[LocalBuffer] Uploaded and deleted: {filepath}")
+        except Exception as exc:
+            print(f"[LocalBuffer] Upload failed for {filepath}: {exc} — will retry")
+
+    def start_upload_worker(self, upload_fn, interval_s=60):
+        """Start a daemon thread that uploads pending buffer files every *interval_s* seconds."""
+        def _worker():
+            while True:
+                time.sleep(interval_s)
+                for fpath in self.list_pending_files():
+                    self.upload_and_delete(fpath, upload_fn)
+        t = threading.Thread(target=_worker, daemon=True, name="LocalBuffer-uploader")
+        t.start()
+        print(f"[LocalBuffer] Upload worker started (interval={interval_s}s)")
+        return t
+
+
+# Singleton buffer instance — import and call .append() from anywhere
+_local_buffer = LocalBuffer()
+
+
+def log_raw_syscall_record(record):
+    """Append a raw syscall record to the gzip local buffer.
+
+    Applies adaptive sampling and path sanitization automatically.
+    *record* should match the schema from the hardening doc::
+
+        {
+          "timestamp": 1727866496.123,
+          "pid": 1234,
+          "process_name": "python3",
+          "syscall_name": "open",
+          "args": [...],
+          "return_value": 5,
+          "duration_us": 45,
+        }
+    """
+    syscall_name = record.get("syscall_name", "")
+    if not should_sample(syscall_name):
+        return  # Dropped by sampler — not an error
+
+    # Sanitize path arguments
+    args = record.get("args", [])
+    sanitized_args = [
+        sanitize_syscall_arg(i, syscall_name, a) for i, a in enumerate(args)
+    ]
+    record = dict(record, args=sanitized_args)
+    _local_buffer.append(record)
 
 
 # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

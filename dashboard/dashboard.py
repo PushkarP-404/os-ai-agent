@@ -41,6 +41,8 @@ class SentinelDashboard(Gtk.Window):
         self.setup_llm_page()
         self.setup_capabilities_page()
         self.setup_remote_page()
+        self.setup_live_log_page()
+        self.setup_stats_page()
         
     def setup_status_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20)
@@ -260,6 +262,165 @@ class SentinelDashboard(Gtk.Window):
             print(f"Saved authorized sender to config: {sender}")
         except Exception as e:
             print(f"[ERROR] Failed to save config: {e}")
+
+    # ── Part 5b: Live Interaction Log (real-time log view) ─────────────────
+
+    def setup_live_log_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(20)
+        box.set_margin_top(20)
+        self.stack.add_titled(box, "live_log", "Live Agent Log")
+
+        title = Gtk.Label(label="<big><b>Live Agent Interactions</b></big>", use_markup=True)
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+
+        subtitle = Gtk.Label(label="Auto-refreshes every 3 seconds. Shows the last 50 interactions.")
+        subtitle.set_halign(Gtk.Align.START)
+        box.pack_start(subtitle, False, False, 0)
+
+        # Scrollable monospace text view
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        self.log_textbuffer = Gtk.TextBuffer()
+        self.log_textview = Gtk.TextView(buffer=self.log_textbuffer)
+        self.log_textview.set_editable(False)
+        self.log_textview.set_monospace(True)
+        self.log_textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        scroll.add(self.log_textview)
+        box.pack_start(scroll, True, True, 0)
+
+        # Tag for colouring anomalies
+        tag_table = self.log_textbuffer.get_tag_table()
+        tag_warn = Gtk.TextTag(name="warn")
+        tag_warn.set_property("foreground", "#e74c3c")
+        tag_table.add(tag_warn)
+        tag_ok = Gtk.TextTag(name="ok")
+        tag_ok.set_property("foreground", "#27ae60")
+        tag_table.add(tag_ok)
+
+        # Refresh button
+        btn_refresh = Gtk.Button(label="Refresh Now")
+        btn_refresh.connect("clicked", lambda w: self._refresh_live_log())
+        box.pack_start(btn_refresh, False, False, 0)
+
+        # Auto-refresh every 3 seconds
+        GLib.timeout_add_seconds(3, self._refresh_live_log)
+        self._refresh_live_log()
+
+    def _refresh_live_log(self):
+        """Read today's JSONL response log and update the text view."""
+        import datetime as dt
+        date_str = dt.datetime.utcnow().strftime("%Y-%m-%d")
+        log_path = f"/var/ai-agent/logs/agent_responses/responses_{date_str}.jsonl"
+
+        lines = []
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as f:
+                    all_lines = [l.strip() for l in f if l.strip()]
+                lines = all_lines[-50:]  # Last 50
+            except Exception as e:
+                lines = [f"{{\"error\": \"{e}\"}}"]
+        else:
+            lines = [f'{{"info": "No log file yet: {log_path}"}}']  
+
+        self.log_textbuffer.set_text("")  # Clear
+        for raw in reversed(lines):  # Most recent first
+            try:
+                record = json.loads(raw)
+                ts       = record.get("timestamp", "")[:19].replace("T", " ")
+                comm     = record.get("comm", record.get("msg_type", "?"))
+                query    = record.get("query", "")[:60]
+                response = record.get("response", "")[:80]
+                latency  = record.get("response_latency_ms", 0)
+                line_txt = f"{ts}  {comm:<16}  {latency:>6.0f}ms  Q: {query!r}\n"
+                line_txt += f"{'':>39}  R: {response!r}\n\n"
+            except Exception:
+                line_txt = raw[:120] + "\n"
+
+            end_iter = self.log_textbuffer.get_end_iter()
+            self.log_textbuffer.insert(end_iter, line_txt)
+
+        return True  # Keep timeout alive
+
+    # ── Part 5b: Process Stats panel ───────────────────────────────────────
+
+    def setup_stats_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(20)
+        box.set_margin_top(20)
+        self.stack.add_titled(box, "stats", "Process Stats")
+
+        title = Gtk.Label(label="<big><b>Agent Query Stats by Process</b></big>", use_markup=True)
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+
+        subtitle = Gtk.Label(label="Query counts from today's log. Refreshes every 10 seconds.")
+        subtitle.set_halign(Gtk.Align.START)
+        box.pack_start(subtitle, False, False, 0)
+
+        # List store: process name, query count, avg latency
+        self.stats_store = Gtk.ListStore(str, int, float)
+        treeview = Gtk.TreeView(model=self.stats_store)
+
+        for col_idx, (col_title, col_type) in enumerate([
+            ("Process (comm)", str), ("Query Count", int), ("Avg Latency (ms)", float)
+        ]):
+            renderer = Gtk.CellRendererText()
+            column = Gtk.TreeViewColumn(col_title, renderer, text=col_idx)
+            column.set_sort_column_id(col_idx)
+            column.set_resizable(True)
+            treeview.append_column(column)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.add(treeview)
+        box.pack_start(scroll, True, True, 0)
+
+        btn_refresh = Gtk.Button(label="Refresh Now")
+        btn_refresh.connect("clicked", lambda w: self._refresh_stats())
+        box.pack_start(btn_refresh, False, False, 0)
+
+        GLib.timeout_add_seconds(10, self._refresh_stats)
+        self._refresh_stats()
+
+    def _refresh_stats(self):
+        """Parse today's log and aggregate per-comm query stats."""
+        import datetime as dt
+        from collections import defaultdict
+
+        date_str = dt.datetime.utcnow().strftime("%Y-%m-%d")
+        log_path = f"/var/ai-agent/logs/agent_responses/responses_{date_str}.jsonl"
+
+        counts: dict = defaultdict(int)
+        latencies: dict = defaultdict(list)
+
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as f:
+                    for raw in f:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            rec = json.loads(raw)
+                            comm = rec.get("comm", "unknown")
+                            lat  = float(rec.get("response_latency_ms", 0))
+                            counts[comm] += 1
+                            latencies[comm].append(lat)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        self.stats_store.clear()
+        for comm in sorted(counts, key=lambda c: counts[c], reverse=True):
+            avg_lat = sum(latencies[comm]) / len(latencies[comm]) if latencies[comm] else 0.0
+            self.stats_store.append([comm, counts[comm], round(avg_lat, 1)])
+
+        return True  # Keep timeout alive
+
 
 if __name__ == "__main__":
     win = SentinelDashboard()
