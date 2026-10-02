@@ -76,6 +76,7 @@ LLM_TIMEOUT_S = 30
 
 CAPABILITIES_FILE = "/var/ai-agent/capabilities.json"
 SYSTEM_CAPABILITIES = {}
+EBPF_EVENTS = []
 
 def load_capabilities():
     global SYSTEM_CAPABILITIES
@@ -187,23 +188,8 @@ def handle_syscall_query(sock, query_payload):
         print(f"  [PLANNER] Analyzing intent: {query}")
         sys.stdout.flush()
         
-        # Hardcoded planner bypass for testing specific paths
-        if "react app" in query.lower():
-            if SYSTEM_CAPABILITIES.get("primary_ide"):
-                planner_verdict = f'["Launch {SYSTEM_CAPABILITIES.get("primary_ide")} and prompt it to write the React app", "Verify files were created"]'
-            elif SYSTEM_CAPABILITIES.get("native_ide"):
-                planner_verdict = f'["Launch {SYSTEM_CAPABILITIES.get("native_ide")} and prompt it to write the React app", "Verify files were created"]'
-            else:
-                planner_verdict = '["Scan for native AI IDEs (antigravity/code)", "Launch IDE and prompt it to write the React app", "Verify files were created"]'
-        elif "install curl" in query.lower():
-            planner_verdict = '["Install curl via apk", "Verify curl is executable"]'
-        elif "timeout test" in query.lower():
-            planner_verdict = '["Sleep for 15s"]'
-        elif "error test" in query.lower():
-            planner_verdict = '["List nonexistent directory"]'
-        else:
-            # PERF-003 Fix: Skip planner LLM call to save time, pass query straight to worker
-            planner_verdict = json.dumps([query])
+        # Dynamically query the Planner LLM
+        planner_verdict = query_ollama(planner_prompt, n_predict=300)
             
         latency_ms += (time.monotonic() - t_start) * 1000.0
         
@@ -265,20 +251,7 @@ def handle_syscall_query(sock, query_payload):
                 )
                 
                 t_start = time.monotonic()
-                if "install curl" in current_task.lower() and step_count == 0:
-                    ai_verdict = '{"target_software": "apk", "action": "execute", "args": ["add", "curl"]}'
-                elif "verify curl" in current_task.lower() and step_count == 0:
-                    ai_verdict = '{"action": "verify", "condition": "/usr/bin/curl exists"}'
-                elif "scan for native" in current_task.lower() and step_count == 0:
-                    ai_verdict = '{"target_software": "sh", "action": "execute", "args": ["-c", "which antigravity || which code"]}'
-                elif "sleep" in current_task.lower():
-                    ai_verdict = '{"target_software": "sleep", "action": "execute", "args": ["15"]}'
-                elif "nonexistent" in current_task.lower() and step_count == 0:
-                    ai_verdict = '{"target_software": "ls", "action": "execute", "args": ["/dir_does_not_exist"]}'
-                elif "nonexistent" in current_task.lower() and step_count == 1:
-                    ai_verdict = '{"action": "abort", "reason": "Directory does not exist"}'
-                else:
-                    ai_verdict = query_ollama(sys_prompt)
+                ai_verdict = query_ollama(sys_prompt)
                 latency_ms += (time.monotonic() - t_start) * 1000.0
 
                 print(f"    [AI] (Step {step_count+1}): {ai_verdict}")
@@ -465,7 +438,6 @@ def main():
     print("[AGENT DAEMON] Listening for process events and syscall queries...")
     sys.stdout.flush()
 
-    EBPF_EVENTS = []
     def ebpf_listener():
         sock_path = "/var/ai-agent/ebpf.sock"
         if os.path.exists(sock_path):

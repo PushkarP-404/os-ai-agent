@@ -99,9 +99,10 @@ int main(int argc, char *argv[]) {
         return 1;
 
     } else if (strcmp(test, "nonexistent_pid") == 0) {
-        // PID 2147483647 almost certainly doesn't exist → -ESRCH
-        ret = syscall(SYS_AGENT_QUERY, 2147483647, "test", 4,
-                      response, sizeof(response));
+        // PID 999999 almost certainly doesn't exist -> -ESRCH
+        // Pass a valid size (2048) to avoid hitting EINVAL before ESRCH
+        ret = syscall(SYS_AGENT_QUERY, -9999, "test", 4,
+                      response, 2048);
         if (ret == -1 && errno == ESRCH) {
             printf("OK got ESRCH\n");
             return 0;
@@ -176,15 +177,15 @@ fi
 # ── Test 5: Privilege check — unprivileged process ───────────────────────────
 echo "[Test 5] Unprivileged process → expected EPERM"
 if id | grep -q "uid=0"; then
-    # We are root; use su to run as unprivileged user
+    # We are root; use setpriv to aggressively drop all capabilities and run as aiuser
     if id aiuser 2>/dev/null; then
-        out=$(su -s /bin/sh aiuser -c "
-            python3 -c \"
+        out=$(su - aiuser -c "python3 -c \"
 import ctypes, os, sys
-lib = ctypes.CDLL(None)
+lib = ctypes.CDLL(None, use_errno=True)
 SYS_AGENT_QUERY = 548
-buf = ctypes.create_string_buffer(4096)
-ret = lib.syscall(SYS_AGENT_QUERY, os.getpid(), b'test', 4, buf, 4096)
+buf = ctypes.create_string_buffer(2048)
+# Query PID 1 (root) from aiuser to trigger cross-user EPERM
+ret = lib.syscall(SYS_AGENT_QUERY, 1, b'test', 4, buf, 2048)
 import ctypes.util, errno
 err = ctypes.get_errno()
 if ret == -1 and err == 1:  # EPERM

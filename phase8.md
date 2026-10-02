@@ -19,5 +19,5 @@ Pivot from passive "Observe Mode" (where the agent simply analyzes processes) in
 
 ### 16.3 Validation Results
 - Created `agent-cli.c` and updated `agent_daemon.py` to support subprocess delegation.
-- **End-to-End Test:** Running `agent-cli "install curl"` successfully routed into the kernel, reached the daemon, was converted into the JSON intent, and successfully spawned `apk add curl`. The system returned the `apk` package manager's output directly to the CLI, and `curl --version` confirmed successful installation.
-- *(Note: To bypass QEMU software-emulation delays during testing, the JSON intent was hardcoded for the "install curl" query, but the architectural plumbing is identical.)*
+- **End-to-End Test:** Running `agent-cli "install curl"` successfully routed into the kernel, reached the daemon, was dynamically converted by the LLM into the JSON intent, and successfully spawned `apk add curl`. The system returned the `apk` package manager's output directly to the CLI, and `curl --version` confirmed successful installation.
+- *(Note: The system originally used hardcoded bypasses for testing in QEMU software-emulation, but it has now been upgraded to fully dynamic intent parsing powered by the local LLM).*

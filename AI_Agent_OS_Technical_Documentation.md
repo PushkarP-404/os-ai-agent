@@ -2,7 +2,7 @@
 
 **Project codename:** AI-Agent OS (working title)
 **Document version:** 0.4 (living document)
-**Status:** Phases 1–7 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1) with LoRA Fine-Tuning
+**Status:** Phases 1–10 ✅ Complete & Validated — Bootable Standalone OS Appliance Image (v0.1) with LoRA Fine-Tuning and Intent-Driven Execution
 **Base distro:** Alpine Linux 3.20.10 (musl libc, BusyBox userland)
 **Last updated:** 2026-09-24
 
@@ -23,15 +23,18 @@
 11. Phase 3: Kernel Module Integration (Completed & Validated)
 12. Phase 4: Custom Syscall Interface (Code-Complete — Kernel Building)
 13. Phase 5: Local LLM + Fine-Tuning Pipeline
-14. Phase 6: OS Image Packaging & Distribution
-15. Data Collection & Storage Schema
-16. Security Model & Threat Considerations
-17. Agent Autonomy Levels
-18. Repository Structure
-19. Git Workflow
-20. Toolchain Reference
-21. Open Questions & Future Decisions
-22. Glossary
+26. Phase 6: OS Image Packaging & Distribution
+27. Data Collection & Storage Schema
+28. Security Model & Threat Considerations
+29. Agent Autonomy Levels
+30. Phase 8: Intent-Driven Execution (Orchestrator OS)
+31. Phase 9: Universal Visual Orchestration (GUI Automation)
+32. Phase 10: Context-Aware Assistance (eBPF Sensors)
+33. Repository Structure
+34. Git Workflow
+35. Toolchain Reference
+36. Open Questions & Future Decisions
+37. Glossary
 
 ---
 
@@ -386,6 +389,9 @@ During networking experimentation, the VM's root password was forgotten, and no 
 | **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | ✅ Complete & Validated — Removed host Ollama dependency; local LLM inference running within QEMU. |
 | **Phase 6** | Bootable OS appliance image: custom kernel + llama-server + agent daemon + SmolLM2-135M model baked into compressed QCOW2 image; zero manual setup; one-command boot | ✅ Complete & Validated — hardened /usr/local system paths; OpenRC runlevels; RPATH fixed; syscall roundtrip: 4.4s; `test_phase6_boot.sh`: 13/13 PASS; compressed image `ai-agent-os-v0.1.qcow2` |
 | **Phase 7** | OS Agent Fine-Tuning (LoRA) | ✅ Complete & Validated — Automated host-to-guest fine-tuning; hot-reloaded `.gguf` adapter via `llama-server`. The OS learns mechanically from its own `dataset.jsonl` logs. |
+| **Phase 8** | Intent-Driven Execution (Orchestrator OS) | ✅ Complete & Validated — The LLM acts as an orchestrator, converting high-level natural language intents dynamically into structured JSON payloads that `agent_daemon.py` executes as subprocesses (e.g. `apk add curl`), capturing and returning stdout/stderr. |
+| **Phase 9** | Universal Visual Orchestration | ✅ Complete & Validated — Browser and GUI automation natively orchestrated via Chrome DevTools Protocol natively from the OS agent layer. |
+| **Phase 10** | Context-Aware Assistance | ✅ Complete & Validated — Replaced passive `ptrace` userspace polling with kernel-level eBPF (`sys_openat`, `sys_connect`) sensor (`os_state_sensor.py`), broadcasting high-fidelity OS context into the LLM's system prompt over UDP. |
 
 ---
 

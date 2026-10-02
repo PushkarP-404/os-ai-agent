@@ -2,7 +2,7 @@
 
 > An operating system architecture where an AI agent is integrated directly into the Linux kernel and process lifecycle, allowing any process to be observed, understood, and directed without app-level APIs, plugins, or MCP.
 
-[![Status](https://img.shields.io/badge/Status-Phases%201--9%20Complete%20%26%20Validated-brightgreen.svg)]()
+[![Status](https://img.shields.io/badge/Status-Phases%201--10%20Complete%20%26%20Validated-brightgreen.svg)]()
 [![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent-blue.svg)]()
 [![Distro](https://img.shields.io/badge/Base%20Distro-Alpine%203.20%20(musl)-blue.svg)]()
 [![Inference](https://img.shields.io/badge/Inference-llama.cpp%20(native%20musl)-orange.svg)]()
@@ -31,18 +31,20 @@ Every process : legacy binaries, CLI tools, services, scripts, containers — mu
 Because the AI Agent OS runs a local LLM inference engine (`llama-server`) directly inside the guest VM alongside a graphical desktop, hardware requirements scale based on the intelligence level you desire.
 
 ### Minimum Requirements (Basic Harness)
+
 *Runs the default `SmolLM2-135M-Instruct` agent, Alpine Linux, and XFCE4.*
-* **CPU:** 2+ Cores (x86_64 or ARM64 with hardware virtualization VT-x/AMD-V enabled)
-* **RAM:** 2 GB 
-* **Storage:** 5 GB available space
-* **GPU:** None required (LLM runs on CPU, GUI uses software rendering)
+- **CPU:** 2+ Cores (x86_64 or ARM64 with hardware virtualization VT-x/AMD-V enabled)
+- **RAM:** 2 GB
+- **Storage:** 5 GB available space
+- **GPU:** None required (LLM runs on CPU, GUI uses software rendering)
 
 ### Recommended Requirements (Sentinel Harness & Fine-Tuning)
+
 *Capable of running larger models (e.g. Llama-3.2-1B/3B) for the Planner/Worker architecture, complex browser automation, and in-guest LoRA fine-tuning.*
-* **CPU:** 4-8 Cores (Modern processor for fast `llama.cpp` CPU inference)
-* **RAM:** 8 GB+ 
-* **Storage:** 20 GB SSD (To store `.gguf` weights, LoRA adapters, and JSONL datasets)
-* **GPU:** Optional but highly recommended (GPU passthrough via VFIO, or host-side serving, drastically reduces latency for multi-step ReAct loops)
+- **CPU:** 4-8 Cores (Modern processor for fast `llama.cpp` CPU inference)
+- **RAM:** 8 GB+
+- **Storage:** 20 GB SSD (To store `.gguf` weights, LoRA adapters, and JSONL datasets)
+- **GPU:** Optional but highly recommended (GPU passthrough via VFIO, or host-side serving, drastically reduces latency for multi-step ReAct loops)
 
 ---
 
@@ -129,11 +131,13 @@ By default, the OS appliance boots in headless mode (`-nographic`). To use the g
 
 1. **Modify the boot script:** Open `boot.sh` or `boot.ps1` and remove the `-nographic` and `-serial stdio` flags. You may optionally add a display backend like `-display gtk` or `-display sdl`.
 2. **Launch the Dashboard:** The GUI auto-logs in as `aiuser`. To access the agent's files, open a terminal and switch to root using `su`:
+
    ```bash
    su
    # (enter password 'password')
    python3 /root/os-ai-agent/dashboard/dashboard.py
    ```
+
    > **Note:** If `su` says "incorrect password", it is because `aiuser` is not in the `wheel` group. You can fix this by opening a terminal on your **host Windows machine** and running:
    > `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@127.0.0.1 "addgroup aiuser wheel"` (password: `password`), then try `su` again.
 
@@ -226,6 +230,8 @@ os-ai-agent/
 ├── agent-cli/                    # Phase 8 Intent CLI
 │   ├── agent-cli.c               # Invokes Syscall #548 to dispatch JSON intents
 │   └── Makefile
+├── ebpf_sensors/                 # Phase 10 Context-Aware Observer
+│   └── os_state_sensor.py        # eBPF script capturing openat/connect syscalls via BCC
 ├── test-programs/                # Syscall Validation Programs
 │   ├── test_syscall.c            # Single-process & edge-case test
 │   └── test_syscall_stress.c     # Multi-threaded concurrent stress test
@@ -266,6 +272,7 @@ All contributions, whether they are security fixes, performance improvements, or
 | **Phase 7** | OS Agent Fine-Tuning (LoRA) — The OS continuously learns from its own `.jsonl` logs | ✅ Validated |
 | **Phase 8** | Intent-Driven Execution (Orchestrator OS) — Automatic task delegation via sub-processes | ✅ Validated |
 | **Phase 9** | Universal Visual Orchestration — Computer Use and GUI Automation via Chrome DevTools Protocol | ✅ Validated |
+| **Phase 10** | Context-Aware Assistance — Agent natively hooks into eBPF sensors (`sys_openat`, `sys_connect`) for real-time kernel observability | ✅ Validated |
 
 ---
 

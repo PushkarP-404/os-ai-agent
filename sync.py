@@ -14,6 +14,8 @@ ssh.connect(host, port=port, username=user, password=pwd)
 sftp = ssh.open_sftp()
 
 print("Uploading agent_daemon files...")
+_, out, _ = ssh.exec_command("mkdir -p /home/aiuser")
+out.read()
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\agent_daemon.py", "/usr/local/lib/ai-agent/agent_daemon.py")
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\logger.py", "/usr/local/lib/ai-agent/logger.py")
 sftp.put(r"C:\qemu-alpine\os-ai-agent\agent-daemon\cdp_controller.py", "/home/aiuser/cdp_controller.py")

@@ -65,8 +65,9 @@ fi
 ./scripts/config --disable CONFIG_DEBUG_INFO_DWARF5
 ./scripts/config --enable CONFIG_DEBUG_INFO_NONE
 
-# Clear external distro certificate paths that do not exist locally
-./scripts/config --set-str CONFIG_MODULE_SIG_KEY ""
+# Disable module signing to prevent sign-file SSL errors during modules_install
+./scripts/config --disable CONFIG_MODULE_SIG
+./scripts/config --disable CONFIG_MODULE_SIG_ALL
 ./scripts/config --set-str CONFIG_SYSTEM_TRUSTED_KEYS ""
 ./scripts/config --set-str CONFIG_SYSTEM_REVOCATION_KEYS ""
 
