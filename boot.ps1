@@ -51,4 +51,5 @@ Write-Host "--------------------------------------------------" -ForegroundColor
     -boot c `
     -netdev "user,id=n1,hostfwd=tcp:127.0.0.1:$($SshPort)-:22" `
     -device e1000,netdev=n1 `
-    -serial file:serial.log
+    -monitor telnet:127.0.0.1:4444,server,nowait `
+    -display none
