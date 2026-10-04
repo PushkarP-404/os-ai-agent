@@ -280,3 +280,11 @@ All contributions, whether they are security fixes, performance improvements, or
 
 For the comprehensive design document, threat modeling, kernel internals, and benchmarking details, see:  
 👉 **[AI_Agent_OS_Technical_Documentation.md](AI_Agent_OS_Technical_Documentation.md)**
+
+---
+
+## ⚖️ License
+
+Because this project involves modifications to the Linux kernel (such as custom system calls, kretprobes, and loadable kernel modules), it is distributed under the **GNU General Public License v2.0 (GPL-2.0)**. 
+
+See the [LICENSE](LICENSE) file for more details. Other included third-party tools (like `llama.cpp`) retain their respective original licenses.
