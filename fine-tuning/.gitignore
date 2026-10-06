@@ -1,5 +1,0 @@
-adapters/
-llama.cpp/
-*.gguf
-dataset.jsonl
-__pycache__/
