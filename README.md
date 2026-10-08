@@ -51,7 +51,7 @@ Because the AI Agent OS runs a local LLM inference engine (`llama-server`) direc
 ## 🏗️ System Architecture
 
 ```mermaid
-graph TD
+graph LR
     subgraph Userspace ["Userspace Applications"]
         App["Unmodified Application / Binary"]
         TestProg["test_syscall (Process Query)"]
