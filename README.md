@@ -2,6 +2,8 @@
 
 > An operating system architecture where an AI agent is integrated directly into the Linux kernel and process lifecycle, allowing any process to be observed, understood, and directed without app-level APIs, plugins, or MCP.
 
+<i>Contain. Compute. Comquer.</i>
+
 [![Status](https://img.shields.io/badge/Status-Phases%201--10%20Complete%20%26%20Validated-brightgreen.svg)]()
 [![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent-blue.svg)]()
 [![Distro](https://img.shields.io/badge/Base%20Distro-Alpine%203.20%20(musl)-blue.svg)]()
@@ -33,6 +35,7 @@ Because the AI Agent OS runs a local LLM inference engine (`llama-server`) direc
 ### Minimum Requirements (Basic Harness)
 
 *Runs the default `SmolLM2-135M-Instruct` agent, Alpine Linux, and XFCE4.*
+
 - **CPU:** 2+ Cores (x86_64 or ARM64 with hardware virtualization VT-x/AMD-V enabled)
 - **RAM:** 2 GB
 - **Storage:** 5 GB available space
@@ -41,6 +44,7 @@ Because the AI Agent OS runs a local LLM inference engine (`llama-server`) direc
 ### Recommended Requirements (Sentinel Harness & Fine-Tuning)
 
 *Capable of running larger models (e.g. Llama-3.2-1B/3B) for the Planner/Worker architecture, complex browser automation, and in-guest LoRA fine-tuning.*
+
 - **CPU:** 4-8 Cores (Modern processor for fast `llama.cpp` CPU inference)
 - **RAM:** 8 GB+
 - **Storage:** 20 GB SSD (To store `.gguf` weights, LoRA adapters, and JSONL datasets)
@@ -285,6 +289,6 @@ For the comprehensive design document, threat modeling, kernel internals, and be
 
 ## ⚖️ License
 
-Because this project involves modifications to the Linux kernel (such as custom system calls, kretprobes, and loadable kernel modules), it is distributed under the **GNU General Public License v2.0 (GPL-2.0)**. 
+Because this project involves modifications to the Linux kernel (such as custom system calls, kretprobes, and loadable kernel modules), it is distributed under the **GNU General Public License v2.0 (GPL-2.0)**.
 
 See the [LICENSE](LICENSE) file for more details. Other included third-party tools (like `llama.cpp`) retain their respective original licenses.
