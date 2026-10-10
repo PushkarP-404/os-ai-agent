@@ -38,10 +38,13 @@ start_pre() {
             ewarn "Netlink socket may fail. Boot 6.6.142-ai-agent and retry."
             ;;
     esac
-    mkdir -p /var/ai-agent/logs /var/ai-agent/training_data
+    mkdir -p /var/ai-agent/logs /var/ai-agent/training_data /var/ai-agent/tasks
     chown -R ai-agent:ai-agent /var/ai-agent
     touch "$AGENT_LOG"
     chown ai-agent:ai-agent "$AGENT_LOG"
+    # Phase 11: task_runner subprocess log
+    touch /var/log/task_runner.log
+    chmod 666 /var/log/task_runner.log
 }
 
 start() {

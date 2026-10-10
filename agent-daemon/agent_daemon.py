@@ -21,6 +21,8 @@ import os
 import sys
 import time
 import json
+import uuid
+import shutil
 import urllib.request
 import urllib.error
 import signal
@@ -78,6 +80,17 @@ CAPABILITIES_FILE = "/var/ai-agent/capabilities.json"
 SYSTEM_CAPABILITIES = {}
 EBPF_EVENTS = []
 
+# ── Phase 11: task runner path ───────────────────────────────────────────────
+TASK_RUNNER_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "task_runner.py",
+)
+# Fall back to system install path
+if not os.path.exists(TASK_RUNNER_PATH):
+    TASK_RUNNER_PATH = "/usr/local/lib/ai-agent/task_runner.py"
+
+TASKS_DIR = os.path.join(os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent"), "tasks")
+
 def load_capabilities():
     global SYSTEM_CAPABILITIES
     if os.path.exists(CAPABILITIES_FILE):
@@ -86,6 +99,48 @@ def load_capabilities():
                 SYSTEM_CAPABILITIES = json.load(f)
         except Exception:
             pass
+
+def build_live_capabilities():
+    """Sample real OS state and merge into SYSTEM_CAPABILITIES at daemon startup.
+    
+    This gives the Planner accurate context about what's actually installed,
+    avoiding hallucinated package manager names or missing tool assumptions.
+    """
+    global SYSTEM_CAPABILITIES
+    live = {}
+    # Package manager
+    if shutil.which("apk"):   live["pkg_manager"] = "apk"
+    elif shutil.which("apt"): live["pkg_manager"] = "apt"
+    elif shutil.which("dnf"): live["pkg_manager"] = "dnf"
+    elif shutil.which("yum"): live["pkg_manager"] = "yum"
+    # Init system
+    if os.path.exists("/sbin/openrc-run") or os.path.exists("/etc/init.d"):
+        live["init_system"] = "openrc"
+    elif shutil.which("systemctl"):
+        live["init_system"] = "systemd"
+    # Shell tools
+    for tool in ["python3", "curl", "wget", "gcc", "git", "nginx", "ssh", "tar",
+                 "grep", "awk", "sed", "find", "nc", "socat", "strace"]:
+        if shutil.which(tool):
+            live[f"has_{tool}"] = True
+    # Basic system info
+    live["user"]     = os.environ.get("USER", "root")
+    try:
+        live["hostname"] = socket.gethostname()
+    except Exception:
+        pass
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    live["os"] = line.split("=", 1)[1].strip().strip('"')
+                    break
+    except Exception:
+        pass
+    # Merge live into persisted caps (live takes precedence for dynamic fields)
+    SYSTEM_CAPABILITIES.update(live)
+    save_capability("_live_sampled", True)
+    print(f"[CAPS] OS capabilities sampled: {json.dumps(live)}")
 
 def save_capability(key, value):
     SYSTEM_CAPABILITIES[key] = value
@@ -170,195 +225,46 @@ def handle_syscall_query(sock, query_payload):
             mode = "ASSIST"
             query = query[8:]
 
+        # ── Phase 11: dispatch to task_runner.py subprocess ──────────────────
+        # The kernel buffer (2048 bytes) is only used to return the task ID and
+        # task log path. The actual results are written to the JSONL task file
+        # and streamed by the updated agent-cli polling loop.
+        task_id = str(uuid.uuid4())[:8]
+        task_file = os.path.join(TASKS_DIR, f"{task_id}.jsonl")
+        os.makedirs(TASKS_DIR, exist_ok=True)
+
         latency_ms = 0.0
-        # Format known capabilities for the Planner
-        caps_str = json.dumps(SYSTEM_CAPABILITIES)
-        
-        # --- Phase 10: Planner Step ---
-        planner_prompt = (
-            f"<|im_start|>system\nYou are the OS Agent Planner. Break the user's intent into a JSON array of sub-tasks.\n"
-            f"CRITICAL (Delegation-First): You do NOT write code. You orchestrate. If asked to write code, your plan must be to launch an AI IDE (like antigravity) to do it.\n"
-            f"Known System Capabilities: {caps_str}\n"
-            f"If 'primary_ide' is defined in capabilities, ALWAYS delegate to it first. Do not scan for other IDEs unless the primary one fails to launch.\n"
-            f"Output ONLY a valid JSON array of strings. Example: [\"Scan for antigravity IDE\", \"Launch IDE\", \"Verify output\"]\n<|im_end|>\n"
-            f"<|im_start|>user\nIntent: {query}<|im_end|>\n<|im_start|>assistant\n"
-        )
-        
         t_start = time.monotonic()
-        print(f"  [PLANNER] Analyzing intent: {query}")
-        sys.stdout.flush()
-        
-        # Dynamically query the Planner LLM
-        planner_verdict = query_ollama(planner_prompt, n_predict=300)
-            
-        latency_ms += (time.monotonic() - t_start) * 1000.0
-        
-        try:
-            json_str = planner_verdict
-            if "[" in json_str:
-                start = json_str.find("[")
-                end = json_str.rfind("]")
-                if start != -1:
-                    json_str = json_str[start:end+1 if end != -1 else None]
-            task_plan = json.loads(json_str)
-            if not isinstance(task_plan, list):
-                task_plan = [query]
-        except Exception as e:
-            print(f"  [PLANNER ERROR] {e}. Falling back to single-task.")
-            task_plan = [query]
-            
-        print(f"  [PLAN] Generated {len(task_plan)} tasks:")
-        for i, t in enumerate(task_plan):
-            print(f"    {i+1}. {t}")
-        sys.stdout.flush()
 
-        final_response = ""
-        
-        # --- Phase 10: Worker Loop ---
-        MAX_TOTAL_TIME_S = 110.0
-        task_start_time = time.monotonic()
-        
-        # Safety: cap plan length to prevent LLM-induced infinite loop
-        if len(task_plan) > 10:
-            print(f"  [WARN] Plan has {len(task_plan)} tasks — capping to 10")
-            task_plan = task_plan[:10]
-        
-        for task_idx, current_task in enumerate(task_plan):
-            print(f"\n  [WORKER] Starting Task {task_idx+1}/{len(task_plan)}: {current_task}")
-            max_steps = 5
-            step_count = 0
-            prompt_context = f"Current Task: {current_task}\nOverall User Intent: {query}"
-            task_finished = False
-            last_result = None  # Bug fix: track last subprocess result for finish handler
-            
-            while step_count < max_steps:
-                elapsed_time = time.monotonic() - task_start_time
-                if elapsed_time > MAX_TOTAL_TIME_S:
-                    final_response = f"[ABORTED] Worker reached cumulative time limit ({elapsed_time:.1f}s) to prevent kernel timeout."
-                    break
+        if not os.path.exists(TASK_RUNNER_PATH):
+            final_response = (
+                f"[ERROR] task_runner.py not found at {TASK_RUNNER_PATH}. "
+                f"Deploy Phase 11 files and retry."
+            )
+        else:
+            try:
+                env = os.environ.copy()
+                env["LLAMA_URL"]        = LLAMA_URL
+                env["AI_AGENT_LOG_DIR"] = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
 
-                ebpf_context = "\nRecent OS Events:\n" + "\n".join(EBPF_EVENTS) if EBPF_EVENTS else ""
-
-                sys_prompt = (
-                    f"<|im_start|>system\nYou are an OS Worker Agent. Accomplish the Current Task.\n"
-                    f"Output ONLY JSON. Actions:\n"
-                    f"1. Shell: {{\"target_software\": \"sh\", \"action\": \"execute\", \"args\": [\"-c\", \"<command>\"]}}\n"
-                    f"2. GUI: {{\"target_software\": \"cdp_controller.py\", \"action\": \"execute\", \"args\": [\"dump\" | \"click --id <id>\" | \"type --id <id> --text <text>\"]}}\n"
-                    f"3. Verify: {{\"action\": \"verify\", \"condition\": \"<what to check>\"}}\n"
-                    f"4. Finish: {{\"action\": \"finish\", \"reason\": \"<summary>\"}}\n"
-                    f"5. Abort: {{\"action\": \"abort\", \"reason\": \"<error>\"}}<|im_end|>\n"
-                    f"<|im_start|>user\n{prompt_context}{ebpf_context}<|im_end|>\n<|im_start|>assistant\n"
+                subprocess.Popen(
+                    [sys.executable, TASK_RUNNER_PATH, task_id, query, mode],
+                    stdout=open("/var/log/task_runner.log", "a"),
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    close_fds=True,
                 )
-                
-                t_start = time.monotonic()
-                ai_verdict = query_ollama(sys_prompt)
-                latency_ms += (time.monotonic() - t_start) * 1000.0
-
-                print(f"    [AI] (Step {step_count+1}): {ai_verdict}")
+                latency_ms = (time.monotonic() - t_start) * 1000.0
+                final_response = (
+                    f"[TASK:{task_id}] Running in background.\n"
+                    f"Log: {task_file}\n"
+                    f"Mode: {mode}"
+                )
+                print(f"  [DISPATCH] Spawned task_runner for task {task_id}, mode={mode}")
                 sys.stdout.flush()
-
-                try:
-                    json_str = ai_verdict
-                    if "```json" in json_str:
-                        json_str = json_str.split("```json")[1].split("```")[0]
-                    elif "```" in json_str:
-                        json_str = json_str.split("```")[1].split("```")[0]
-                    else:
-                        start_idx = json_str.find("{")
-                        end_idx = json_str.rfind("}")
-                        if start_idx != -1 and end_idx != -1:
-                            json_str = json_str[start_idx:end_idx+1]
-                            
-                    try:
-                        delegation = json.loads(json_str)
-                    except ValueError as decode_err:
-                        elapsed = time.monotonic() - task_start_time
-                        if elapsed > MAX_TOTAL_TIME_S - 15.0:
-                            raise Exception(f"Invalid JSON and out of time to retry: {decode_err}")
-                        print(f"    [JSON ERROR] Invalid format: {decode_err}")
-                        prompt_context += f"\n\nSystem Error: Invalid JSON. You MUST return exactly one valid JSON object. Error: {decode_err}"
-                        step_count += 1
-                        continue
-                    
-                    action = delegation.get("action")
-                    if action == "abort":
-                        reason = delegation.get("reason", "Unknown reason")
-                        final_response = f"[ABORTED by Worker on Task {task_idx+1}] {reason}"
-                        break
-                    elif action == "finish":
-                        print(f"    [WORKER] Task {task_idx+1} finished: {delegation.get('reason')}")
-                        task_finished = True
-                        
-                        # Bug fix (2026-09-27): Use last_result (tracked from subprocess.run)
-                        # instead of undefined 'result'. Also fall back to prompt_context.
-                        if "scan for native" in current_task.lower():
-                            search_text = ""
-                            if last_result is not None:
-                                search_text = (last_result.stdout or "") + (last_result.stderr or "")
-                            else:
-                                search_text = prompt_context
-                            if "antigravity" in search_text.lower():
-                                save_capability("native_ide", "antigravity")
-                                print("    [CACHE] Saved capability: native_ide=antigravity")
-                            elif "code" in search_text.lower():
-                                save_capability("native_ide", "code")
-                                print("    [CACHE] Saved capability: native_ide=code")
-                            
-                        break
-                        
-                    if action == "verify":
-                        cond = delegation.get("condition", "")
-                        print(f"    [VERIFY] {cond} (Mocked Success via eBPF)")
-                        prompt_context += f"\n\nVerification '{cond}' SUCCESS."
-                        step_count += 1
-                        continue
-
-                    target = delegation.get("target_software")
-                    args = delegation.get("args", [])
-                    
-                    # Bug fix: Command execution allowlist to prevent arbitrary code execution
-                    ALLOWED_COMMANDS = {"sh", "cdp_controller.py", "apk", "sleep", "ls"}
-                    if target not in ALLOWED_COMMANDS:
-                        final_response = f"[ABORTED by Security Policy] Disallowed target software: {target}"
-                        break
-                        
-                    print(f"    [DISPATCH] {target} {args}")
-                    sys.stdout.flush()
-                    
-                    cmd = [target] + args
-                    if target == "cdp_controller.py":
-                        cmd = ["python3", "/home/aiuser/cdp_controller.py"] + args
-
-                    # Bug fix (2026-09-27): Check SUGGEST mode BEFORE running subprocess
-                    # Previously this check came AFTER subprocess.run, meaning the command
-                    # executed even in SUGGEST mode.
-                    if mode == "SUGGEST":
-                        print(f"    [SUGGEST MODE] Aborting execution (command NOT run).")
-                        final_response = f"[SUGGESTION] Task: {current_task}\nAction:\n{json.dumps(delegation, indent=2)}\nCommand: {' '.join(cmd)}"
-                        break
-
-                    last_result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                    result = last_result  # Keep alias for backwards compat
-                    
-                    if result.returncode == 0:
-                        prompt_context += f"\n\nAction success:\nSTDOUT:\n{result.stdout}\nNext JSON action or finish."
-                    else:
-                        prompt_context += f"\n\nAction failed (exit {result.returncode}):\nSTDERR:\n{result.stderr}\nFix JSON or abort."
-                    step_count += 1
-                except Exception as e:
-                    print(f"    [EXEC ERROR] {e}")
-                    prompt_context += f"\n\nError: {e}\nRaw JSON: {ai_verdict}\nPlease output valid JSON."
-                    step_count += 1
-                    
-            if not task_finished and not final_response:
-                final_response = f"[ABORTED] Worker reached max steps ({max_steps}) on Task {task_idx+1}."
-                break
-                
-            if mode == "SUGGEST":
-                break
-                
-        if not final_response:
-            final_response = f"[COMPLETED] All {len(task_plan)} tasks executed successfully."
+            except Exception as exc:
+                final_response = f"[ERROR] Failed to spawn task_runner: {exc}"
+                latency_ms = (time.monotonic() - t_start) * 1000.0
                 
     else:
         prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
@@ -408,6 +314,12 @@ def main():
     print(f"[AGENT DAEMON] PID: {os.getpid()}")
     print(f"[AGENT DAEMON] LLM: {OLLAMA_URL} (model: {OLLAMA_MODEL})")
     print(f"[AGENT DAEMON] Logging: {'ENABLED -> /var/ai-agent/' if LOGGING_ENABLED else 'DISABLED (logger.py not found)'}")
+    print(f"[AGENT DAEMON] Task runner: {TASK_RUNNER_PATH}")
+    print(f"[AGENT DAEMON] Tasks dir: {TASKS_DIR}")
+
+    # ── Phase 11: build live OS capability context ───────────────────────────
+    build_live_capabilities()
+    os.makedirs(TASKS_DIR, exist_ok=True)
 
     # ── Open Netlink socket ──────────────────────────────────────────────────
     try:
