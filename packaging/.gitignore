@@ -1,0 +1,7 @@
+# AI-Agent OS packaging build artifacts — do not commit these
+packaging/keys/
+packaging/repo/
+packaging/**/*.apk
+packaging/**/pkg/
+packaging/**/src/
+packaging/**/.abuild/

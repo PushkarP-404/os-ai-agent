@@ -1,0 +1,55 @@
+# Maintainer: AI-Agent OS <developer@ai-agent-os.org>
+# ai-agent-model-lora — LoRA adapter GGUF for AI-Agent OS
+#
+# This package installs the LoRA fine-tuned GGUF adapter produced by the
+# distillation → format → train → export pipeline.
+#
+# The model file (os_agent_lora.gguf) must be present in the source path
+# before building.  The fine-tuning pipeline on the Windows host writes it to:
+#   C:\qemu-alpine\distillation-fine-tuning\os_agent_lora.gguf
+# and sync_repo.py uploads it to /var/lib/ai-agent/models/ in the VM.
+#
+# The llama-server OpenRC init script already checks for this file at startup
+# and auto-loads it as a LoRA adapter if present — no other changes needed.
+
+pkgname="ai-agent-model-lora"
+pkgver="0.1.0"
+pkgrel=0
+pkgdesc="LoRA fine-tuned GGUF adapter for AI-Agent OS (SmolLM2-135M base)"
+arch="all"
+license="MIT"
+url="https://github.com/ai-agent-os/ai-agent"
+depends="llama-server-musl"
+options="!check !strip !fhs"
+
+_model_src="/var/lib/ai-agent/models"
+_lora_file="os_agent_lora.gguf"
+
+build() {
+    # Nothing to compile — this package just installs a GGUF file
+    if [ ! -f "$_model_src/$_lora_file" ]; then
+        die "LoRA model not found at $_model_src/$_lora_file"
+        die "Run the distillation pipeline first, then upload the GGUF."
+    fi
+    return 0
+}
+
+package() {
+    install -Dm644 "$_model_src/$_lora_file" \
+        "$pkgdir/var/lib/ai-agent/models/$_lora_file"
+}
+
+post_install() {
+    einfo "LoRA adapter installed: /var/lib/ai-agent/models/$_lora_file"
+    einfo "Restart llama-server to activate: rc-service llama-server restart"
+}
+
+post_upgrade() {
+    # Restart inference server so it picks up the new adapter
+    rc-service llama-server restart 2>/dev/null || true
+}
+
+post_deinstall() {
+    einfo "LoRA adapter removed. llama-server will use the base model."
+    rc-service llama-server restart 2>/dev/null || true
+}

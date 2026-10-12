@@ -1,0 +1,97 @@
+# Maintainer: AI-Agent OS <developer@ai-agent-os.org>
+# llama-server-musl — llama.cpp native musl inference server
+#
+# This package compiles llama-server from source inside the VM using the
+# already-cloned llama.cpp repo at /root/llama.cpp.  The binary is fully
+# static-compatible with Alpine's musl libc — no glibc dependency.
+
+pkgname="llama-server-musl"
+pkgver="0.1.0"
+pkgrel=0
+pkgdesc="llama.cpp native musl HTTP inference server for AI-Agent OS"
+arch="x86_64"
+license="MIT"
+url="https://github.com/ggerganov/llama.cpp"
+depends="libstdc++ curl"
+makedepends=""
+options="!check !fhs"  # no upstream test suite for server binary
+
+# Source is already present in the VM at /root/llama.cpp (cloned during Phase 5)
+# We don't fetch a tarball — APKBUILD builds from that live checkout.
+builddir="/root/llama.cpp"
+
+build() {
+    # If pre-compiled binary is already present, package it directly
+    if [ -f /usr/local/bin/llama-server ] || [ -f /usr/bin/llama-server ]; then
+        return 0
+    fi
+    if [ -d "$builddir" ]; then
+        cd "$builddir"
+        cmake -B build-apk \
+            -DLLAMA_CURL=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_NATIVE=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr
+        cmake --build build-apk --config Release -j"$(nproc)" --target llama-server
+    fi
+}
+
+package() {
+    # Binary
+    local _bin=""
+    if [ -f "$builddir/build-apk/bin/llama-server" ]; then
+        _bin="$builddir/build-apk/bin/llama-server"
+    elif [ -f /usr/local/bin/llama-server ]; then
+        _bin="/usr/local/bin/llama-server"
+    elif [ -f /usr/bin/llama-server ]; then
+        _bin="/usr/bin/llama-server"
+    fi
+    install -Dm755 "$_bin" "$pkgdir/usr/bin/llama-server"
+
+    # Shared libraries (bundled so package owns its runtime dependencies)
+    install -d "$pkgdir/usr/lib"
+    if ls /usr/local/lib/lib*.so* >/dev/null 2>&1; then
+        cp -a /usr/local/lib/lib*.so* "$pkgdir/usr/lib/"
+    elif [ -d "$builddir/build-apk/bin" ]; then
+        cp -a "$builddir/build-apk"/bin/lib*.so* "$pkgdir/usr/lib/" 2>/dev/null || true
+    fi
+
+    # OpenRC init script
+    install -Dm755 /etc/init.d/llama-server \
+        "$pkgdir/etc/init.d/llama-server"
+
+    # conf.d defaults (editable by admin)
+    install -Dm644 /dev/stdin \
+        "$pkgdir/etc/conf.d/llama-server" << 'EOF'
+# llama-server configuration — overrides OpenRC defaults
+LLAMA_SERVER_BIN="/usr/bin/llama-server"
+# Path to the base GGUF model
+LLAMA_MODEL="/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf"
+# HTTP endpoint
+LLAMA_HOST="127.0.0.1"
+LLAMA_PORT="11434"
+# Inference settings
+LLAMA_THREADS="4"
+LLAMA_CTX="512"
+EOF
+
+    # Create model directory (models are NOT bundled — installed separately)
+    install -d "$pkgdir/var/lib/ai-agent/models"
+}
+
+pre_install() {
+    mkdir -p /var/lib/ai-agent/models
+    mkdir -p /var/log
+}
+
+post_install() {
+    einfo "llama-server installed to /usr/local/bin/llama-server"
+    einfo "Place your GGUF model at /var/lib/ai-agent/models/ before starting."
+    einfo "Enable with: rc-update add llama-server default"
+    rc-update add llama-server default 2>/dev/null || true
+}
+
+post_deinstall() {
+    rc-update del llama-server default 2>/dev/null || true
+}

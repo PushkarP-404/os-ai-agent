@@ -1,0 +1,66 @@
+# Maintainer: AI-Agent OS <developer@ai-agent-os.org>
+# ai-agent-kernel-modules — AI-Agent OS LKM: ai_process_hook.ko
+#
+# Builds ai_process_hook.ko against the running ai-agent kernel
+# (6.6.142-ai-agent) and installs it into the correct modules path.
+# On install, depmod is run so the module can be loaded with modprobe.
+
+pkgname="ai-agent-kernel-modules"
+pkgver="0.1.0"
+pkgrel=0
+pkgdesc="Kernel loadable module for AI-Agent OS process event monitoring"
+arch="x86_64"
+license="GPL-2.0-only"
+url="https://github.com/ai-agent-os/ai-agent"
+depends=""
+makedepends="linux-headers build-base"
+options="!check !fhs"
+
+# Target kernel version (must match the booted ai-agent kernel)
+_kver="6.6.142-ai-agent"
+_src="/root/os-ai-agent/kernel-module"
+
+build() {
+    cd "$_src"
+    # Verify we are building against the correct kernel headers
+    if [ ! -d "/lib/modules/$_kver/build" ]; then
+        die "Kernel build dir not found: /lib/modules/$_kver/build"
+        die "Boot the 6.6.142-ai-agent kernel first."
+    fi
+    make KDIR="/lib/modules/$_kver/build" clean
+    make KDIR="/lib/modules/$_kver/build"
+}
+
+package() {
+    local kmod_dir="$pkgdir/lib/modules/$_kver/extra"
+    install -d "$kmod_dir"
+    install -m644 "$_src/ai_process_hook.ko" \
+        "$kmod_dir/ai_process_hook.ko"
+
+    # modules.load entry (installed to /etc/modules-load.d/)
+    install -d "$pkgdir/etc/modules-load.d"
+    printf "ai_process_hook\n" \
+        > "$pkgdir/etc/modules-load.d/ai-agent.conf"
+}
+
+post_install() {
+    # Rebuild module dependency map for the ai-agent kernel
+    depmod "$_kver" 2>/dev/null || depmod -a || true
+
+    einfo "ai_process_hook.ko installed for kernel $_kver"
+    einfo "Load now with: modprobe ai_process_hook"
+    einfo "It will auto-load on next boot via /etc/modules-load.d/ai-agent.conf"
+}
+
+post_upgrade() {
+    # Unload old version before depmod
+    rmmod ai_process_hook 2>/dev/null || true
+    depmod "$_kver" 2>/dev/null || depmod -a || true
+    modprobe ai_process_hook 2>/dev/null || true
+}
+
+post_deinstall() {
+    rmmod ai_process_hook 2>/dev/null || true
+    depmod "$_kver" 2>/dev/null || depmod -a || true
+    rm -f /etc/modules-load.d/ai-agent.conf
+}

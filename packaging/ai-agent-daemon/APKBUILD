@@ -1,0 +1,95 @@
+# Maintainer: AI-Agent OS <developer@ai-agent-os.org>
+# ai-agent-daemon — AI-Agent OS kernel-userspace daemon + CLI
+#
+# Packages:
+#   - agent_daemon.py  (Netlink listener + Phase 11 task dispatcher)
+#   - task_runner.py   (async task execution engine)
+#   - logger.py        (structured JSONL logger)
+#   - agent-cli        (compiled C binary — syscall 548 interface)
+#   - OpenRC init script for the daemon
+
+pkgname="ai-agent-daemon"
+pkgver="0.1.0"
+pkgrel=0
+pkgdesc="AI-Agent OS kernel-userspace daemon and agent-cli (Phase 11)"
+arch="x86_64"
+license="GPL-2.0-only"
+url="https://github.com/ai-agent-os/ai-agent"
+depends="python3 llama-server-musl"
+makedepends="gcc make"
+options="!check !fhs"
+
+# Source is in the VM at /root/os-ai-agent (uploaded by sync.py / sync_repo.py)
+_daemon_src="/usr/local/lib/ai-agent"
+_cli_src="/root/os-ai-agent/agent-cli"
+
+build() {
+    # Compile agent-cli C binary against system libc (musl)
+    cd "$_cli_src"
+    make clean
+    make CC=gcc CFLAGS="-Wall -O2 -static"
+}
+
+package() {
+    # ── Python daemon files ──────────────────────────────────────────────
+    for pyf in "$_daemon_src"/*.py; do
+        if [ -f "$pyf" ]; then
+            install -Dm644 "$pyf" "$pkgdir/usr/lib/ai-agent/$(basename "$pyf")"
+        fi
+    done
+
+    # ── agent-cli binary ─────────────────────────────────────────────────
+    install -Dm755 "$_cli_src/agent-cli" \
+        "$pkgdir/usr/bin/agent-cli"
+
+    # ── OpenRC init script ───────────────────────────────────────────────
+    install -Dm755 /etc/init.d/ai-agent \
+        "$pkgdir/etc/init.d/ai-agent"
+
+    # ── conf.d defaults ──────────────────────────────────────────────────
+    install -Dm644 /dev/stdin \
+        "$pkgdir/etc/conf.d/ai-agent" << 'EOF'
+# ai-agent daemon configuration
+AGENT_SCRIPT="/usr/lib/ai-agent/agent_daemon.py"
+PYTHON_BIN="/usr/bin/python3"
+LLAMA_URL="http://127.0.0.1:11434/completion"
+AI_AGENT_LOG_DIR="/var/ai-agent"
+EOF
+
+    # ── Runtime directories ──────────────────────────────────────────────
+    install -d "$pkgdir/var/ai-agent/tasks"
+    install -d "$pkgdir/var/ai-agent/logs"
+    install -d "$pkgdir/var/ai-agent/training_data"
+}
+
+pre_install() {
+    # Create daemon system user/group
+    addgroup -S ai-agent 2>/dev/null || true
+    adduser -S -G ai-agent -H -h /var/ai-agent ai-agent 2>/dev/null || true
+}
+
+post_install() {
+    # Runtime dirs ownership
+    chown -R ai-agent:ai-agent /var/ai-agent 2>/dev/null || true
+
+    # Logs
+    touch /var/log/ai-agent.log /var/log/task_runner.log
+    chown ai-agent:ai-agent /var/log/ai-agent.log
+    chmod 666 /var/log/task_runner.log
+
+    # Enable service
+    rc-update add ai-agent default 2>/dev/null || true
+
+    einfo "AI-Agent daemon installed."
+    einfo "Start with: rc-service ai-agent start"
+    einfo "CLI usage:  agent-cli \"install curl and test it\""
+}
+
+post_upgrade() {
+    rc-service ai-agent restart 2>/dev/null || true
+}
+
+post_deinstall() {
+    rc-service ai-agent stop 2>/dev/null || true
+    rc-update del ai-agent default 2>/dev/null || true
+}
