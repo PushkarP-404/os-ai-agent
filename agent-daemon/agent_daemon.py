@@ -246,9 +246,10 @@ def handle_syscall_query(sock, query_payload):
                 env = os.environ.copy()
                 env["LLAMA_URL"]        = LLAMA_URL
                 env["AI_AGENT_LOG_DIR"] = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
+                env["CALLER_PID"]       = str(caller_pid)
 
                 subprocess.Popen(
-                    [sys.executable, TASK_RUNNER_PATH, task_id, query, mode],
+                    [sys.executable, TASK_RUNNER_PATH, task_id, query, mode, str(caller_pid)],
                     stdout=open("/var/log/task_runner.log", "a"),
                     stderr=subprocess.STDOUT,
                     env=env,

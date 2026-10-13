@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-task_runner.py — AI-Agent OS: Autonomous Task Execution Engine
+task_runner.py — AI-Agent OS: Dynamic Autonomous Task Execution Engine
 
-Runs as a subprocess spawned by agent_daemon.py. Decoupled from the Netlink
-event loop so it never blocks kernel IPC. Executes the Planner→Worker
-loop and writes results incrementally to a JSONL task log that agent-cli
-polls for live streaming output.
+Runs as a subprocess spawned by agent_daemon.py upon receiving an intent
+from agent-cli via kernel syscall 548. Decoupled from the Netlink event loop.
 
-Task log path: /var/ai-agent/tasks/<task_id>.jsonl
+Dynamically discovers the calling process's identity (UID, GID, home, cwd,
+environment) from /proc/<caller_pid> so that actions are executed with the
+actual caller's context rather than assuming hardcoded accounts or paths.
 """
 
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
@@ -19,7 +20,6 @@ import socket
 import subprocess
 import sys
 import time
-import uuid
 import urllib.request
 import urllib.error
 
@@ -29,9 +29,9 @@ AI_AGENT_LOG_DIR  = os.environ.get("AI_AGENT_LOG_DIR",  "/var/ai-agent")
 TASKS_DIR         = os.path.join(AI_AGENT_LOG_DIR, "tasks")
 CAPABILITIES_FILE = os.path.join(AI_AGENT_LOG_DIR, "capabilities.json")
 
-LLM_TIMEOUT_S     = 25       # max seconds per LLM HTTP call
-MAX_TASKS         = 10       # max sub-tasks Planner can generate
-MAX_STEPS         = 3        # max Worker steps per sub-task (fast fail, no infinite hang)
+LLM_TIMEOUT_S     = 60       # max seconds per LLM HTTP call
+MAX_TASKS         = 5        # max sub-tasks Planner can generate
+MAX_STEPS         = 3        # max Worker steps per sub-task
 CMD_TIMEOUT_S     = 30       # max wall-clock time for a shell command
 TASK_MAX_TOTAL_S  = 300      # 5 min hard cap for the whole job
 
@@ -57,165 +57,64 @@ def is_safe_command(cmd: str) -> tuple[bool, str]:
     return True, ""
 
 
-# ── Direct intent heuristics (instant sub-second execution) ─────────────────
-DIRECT_INTENT_MAP = [
-    (r"\b(disk|df|disk\s*space|free\s*space|storage)\b", "df -h"),
-    (r"\b(ram|memory|free\s*memory|mem\s*usage)\b", "free -m"),
-    (r"\b(process(es)?|ps|top\s*process(es)?|running\s*apps)\b", "ps aux | head -25"),
-    (r"\b(ip|ip\s*addr|ip\s*address|interfaces?|network)\b", "ip a"),
-    (r"\b(uptime|system\s*load|load\s*avg)\b", "uptime"),
-    (r"\b(whoami|current\s*user|my\s*user)\b", "whoami"),
-    (r"\b(hostname|machine\s*name)\b", "hostname"),
-    (r"\b(uname|kernel|kernel\s*version|os\s*version)\b", "uname -a"),
-    (r"\b(running|alive|status|agent\s*status|daemon\s*status|ping)\b", "echo 'AI-Agent OS is active and responsive.'"),
-    (r"\b(date|time|clock)\b", "date"),
-    (r"\b(ports?|listening\s*ports?)\b", "netstat -tuln 2>/dev/null || ss -tuln"),
-    (r"\b(dmesg|kernel\s*logs?)\b", "dmesg | tail -n 25"),
-    (r"\b(cpu|cpu\s*info)\b", "grep -E 'model name|cpu MHz' /proc/cpuinfo | head -4 || lscpu"),
-]
+# ── Dynamic Caller Context Discovery ─────────────────────────────────────────
+def get_caller_context(caller_pid: int | None = None) -> dict:
+    """
+    Dynamically discover caller's identity (user, uid, gid, home, cwd, env)
+    from /proc/<caller_pid> without hardcoding any user or directory.
+    """
+    ctx = {
+        "uid": os.getuid(),
+        "gid": os.getgid(),
+        "user": os.environ.get("USER", "root"),
+        "home": os.environ.get("HOME", "/root"),
+        "cwd": os.getcwd(),
+        "env": dict(os.environ),
+    }
 
+    if caller_pid and os.path.exists(f"/proc/{caller_pid}"):
+        try:
+            stat_info = os.stat(f"/proc/{caller_pid}")
+            ctx["uid"] = stat_info.st_uid
+            ctx["gid"] = stat_info.st_gid
+            try:
+                user_record = pwd.getpwuid(ctx["uid"])
+                ctx["user"] = user_record.pw_name
+                ctx["home"] = user_record.pw_dir
+            except Exception:
+                pass
 
-def resolve_desktop_path(path_str: str) -> str:
-    """Resolve 'Desktop' or '~/Desktop' to /home/aiuser/Desktop if it exists."""
-    p = path_str.strip().strip("'\"")
-    if p.lower() in ("desktop", "~/desktop"):
-        if os.path.exists("/home/aiuser/Desktop"):
-            return "/home/aiuser/Desktop"
-        return os.path.expanduser("~/Desktop")
-    if p.lower().startswith("desktop/") or p.lower().startswith("~/desktop/"):
-        sub = p.split("/", 1)[1]
-        if os.path.exists("/home/aiuser/Desktop"):
-            return f"/home/aiuser/Desktop/{sub}"
-        return os.path.expanduser(f"~/Desktop/{sub}")
-    return p
+            # Caller current working directory
+            try:
+                caller_cwd = os.readlink(f"/proc/{caller_pid}/cwd")
+                if os.path.isdir(caller_cwd):
+                    ctx["cwd"] = caller_cwd
+            except Exception:
+                pass
 
+            # Caller environment
+            try:
+                environ_path = f"/proc/{caller_pid}/environ"
+                if os.path.exists(environ_path):
+                    with open(environ_path, "rb") as f:
+                        env_data = {}
+                        for entry in f.read().split(b"\x00"):
+                            if b"=" in entry:
+                                k, v = entry.split(b"=", 1)
+                                env_data[k.decode(errors="ignore")] = v.decode(errors="ignore")
+                        if env_data:
+                            ctx["env"].update(env_data)
+                            if "HOME" in env_data:
+                                ctx["home"] = env_data["HOME"]
+                            if "USER" in env_data:
+                                ctx["user"] = env_data["USER"]
+            except Exception:
+                pass
+        except Exception:
+            pass
 
-def parse_filesystem_intent(text: str) -> str | None:
-    t = text.strip().rstrip(".!\"'")
+    return ctx
 
-    # 1. create [a] (folder|directory|dir) [in/on] <location> (called|named) <name>
-    m = re.search(
-        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+(?:in|on|under)\s+([^\s]+)\s+(?:called|named)\s+['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        loc = m.group(1).strip()
-        name = m.group(2).strip()
-        loc_resolved = resolve_desktop_path(loc)
-        target = os.path.join(loc_resolved, name).replace("\\", "/")
-        return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
-
-    # 2. create [a] (folder|directory|dir) (called|named) <name> [in/on] <location>
-    m = re.search(
-        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+(?:called|named)\s+['\"]?([^'\"]+?)['\"]?\s+(?:in|on|under)\s+([^\s]+)",
-        t, re.IGNORECASE
-    )
-    if m:
-        name = m.group(1).strip()
-        loc = m.group(2).strip()
-        loc_resolved = resolve_desktop_path(loc)
-        target = os.path.join(loc_resolved, name).replace("\\", "/")
-        return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
-
-    # 3. create [a] (folder|directory|dir) <path>
-    m = re.search(
-        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        raw_path = m.group(1).strip()
-        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
-            target = resolve_desktop_path(raw_path)
-            return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
-
-    # 4. delete/remove (folder|directory|dir) <path>
-    m = re.search(
-        r"\b(?:delete|remove|rm)\s+(?:an?\s+)?(?:folder|directory|dir)\s+['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        raw_path = m.group(1).strip()
-        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the", "/"):
-            target = resolve_desktop_path(raw_path)
-            if target not in ("/", "/root", "/home", "/home/aiuser", "/home/aiuser/Desktop"):
-                return f"rm -rf '{target}'"
-
-    # 5. create/touch file in/on <location> called <name>
-    m = re.search(
-        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+(?:in|on|under)\s+([^\s]+)\s+(?:called|named)\s+['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        loc = m.group(1).strip()
-        name = m.group(2).strip()
-        loc_resolved = resolve_desktop_path(loc)
-        target = os.path.join(loc_resolved, name).replace("\\", "/")
-        return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
-
-    # 6. create/touch file called <name> in/on <location>
-    m = re.search(
-        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+(?:called|named)\s+['\"]?([^'\"]+?)['\"]?\s+(?:in|on|under)\s+([^\s]+)",
-        t, re.IGNORECASE
-    )
-    if m:
-        name = m.group(1).strip()
-        loc = m.group(2).strip()
-        loc_resolved = resolve_desktop_path(loc)
-        target = os.path.join(loc_resolved, name).replace("\\", "/")
-        return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
-
-    # 7. create/touch file <path>
-    m = re.search(
-        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        raw_path = m.group(1).strip()
-        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
-            target = resolve_desktop_path(raw_path)
-            return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
-
-    # 8. list files in <location>
-    m = re.search(
-        r"\b(?:list\s+files?|ls)\s*(?:in|on|under)?\s*['\"]?([^'\"]*)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        raw_loc = m.group(1).strip()
-        target = resolve_desktop_path(raw_loc) if raw_loc else "."
-        return f"ls -la '{target}'"
-
-    # 9. read/cat file <path>
-    m = re.search(
-        r"\b(?:read|cat|view|show\s+content\s+of)\s+(?:file\s+)?['\"]?([^'\"]+)['\"]?",
-        t, re.IGNORECASE
-    )
-    if m:
-        raw_path = m.group(1).strip()
-        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
-            target = resolve_desktop_path(raw_path)
-            return f"cat '{target}'"
-
-    return None
-
-
-def find_direct_command(text: str) -> str | None:
-    t = text.strip()
-    clean = re.sub(r"^(please\s+|can\s+you\s+|show\s+|check\s+|get\s+)", "", t, flags=re.IGNORECASE)
-
-    # First check filesystem natural language intents
-    fs_cmd = parse_filesystem_intent(clean)
-    if fs_cmd:
-        return fs_cmd
-
-    # Then check common admin commands
-    for pattern, cmd in DIRECT_INTENT_MAP:
-        m = re.search(pattern, clean, flags=re.IGNORECASE)
-        if m:
-            if callable(cmd):
-                return cmd(m)
-            return cmd
-    return None
 
 
 # ── LLM helpers ──────────────────────────────────────────────────────────────
@@ -236,8 +135,7 @@ def _llm_post(prompt: str, n_predict: int = 60) -> str:
         try:
             with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
-                content = result.get("content", "").strip()
-                return content
+                return result.get("content", "").strip()
         except Exception as exc:
             if attempt < 1:
                 time.sleep(1)
@@ -247,7 +145,6 @@ def _llm_post(prompt: str, n_predict: int = 60) -> str:
 
 
 def _extract_json_obj(text: str) -> dict | None:
-    """Extract first {...} JSON object from text."""
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0]
     elif "```" in text:
@@ -264,7 +161,6 @@ def _extract_json_obj(text: str) -> dict | None:
 
 
 def _extract_json_list(text: str) -> list | None:
-    """Extract first [...] JSON array from text."""
     start = text.find("[")
     end   = text.rfind("]")
     if start == -1 or end == -1:
@@ -308,216 +204,188 @@ def load_capabilities() -> dict:
     return caps
 
 
-def _build_caps_str(caps: dict) -> str:
-    if not caps:
-        return "pkg_manager=apk, init_system=openrc"
-    parts = []
-    for k, v in caps.items():
-        if isinstance(v, bool):
-            if v: parts.append(k)
-        else:
-            parts.append(f"{k}={v}")
-    return ", ".join(parts[:8])
-
-
-# ── Planner ───────────────────────────────────────────────────────────────────
-def run_planner(intent: str, caps: dict, log: TaskLog) -> list[str]:
-    log.write("planner_start", intent=intent)
-
-    # 1. Fast path: direct match
-    direct_cmd = find_direct_command(intent)
-    if direct_cmd:
-        task_list = [f"Execute: {direct_cmd}"]
-        log.write("plan", tasks=task_list, count=1)
-        return task_list
-
-    # 2. LLM path with concise prompt & array prefill
-    caps_str = _build_caps_str(caps)
-    prompt = (
-        f"<|im_start|>system\n"
-        f"You are the OS Agent Planner. Break user intent into a simple JSON array of sub-tasks.\n"
-        f"Output ONLY a JSON array of strings, e.g. [\"check curl\", \"install curl\"].\n"
-        f"Capabilities: {caps_str}\n"
-        f"<|im_end|>\n"
-        f"<|im_start|>user\nIntent: {intent}<|im_end|>\n"
-        f"<|im_start|>assistant\n["
-    )
-    raw = _llm_post(prompt, n_predict=80)
-    if not raw.startswith("["):
-        raw = "[" + raw
-    log.write("planner_raw", raw=raw)
-
-    task_list = _extract_json_list(raw)
-    if not task_list:
-        log.write("planner_fallback", reason="Could not parse plan — using intent as single task")
-        return [intent]
-
-    task_list = [str(t).strip() for t in task_list if t][:MAX_TASKS]
-    log.write("plan", tasks=task_list, count=len(task_list))
-    return task_list
-
-
 # ── Action extraction from LLM output ────────────────────────────────────────
-def extract_action(raw: str, task: str) -> tuple[str, str, list | str]:
+def extract_action(raw: str) -> tuple[str, str]:
     """
-    Robust action extractor for SmolLM2-135M.
-    Returns (action, target, args_or_reason).
+    Extract shell command from model output or JSON.
+    Returns (action, command_or_reason).
     """
-    # 1. Explicit task prefix
-    if task.startswith("Execute: "):
-        return "execute", "sh", ["-c", task[9:].strip()]
+    if "[LLM ERROR]" in raw or not raw.strip():
+        return "unknown", raw
 
-    # Direct task match
-    direct = find_direct_command(task)
-    if direct:
-        return "execute", "sh", ["-c", direct]
-
-    # 2. Structured JSON
+    # 1. Structured JSON
     data = _extract_json_obj(raw)
     if data:
         if "cmd" in data:
-            return "execute", "sh", ["-c", str(data["cmd"])]
+            val = str(data["cmd"]).strip()
+            val = re.sub(r'[\'"]\s*,?\s*$', '', val).strip()
+            if not val.startswith("[LLM"):
+                return "execute", val
         action = data.get("action", "")
         if action in ("finish", "abort"):
-            return action, "", data.get("reason", "Done")
+            return action, data.get("reason", "Done")
         if action == "execute":
-            return "execute", data.get("target_software", "sh"), data.get("args", [])
-        if action == "verify":
-            return "verify", "", data.get("condition", "")
+            args = data.get("args", [])
+            if isinstance(args, list) and len(args) >= 2 and args[0] == "-c":
+                return "execute", args[1]
+            return "execute", " ".join(str(a) for a in args) if isinstance(args, list) else str(args)
 
-    # 3. Regex for {"cmd": "..."}
+    # 2. Regex for "cmd": "..."
     m = re.search(r'"cmd"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"?', raw)
     if m:
-        return "execute", "sh", ["-c", m.group(1)]
+        candidate = m.group(1).strip()
+        candidate = re.sub(r'[\'"]\s*,?\s*$', '', candidate).strip()
+        if not candidate.startswith("[LLM"):
+            return "execute", candidate
 
-    # 4. Code block extraction
+    # 3. Markdown code block ```bash\n<cmd>\n```
     if "```" in raw:
         lines = [l.strip() for l in raw.split("```")[1].splitlines() if l.strip() and not l.strip().startswith("#")]
         if lines:
-            return "execute", "sh", ["-c", lines[0]]
+            return "execute", lines[0]
 
-    # 5. Common CLI command extraction from raw text
+    # 4. Command quoted in conversational text: `mkdir -p ...` or 'df -h'
+    m = re.search(r'[`\'"]((?:mkdir|df|free|ps|ls|cat|rm|touch|apk|uptime|uname|whoami|hostname|ip|echo|cd)\s+[^`\'"]+)[`\'"]', raw)
+    if m:
+        return "execute", m.group(1).strip()
+
+    # 5. Raw line starting with common shell command
     for line in raw.splitlines():
         line = line.strip().lstrip("-*123456789. ")
         if line.startswith(("#", "//", "/*")):
             continue
         parts = line.split()
-        if parts and parts[0] in ("df", "free", "ps", "ip", "apk", "ls", "cat", "uptime", "uname", "whoami", "hostname", "curl", "wget", "echo", "grep", "find", "mkdir", "rc-service"):
-            return "execute", "sh", ["-c", line]
+        if parts and parts[0] in ("mkdir", "df", "free", "ps", "ip", "apk", "ls", "cat", "uptime", "uname", "whoami", "hostname", "touch", "rm", "echo", "curl", "wget", "grep", "find", "cd"):
+            return "execute", line
 
-    return "unknown", "", raw
+    return "unknown", raw
 
 
 # ── Worker ────────────────────────────────────────────────────────────────────
-WORKER_SYSTEM = (
-    "<|im_start|>system\n"
-    "You are an OS Worker Agent on Alpine Linux.\n"
-    "Output ONLY JSON: {\"cmd\": \"<shell_command>\"}\n"
-    "Examples:\n"
-    "check disk space -> {\"cmd\": \"df -h\"}\n"
-    "check memory -> {\"cmd\": \"free -m\"}\n"
-    "create dir /tmp/test -> {\"cmd\": \"mkdir -p /tmp/test\"}\n"
-    "list files -> {\"cmd\": \"ls -la\"}\n"
-    "install curl -> {\"cmd\": \"apk add curl\"}\n"
-    "<|im_end|>\n"
-)
-
-
 def run_worker_task(
     task_idx: int,
     task: str,
-    intent: str,
-    ebpf_events: list,
+    caller_ctx: dict,
     log: TaskLog,
     job_start: float,
 ) -> tuple[bool, str]:
-    """Execute a single sub-task via the Worker loop."""
+    """Execute a task via LLM reasoning using the dynamic caller context."""
     log.write("task_start", task_idx=task_idx, task=task)
     step = 0
+
+    user_name = caller_ctx["user"]
+    home_dir  = caller_ctx["home"]
+    cwd       = caller_ctx["cwd"]
+    history_ctx = ""
 
     while step < MAX_STEPS:
         elapsed = time.monotonic() - job_start
         if elapsed > TASK_MAX_TOTAL_S:
-            msg = f"[ABORTED] Global time limit ({TASK_MAX_TOTAL_S}s) reached."
-            log.write("task_fail", task_idx=task_idx, reason="global_timeout", msg=msg)
+            msg = f"[ABORTED] Time limit exceeded."
+            log.write("task_fail", task_idx=task_idx, reason="timeout", msg=msg)
             return False, msg
 
-        # Fast path check on task string
-        action, target, args_or_reason = extract_action("", task)
-        raw_output = ""
+        worker_system = (
+            "<|im_start|>system\n"
+            f"You are a Linux command generator running commands for user '{user_name}' in '{cwd}'.\n"
+            "Output ONLY JSON: {\"cmd\": \"<bash_command>\"}\n"
+            "Rules:\n"
+            "- Output a single bash command.\n"
+            "- Do not use 'cd' alone if you want to create or inspect files; use relative or full paths.\n"
+            "Examples:\n"
+            "check disk -> {\"cmd\": \"df -h\"}\n"
+            "check memory -> {\"cmd\": \"free -m\"}\n"
+            "list files -> {\"cmd\": \"ls -la\"}\n"
+            "<|im_end|>\n"
+        )
 
-        if action == "unknown":
-            # Need LLM to determine command
-            prompt = (
-                WORKER_SYSTEM
-                + f"<|im_start|>user\nTask: {task}<|im_end|>\n"
-                + "<|im_start|>assistant\n{\"cmd\": \""
-            )
-            log.write("step", task_idx=task_idx, step=step)
-            raw_output = _llm_post(prompt, n_predict=50)
-            if not raw_output.startswith("{\"cmd\": \""):
-                raw_output = "{\"cmd\": \"" + raw_output
-            log.write("ai_raw", task_idx=task_idx, step=step, raw=raw_output)
-            action, target, args_or_reason = extract_action(raw_output, task)
+        user_prompt = f"Task: {task}"
+        if history_ctx:
+            user_prompt += f"\nState: {history_ctx}"
 
-        # Handle actions
+        prompt = (
+            worker_system
+            + f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
+            + "<|im_start|>assistant\n{\"cmd\": \""
+        )
+
+        log.write("step", task_idx=task_idx, step=step, cwd=cwd)
+        raw_output = _llm_post(prompt, n_predict=40)
+        if not raw_output.startswith("{\"cmd\": \""):
+            raw_output = "{\"cmd\": \"" + raw_output
+        log.write("ai_raw", task_idx=task_idx, step=step, raw=raw_output)
+
+        action, cmd_candidate = extract_action(raw_output)
+
         if action == "finish":
-            summary = str(args_or_reason) if args_or_reason else "Task finished."
+            summary = cmd_candidate or "Task finished."
             log.write("task_finish", task_idx=task_idx, step=step, summary=summary)
             return True, summary
 
         if action == "abort":
-            reason = str(args_or_reason) if args_or_reason else "Aborted."
-            log.write("task_fail", task_idx=task_idx, step=step, reason=reason)
-            return False, f"[ABORTED] {reason}"
+            log.write("task_fail", task_idx=task_idx, step=step, reason=cmd_candidate)
+            return False, f"[ABORTED] {cmd_candidate}"
 
-        if action == "verify":
-            cond = str(args_or_reason)
-            log.write("verify", task_idx=task_idx, step=step, condition=cond, result="SUCCESS")
-            return True, f"Verified: {cond}"
+        if action != "execute" or not cmd_candidate:
+            log.write("json_error", task_idx=task_idx, step=step, raw=raw_output)
+            step += 1
+            continue
 
-        if action != "execute":
-            # Fallback: if unknown, try running the task itself as a shell command if safe
-            safe, _ = is_safe_command(task)
-            if safe and len(task.split()) <= 4:
-                action = "execute"
-                target = "sh"
-                args_or_reason = ["-c", task]
+        shell_cmd = cmd_candidate.strip()
+        safe, deny_reason = is_safe_command(shell_cmd)
+        if not safe:
+            log.write("security_block", task_idx=task_idx, step=step, cmd=shell_cmd, reason=deny_reason)
+            return False, f"Blocked: {deny_reason}"
+
+        # Handle 'cd' navigation dynamically: updates cwd for subsequent steps
+        # instead of falsely terminating the task or losing directory in a subshell
+        if shell_cmd.startswith("cd ") or shell_cmd == "cd":
+            target = shell_cmd[3:].strip().strip("'\"") if shell_cmd.startswith("cd ") else home_dir
+            if target.startswith("~"):
+                target = os.path.join(home_dir, target[2:] if target.startswith("~/") else target[1:])
+            elif not os.path.isabs(target):
+                target = os.path.join(cwd, target)
+            target = os.path.normpath(target)
+
+            if os.path.isdir(target):
+                cwd = target
+                log.write("step_exec", task_idx=task_idx, step=step, cmd=shell_cmd)
+                log.write("result", task_idx=task_idx, step=step, cmd=shell_cmd, returncode=0, stdout=f"Changed directory to {cwd}", stderr="")
+                history_ctx = f"Current working directory changed to '{cwd}'."
+                step += 1
+                continue
             else:
-                log.write("json_error", task_idx=task_idx, step=step, raw=raw_output)
+                log.write("step_exec", task_idx=task_idx, step=step, cmd=shell_cmd)
+                log.write("result", task_idx=task_idx, step=step, cmd=shell_cmd, returncode=1, stdout="", stderr=f"Directory '{target}' not found.")
+                history_ctx = f"Failed to cd to '{target}': directory does not exist."
                 step += 1
                 continue
 
-        # Build command array
-        if target == "cdp_controller.py":
-            cmd = ["python3", "/home/aiuser/cdp_controller.py"] + (args_or_reason if isinstance(args_or_reason, list) else [str(args_or_reason)])
-        elif target == "sh":
-            if isinstance(args_or_reason, list) and len(args_or_reason) >= 2 and args_or_reason[0] == "-c":
-                shell_cmd = args_or_reason[1]
-            elif isinstance(args_or_reason, list) and len(args_or_reason) == 1:
-                shell_cmd = args_or_reason[0]
-            else:
-                shell_cmd = " ".join(str(a) for a in args_or_reason) if isinstance(args_or_reason, list) else str(args_or_reason)
-            cmd = ["sh", "-c", shell_cmd]
-        else:
-            cmd = [target] + (args_or_reason if isinstance(args_or_reason, list) else [str(args_or_reason)])
+        log.write("step_exec", task_idx=task_idx, step=step, cmd=shell_cmd)
 
-        # Security check
-        cmd_str = " ".join(str(c) for c in cmd)
-        safe, deny_reason = is_safe_command(cmd_str)
-        if not safe:
-            log.write("security_block", task_idx=task_idx, step=step, cmd=cmd_str, reason=deny_reason)
-            return False, f"Blocked: {deny_reason}"
+        # Prepare execution environment
+        exec_env = dict(os.environ)
+        exec_env.update(caller_ctx["env"])
+        exec_env["HOME"] = home_dir
+        exec_env["USER"] = user_name
 
-        log.write("step_exec", task_idx=task_idx, step=step, cmd=cmd_str)
+        # If caller was non-root, run with caller's UID/GID for correct permissions
+        preexec = None
+        if caller_ctx["uid"] != 0:
+            def _drop_privileges():
+                os.setgid(caller_ctx["gid"])
+                os.setuid(caller_ctx["uid"])
+            preexec = _drop_privileges
 
-        # Run shell command
         try:
             result = subprocess.run(
-                cmd,
+                ["sh", "-c", shell_cmd],
                 capture_output=True,
                 text=True,
                 timeout=CMD_TIMEOUT_S,
+                cwd=cwd if os.path.isdir(cwd) else home_dir,
+                env=exec_env,
+                preexec_fn=preexec,
             )
             stdout = result.stdout[:2000]
             stderr = result.stderr[:500]
@@ -527,52 +395,33 @@ def run_worker_task(
                 "result",
                 task_idx=task_idx,
                 step=step,
-                cmd=cmd_str,
+                cmd=shell_cmd,
                 returncode=rc,
                 stdout=stdout,
                 stderr=stderr,
             )
 
-            # Succeeded: auto-finish immediately
             if rc == 0:
-                summary = stdout.strip() if stdout.strip() else f"Command completed (exit 0)."
+                summary = stdout.strip() if stdout.strip() else f"Command '{shell_cmd}' completed successfully (exit 0)."
                 log.write("task_finish", task_idx=task_idx, step=step, summary=summary[:300])
                 return True, summary
+            else:
+                history_ctx = f"Command '{shell_cmd}' failed with exit {rc}: {stderr.strip() or stdout.strip()}"
 
         except subprocess.TimeoutExpired:
-            log.write("result", task_idx=task_idx, step=step, cmd=cmd_str,
+            log.write("result", task_idx=task_idx, step=step, cmd=shell_cmd,
                       returncode=-1, stdout="", stderr=f"[TIMEOUT] Exceeded {CMD_TIMEOUT_S}s.")
+            history_ctx = f"Command '{shell_cmd}' timed out."
         except Exception as exc:
-            log.write("result", task_idx=task_idx, step=step, cmd=cmd_str,
+            log.write("result", task_idx=task_idx, step=step, cmd=shell_cmd,
                       returncode=-1, stdout="", stderr=str(exc))
+            history_ctx = f"Command execution error: {exc}"
 
         step += 1
 
     msg = f"Task failed to complete within step limit on: {task}"
     log.write("task_fail", task_idx=task_idx, reason="step_limit_reached", msg=msg)
     return False, msg
-
-
-# ── eBPF listener ────────────────────────────────────────────────────────────
-def _read_ebpf_events() -> list[str]:
-    events = []
-    sock_path = os.path.join(AI_AGENT_LOG_DIR, "ebpf.sock")
-    if not os.path.exists(sock_path):
-        return events
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        s.settimeout(0.05)
-        s.bind("")
-        while True:
-            try:
-                data, _ = s.recvfrom(4096)
-                events.append(data.decode("utf-8", errors="replace"))
-            except (socket.timeout, BlockingIOError):
-                break
-        s.close()
-    except Exception:
-        pass
-    return events
 
 
 # ── Cleanup old task files ───────────────────────────────────────────────────
@@ -592,12 +441,17 @@ def cleanup_old_tasks(max_age_s: int = 86400):
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     if len(sys.argv) < 3:
-        print("Usage: task_runner.py <task_id> <intent> [mode]", file=sys.stderr)
+        print("Usage: task_runner.py <task_id> <intent> [mode] [caller_pid]", file=sys.stderr)
         sys.exit(1)
 
-    task_id = sys.argv[1]
-    intent  = sys.argv[2]
-    mode    = sys.argv[3] if len(sys.argv) > 3 else "ASSIST"
+    task_id    = sys.argv[1]
+    intent     = sys.argv[2]
+    mode       = sys.argv[3] if len(sys.argv) > 3 else "ASSIST"
+    caller_pid = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4].isdigit() else None
+    if caller_pid is None:
+        caller_pid_env = os.environ.get("CALLER_PID")
+        if caller_pid_env and caller_pid_env.isdigit():
+            caller_pid = int(caller_pid_env)
 
     signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
 
@@ -606,22 +460,24 @@ def main():
 
     cleanup_old_tasks()
     caps = load_capabilities()
-    log.write("capabilities", caps=caps)
 
-    job_start  = time.monotonic()
-    ebpf_events: list[str] = []
+    # Discover caller context dynamically from /proc
+    caller_ctx = get_caller_context(caller_pid)
+    log.write("capabilities", caps=caps, caller_user=caller_ctx["user"], caller_home=caller_ctx["home"])
+
+    job_start = time.monotonic()
 
     try:
-        task_list = run_planner(intent, caps, log)
+        log.write("planner_start", intent=intent)
+
+        # Single intent or sub-task execution directly driven by AI model
+        task_list = [intent]
+        log.write("plan", tasks=task_list, count=1)
 
         all_summaries: list[str] = []
         any_failed = False
 
         for task_idx, task in enumerate(task_list):
-            ebpf_events.extend(_read_ebpf_events())
-            if len(ebpf_events) > 20:
-                ebpf_events = ebpf_events[-20:]
-
             if mode == "SUGGEST":
                 log.write("suggest_skip", task_idx=task_idx, task=task,
                           note="SUGGEST mode: not executed")
@@ -631,8 +487,7 @@ def main():
             success, summary = run_worker_task(
                 task_idx=task_idx,
                 task=task,
-                intent=intent,
-                ebpf_events=ebpf_events,
+                caller_ctx=caller_ctx,
                 log=log,
                 job_start=job_start,
             )
