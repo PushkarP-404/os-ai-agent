@@ -63,8 +63,16 @@ static int json_get_str(const char *line, const char *key, char *out, size_t out
     p++; /* skip opening quote */
     size_t i = 0;
     while (*p && *p != '"' && i + 1 < outlen) {
-        if (*p == '\\') { p++; if (*p) out[i++] = *p++; }
-        else             out[i++] = *p++;
+        if (*p == '\\') {
+            p++;
+            if (*p == 'n')      out[i++] = '\n';
+            else if (*p == 't') out[i++] = '\t';
+            else if (*p == 'r') out[i++] = '\r';
+            else if (*p)        out[i++] = *p;
+            if (*p) p++;
+        } else {
+            out[i++] = *p++;
+        }
     }
     out[i] = '\0';
     return 1;
@@ -94,6 +102,16 @@ static int handle_event(const char *line, long *last_task_idx, long *last_step)
         char intent[512] = {0};
         json_get_str(line, "intent", intent, sizeof(intent));
         printf("\n%s[AGENT]%s %sStarting:%s %s\n", COL_CYAN, COL_RESET, COL_BOLD, COL_RESET, intent);
+
+    } else if (strcmp(event, "planner_start") == 0) {
+        printf("  %s⋯ Formulating execution plan...%s\n", COL_DIM, COL_RESET);
+
+    } else if (strcmp(event, "planner_fallback") == 0) {
+        printf("  %s⋯ Executing intent directly...%s\n", COL_DIM, COL_RESET);
+
+    } else if (strcmp(event, "step") == 0) {
+        long step = json_get_int(line, "step", 0);
+        printf("  %s⋯ Running step %ld...%s\n", COL_DIM, step + 1, COL_RESET);
 
     } else if (strcmp(event, "plan") == 0) {
         /* Print the plan */
@@ -253,9 +271,9 @@ static void stream_task_log(const char *task_file)
         }
 
         if (!done) {
+            if (f) clearerr(f);
             struct timespec ts = { 0, POLL_INTERVAL_MS * 1000000L };
             nanosleep(&ts, NULL);
-            /* Re-open is not needed — we keep fgets cursor position in f */
             (void)got_any;
         }
     }
