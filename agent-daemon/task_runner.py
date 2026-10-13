@@ -72,15 +72,143 @@ DIRECT_INTENT_MAP = [
     (r"\b(ports?|listening\s*ports?)\b", "netstat -tuln 2>/dev/null || ss -tuln"),
     (r"\b(dmesg|kernel\s*logs?)\b", "dmesg | tail -n 25"),
     (r"\b(cpu|cpu\s*info)\b", "grep -E 'model name|cpu MHz' /proc/cpuinfo | head -4 || lscpu"),
-    (r"\b(?:create|make)\s+(?:dir|directory|folder)\s+(\S+)", lambda m: f"mkdir -p {m.group(1)}"),
-    (r"\b(?:list\s+files?|ls)\s*(?:in\s+)?(\S*)", lambda m: f"ls -la {m.group(1) if m.group(1) else '.'}"),
-    (r"\b(?:read|cat|view)\s+(?:file\s+)?(\S+)", lambda m: f"cat {m.group(1)}"),
 ]
+
+
+def resolve_desktop_path(path_str: str) -> str:
+    """Resolve 'Desktop' or '~/Desktop' to /home/aiuser/Desktop if it exists."""
+    p = path_str.strip().strip("'\"")
+    if p.lower() in ("desktop", "~/desktop"):
+        if os.path.exists("/home/aiuser/Desktop"):
+            return "/home/aiuser/Desktop"
+        return os.path.expanduser("~/Desktop")
+    if p.lower().startswith("desktop/") or p.lower().startswith("~/desktop/"):
+        sub = p.split("/", 1)[1]
+        if os.path.exists("/home/aiuser/Desktop"):
+            return f"/home/aiuser/Desktop/{sub}"
+        return os.path.expanduser(f"~/Desktop/{sub}")
+    return p
+
+
+def parse_filesystem_intent(text: str) -> str | None:
+    t = text.strip().rstrip(".!\"'")
+
+    # 1. create [a] (folder|directory|dir) [in/on] <location> (called|named) <name>
+    m = re.search(
+        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+(?:in|on|under)\s+([^\s]+)\s+(?:called|named)\s+['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        loc = m.group(1).strip()
+        name = m.group(2).strip()
+        loc_resolved = resolve_desktop_path(loc)
+        target = os.path.join(loc_resolved, name).replace("\\", "/")
+        return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
+
+    # 2. create [a] (folder|directory|dir) (called|named) <name> [in/on] <location>
+    m = re.search(
+        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+(?:called|named)\s+['\"]?([^'\"]+?)['\"]?\s+(?:in|on|under)\s+([^\s]+)",
+        t, re.IGNORECASE
+    )
+    if m:
+        name = m.group(1).strip()
+        loc = m.group(2).strip()
+        loc_resolved = resolve_desktop_path(loc)
+        target = os.path.join(loc_resolved, name).replace("\\", "/")
+        return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
+
+    # 3. create [a] (folder|directory|dir) <path>
+    m = re.search(
+        r"\b(?:create|make)\s+(?:an?\s+)?(?:folder|directory|dir)\s+['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        raw_path = m.group(1).strip()
+        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
+            target = resolve_desktop_path(raw_path)
+            return f"mkdir -p '{target}' && chown -R aiuser:aiuser '{target}' 2>/dev/null || mkdir -p '{target}'"
+
+    # 4. delete/remove (folder|directory|dir) <path>
+    m = re.search(
+        r"\b(?:delete|remove|rm)\s+(?:an?\s+)?(?:folder|directory|dir)\s+['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        raw_path = m.group(1).strip()
+        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the", "/"):
+            target = resolve_desktop_path(raw_path)
+            if target not in ("/", "/root", "/home", "/home/aiuser", "/home/aiuser/Desktop"):
+                return f"rm -rf '{target}'"
+
+    # 5. create/touch file in/on <location> called <name>
+    m = re.search(
+        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+(?:in|on|under)\s+([^\s]+)\s+(?:called|named)\s+['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        loc = m.group(1).strip()
+        name = m.group(2).strip()
+        loc_resolved = resolve_desktop_path(loc)
+        target = os.path.join(loc_resolved, name).replace("\\", "/")
+        return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
+
+    # 6. create/touch file called <name> in/on <location>
+    m = re.search(
+        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+(?:called|named)\s+['\"]?([^'\"]+?)['\"]?\s+(?:in|on|under)\s+([^\s]+)",
+        t, re.IGNORECASE
+    )
+    if m:
+        name = m.group(1).strip()
+        loc = m.group(2).strip()
+        loc_resolved = resolve_desktop_path(loc)
+        target = os.path.join(loc_resolved, name).replace("\\", "/")
+        return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
+
+    # 7. create/touch file <path>
+    m = re.search(
+        r"\b(?:create|touch|make)\s+(?:an?\s+)?file\s+['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        raw_path = m.group(1).strip()
+        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
+            target = resolve_desktop_path(raw_path)
+            return f"touch '{target}' && chown aiuser:aiuser '{target}' 2>/dev/null || touch '{target}'"
+
+    # 8. list files in <location>
+    m = re.search(
+        r"\b(?:list\s+files?|ls)\s*(?:in|on|under)?\s*['\"]?([^'\"]*)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        raw_loc = m.group(1).strip()
+        target = resolve_desktop_path(raw_loc) if raw_loc else "."
+        return f"ls -la '{target}'"
+
+    # 9. read/cat file <path>
+    m = re.search(
+        r"\b(?:read|cat|view|show\s+content\s+of)\s+(?:file\s+)?['\"]?([^'\"]+)['\"]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        raw_path = m.group(1).strip()
+        if raw_path.lower() not in ("in", "on", "called", "named", "a", "an", "the"):
+            target = resolve_desktop_path(raw_path)
+            return f"cat '{target}'"
+
+    return None
 
 
 def find_direct_command(text: str) -> str | None:
     t = text.strip()
     clean = re.sub(r"^(please\s+|can\s+you\s+|show\s+|check\s+|get\s+)", "", t, flags=re.IGNORECASE)
+
+    # First check filesystem natural language intents
+    fs_cmd = parse_filesystem_intent(clean)
+    if fs_cmd:
+        return fs_cmd
+
+    # Then check common admin commands
     for pattern, cmd in DIRECT_INTENT_MAP:
         m = re.search(pattern, clean, flags=re.IGNORECASE)
         if m:
@@ -420,9 +548,9 @@ def run_worker_task(
 
         step += 1
 
-    msg = f"Task completed or reached step limit on: {task}"
-    log.write("task_finish", task_idx=task_idx, step=step, summary=msg)
-    return True, msg
+    msg = f"Task failed to complete within step limit on: {task}"
+    log.write("task_fail", task_idx=task_idx, reason="step_limit_reached", msg=msg)
+    return False, msg
 
 
 # ── eBPF listener ────────────────────────────────────────────────────────────
