@@ -224,6 +224,9 @@ def handle_syscall_query(sock, query_payload):
         elif query.startswith("/assist "):
             mode = "ASSIST"
             query = query[8:]
+        elif query.startswith("/apply "):
+            mode = "APPLY"
+            query = query[7:]
 
         # ── Phase 11: dispatch to task_runner.py subprocess ──────────────────
         # The kernel buffer (2048 bytes) is only used to return the task ID and

@@ -198,6 +198,15 @@ static int handle_event(const char *line, long *last_task_idx, long *last_step)
         json_get_str(line, "reason", reason, sizeof(reason));
         printf("  %s⚠ BLOCKED:%s %s — %s\n", COL_YELLOW, COL_RESET, cmd, reason);
 
+    } else if (strcmp(event, "diagnosis") == 0) {
+        char failure[512] = {0}, recommendation[768] = {0};
+        json_get_str(line, "failure", failure, sizeof(failure));
+        json_get_str(line, "recommendation", recommendation, sizeof(recommendation));
+        printf("  %sDIAGNOSIS:%s %s\n", COL_YELLOW, COL_RESET,
+               failure[0] ? failure : "The task could not be verified.");
+        if (recommendation[0])
+            printf("  %sNEXT:%s %s\n", COL_CYAN, COL_RESET, recommendation);
+
     } else if (strcmp(event, "suggest_skip") == 0) {
         char task[512] = {0};
         json_get_str(line, "task", task, sizeof(task));
@@ -287,6 +296,7 @@ int main(int argc, char *argv[])
     if (argc < 2) {
         printf("Usage: %s \"<your intent or instruction>\"\n", argv[0]);
         printf("  %s \"install curl and test it\"\n", argv[0]);
+        printf("  %s \"/apply restart nginx and verify it is running\"\n", argv[0]);
         printf("  %s \"/suggest upgrade all packages\"\n", argv[0]);
         printf("  %s \"/assist check what is listening on port 80\"\n", argv[0]);
         return 1;

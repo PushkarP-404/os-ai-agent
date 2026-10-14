@@ -14,9 +14,12 @@ AGENT_PIDFILE="/run/ai-agent.pid"
 # LLM backend — native musl llama-server (Phase 5/6).
 export LLAMA_URL="${LLAMA_URL:-http://127.0.0.1:11434/completion}"
 export AI_AGENT_LOG_DIR="${AI_AGENT_LOG_DIR:-/var/ai-agent}"
+# V2 is the standard task harness. Set to 0 only for a temporary rollback.
+export HARNESS_V2="${HARNESS_V2:-1}"
 
 depend() {
     need localmount
+    need ai-agent-privileged
     # Depend on llama-server for in-guest LLM inference
     use llama-server
     after llama-server

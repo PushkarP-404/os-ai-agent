@@ -10,7 +10,7 @@
 
 pkgname="ai-agent-daemon"
 pkgver="0.1.0"
-pkgrel=0
+pkgrel=1
 pkgdesc="AI-Agent OS kernel-userspace daemon and agent-cli (Phase 11)"
 arch="x86_64"
 license="GPL-2.0-only"
@@ -20,7 +20,7 @@ makedepends="gcc make"
 options="!check !fhs"
 
 # Source is in the VM at /root/os-ai-agent (uploaded by sync.py / sync_repo.py)
-_daemon_src="/usr/local/lib/ai-agent"
+_daemon_src="/root/os-ai-agent/agent-daemon"
 _cli_src="/root/os-ai-agent/agent-cli"
 
 build() {
@@ -43,8 +43,10 @@ package() {
         "$pkgdir/usr/bin/agent-cli"
 
     # ── OpenRC init script ───────────────────────────────────────────────
-    install -Dm755 /etc/init.d/ai-agent \
+    install -Dm755 "$_daemon_src/openrc/ai-agent" \
         "$pkgdir/etc/init.d/ai-agent"
+    install -Dm755 "$_daemon_src/openrc/ai-agent-privileged" \
+        "$pkgdir/etc/init.d/ai-agent-privileged"
 
     # ── conf.d defaults ──────────────────────────────────────────────────
     install -Dm644 /dev/stdin \
@@ -54,10 +56,13 @@ AGENT_SCRIPT="/usr/lib/ai-agent/agent_daemon.py"
 PYTHON_BIN="/usr/bin/python3"
 LLAMA_URL="http://127.0.0.1:11434/completion"
 AI_AGENT_LOG_DIR="/var/ai-agent"
+# V2 rejects malformed plans instead of falling back to free-form shell execution.
+HARNESS_V2="1"
 EOF
 
     # ── Runtime directories ──────────────────────────────────────────────
     install -d "$pkgdir/var/ai-agent/tasks"
+    install -d "$pkgdir/var/ai-agent/jobs"
     install -d "$pkgdir/var/ai-agent/logs"
     install -d "$pkgdir/var/ai-agent/training_data"
 }
@@ -73,12 +78,15 @@ post_install() {
     chown -R ai-agent:ai-agent /var/ai-agent 2>/dev/null || true
 
     # Logs
-    touch /var/log/ai-agent.log /var/log/task_runner.log
+    touch /var/log/ai-agent.log /var/log/task_runner.log /var/log/ai-agent-privileged.log
     chown ai-agent:ai-agent /var/log/ai-agent.log
+    chown root:root /var/log/ai-agent-privileged.log
+    chmod 600 /var/log/ai-agent-privileged.log
     chmod 666 /var/log/task_runner.log
 
     # Enable service
     rc-update add ai-agent default 2>/dev/null || true
+    rc-update add ai-agent-privileged default 2>/dev/null || true
 
     einfo "AI-Agent daemon installed."
     einfo "Start with: rc-service ai-agent start"
@@ -86,10 +94,13 @@ post_install() {
 }
 
 post_upgrade() {
+    rc-service ai-agent-privileged restart 2>/dev/null || true
     rc-service ai-agent restart 2>/dev/null || true
 }
 
 post_deinstall() {
     rc-service ai-agent stop 2>/dev/null || true
+    rc-service ai-agent-privileged stop 2>/dev/null || true
     rc-update del ai-agent default 2>/dev/null || true
+    rc-update del ai-agent-privileged default 2>/dev/null || true
 }

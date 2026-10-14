@@ -439,7 +439,7 @@ def cleanup_old_tasks(max_age_s: int = 86400):
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-def main():
+def legacy_main():
     if len(sys.argv) < 3:
         print("Usage: task_runner.py <task_id> <intent> [mode] [caller_pid]", file=sys.stderr)
         sys.exit(1)
@@ -509,6 +509,45 @@ def main():
         log.write("done", status="CANCELLED", reason="Task cancelled by signal.")
     except Exception as exc:
         log.write("done", status="FAILED", reason=f"Unhandled exception: {exc}")
+    finally:
+        log.close()
+
+
+def main():
+    """Run the verified harness when explicitly enabled during rollout.
+
+    Harness V2 is the default execution path. Set HARNESS_V2=0 only as a
+    temporary rollback while investigating a deployment issue with the legacy
+    executor.
+    """
+    if os.environ.get("HARNESS_V2", "1") != "1":
+        legacy_main()
+        return
+
+    if len(sys.argv) < 3:
+        print("Usage: task_runner.py <task_id> <intent> [mode] [caller_pid]", file=sys.stderr)
+        sys.exit(1)
+
+    from harness_v2 import Harness, JobStatus, JobStore
+
+    task_id = sys.argv[1]
+    intent = sys.argv[2]
+    mode = sys.argv[3] if len(sys.argv) > 3 else "ASSIST"
+    caller_pid = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4].isdigit() else None
+    log = TaskLog(task_id)
+    caller = get_caller_context(caller_pid)
+    store = JobStore(AI_AGENT_LOG_DIR, task_id, log.write)
+
+    try:
+        store.create(intent, mode, caller)
+        harness = Harness(store, caller, mode, lambda prompt: _llm_post(prompt, n_predict=600))
+        harness.run(intent)
+    except KeyboardInterrupt:
+        store.set_status(JobStatus.CANCELLED, reason="Task cancelled")
+        store.event("done", status="CANCELLED", task_count=0, elapsed_s=0, summaries=["Task cancelled"])
+    except Exception as exc:
+        store.event("task_fail", task_idx=0, reason="runner_exception", msg=str(exc))
+        store.event("done", status="FAILED", task_count=0, elapsed_s=0, summaries=[str(exc)])
     finally:
         log.close()
 
