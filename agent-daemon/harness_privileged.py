@@ -86,7 +86,12 @@ def serve(path: str = SOCKET_PATH) -> None:
                     if tool not in PolicyEngine.CHANGE or not isinstance(args, dict):
                         conn.sendall(_error("Privileged request denied", "tool is not permitted", 126))
                         continue
-                    result = executor.run(tool, args)
+                    caller = request.get("caller")
+                    if isinstance(caller, dict):
+                        exec_inst = ToolExecutor(caller, allow_privilege_proxy=False)
+                    else:
+                        exec_inst = executor
+                    result = exec_inst.run(tool, args)
                     conn.sendall((json.dumps(asdict(result), ensure_ascii=False) + "\n").encode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError, OSError, ValueError) as exc:
                     conn.sendall(_error("Privileged request failed", str(exc), 2))

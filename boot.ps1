@@ -11,7 +11,8 @@ param(
     [string]$QemuExe = "C:\Program Files\qemu\qemu-system-x86_64.exe",
     [int]$MemoryMB = 4096,
     [int]$Cores = 4,
-    [int]$SshPort = 2222
+    [int]$SshPort = 2222,
+    [switch]$Gui
 )
 
 if (-not (Test-Path $Image)) {
@@ -44,6 +45,20 @@ Write-Host "  vCPUs:    $Cores"
 Write-Host "  SSH Port: $SshPort (root / password)"
 Write-Host "--------------------------------------------------" -ForegroundColor Gray
 
+$displayArgs = if ($Gui) {
+    @(
+        "-device", "virtio-tablet-pci",
+        "-usb",
+        "-device", "usb-tablet",
+        "-vga", "virtio",
+        "-display", "sdl"
+    )
+} else {
+    @(
+        "-display", "none"
+    )
+}
+
 & $QemuExe `
     -m "$($MemoryMB)M" `
     -smp $Cores `
@@ -52,4 +67,4 @@ Write-Host "--------------------------------------------------" -ForegroundColor
     -netdev "user,id=n1,hostfwd=tcp:127.0.0.1:$($SshPort)-:22" `
     -device e1000,netdev=n1 `
     -monitor telnet:127.0.0.1:4444,server,nowait `
-    -display none
+    @displayArgs

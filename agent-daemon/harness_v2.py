@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shutil
 import socket
@@ -169,9 +170,12 @@ class PolicyEngine:
     READ_ONLY = {
         "system.info", "disk.status", "memory.status", "package.query",
         "service.status", "service.logs", "port.inspect", "file.read",
-        "http.check",
+        "http.check", "dir.query", "file.query",
     }
-    CHANGE = {"package.install", "service.start", "service.restart", "service.stop"}
+    CHANGE = {
+        "package.install", "service.start", "service.restart", "service.stop",
+        "dir.create", "dir.remove", "file.write",
+    }
 
     def decide(self, mode: str, step: Step) -> tuple[str, str]:
         if step.tool not in self.READ_ONLY | self.CHANGE:
@@ -197,8 +201,11 @@ class PrivilegedToolClient:
     def __init__(self, path: str = "/run/ai-agent/privileged.sock"):
         self.path = path
 
-    def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
-        request = json.dumps({"tool": tool, "args": args}, separators=(",", ":")).encode("utf-8")
+    def run(self, tool: str, args: dict[str, Any], caller: dict[str, Any] | None = None) -> ToolResult:
+        payload: dict[str, Any] = {"tool": tool, "args": args}
+        if caller:
+            payload["caller"] = caller
+        request = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         if len(request) > 16384:
             return ToolResult(False, "Privileged request is too large", exit_code=2)
         try:
@@ -231,7 +238,7 @@ class ToolExecutor:
 
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
         if tool in PolicyEngine.CHANGE and os.geteuid() != 0 and self.privileged:
-            return self.privileged.run(tool, args)
+            return self.privileged.run(tool, args, caller=self.caller)
         handler = getattr(self, "tool_" + tool.replace(".", "_"), None)
         if not handler:
             return ToolResult(False, f"Unknown tool: {tool}", exit_code=127)
@@ -345,6 +352,80 @@ class ToolExecutor:
             return ToolResult(False, "curl is required for http.check", exit_code=127)
         return self._exec(["curl", "--fail", "--silent", "--show-error", "--max-time", "10", url], timeout=15)
 
+    def tool_dir_create(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        blocked_roots = (Path("/proc"), Path("/sys"), Path("/dev"))
+        if any(path == root or root in path.parents for root in blocked_roots):
+            raise ValueError("Target directory path is inside a protected system filesystem")
+        path.mkdir(parents=True, exist_ok=True)
+        uid = args.get("uid", self.caller.get("uid"))
+        gid = args.get("gid", self.caller.get("gid"))
+        if uid is not None and gid is not None and os.geteuid() == 0:
+            try:
+                os.chown(path, int(uid), int(gid))
+            except OSError:
+                pass
+        return ToolResult(True, f"Directory created: {path}")
+
+    def tool_dir_query(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if path.is_dir():
+            return ToolResult(True, f"Directory exists: {path}")
+        return ToolResult(False, f"Directory does not exist: {path}", exit_code=1)
+
+    def tool_dir_remove(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        protected = (
+            Path("/"), Path("/bin"), Path("/sbin"), Path("/usr"), Path("/etc"),
+            Path("/var"), Path("/home"), Path("/root"), Path("/dev"), Path("/proc"), Path("/sys"),
+        )
+        if path in protected or path.parent == path:
+            raise ValueError(f"Cannot delete protected path: {path}")
+        if not path.exists():
+            return ToolResult(True, f"Directory already absent: {path}")
+        if not path.is_dir():
+            raise ValueError(f"Path is not a directory: {path}")
+        shutil.rmtree(path)
+        return ToolResult(True, f"Directory removed: {path}")
+
+    def tool_file_write(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        content = args.get("content", "")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        blocked_roots = (Path("/proc"), Path("/sys"), Path("/dev"))
+        if any(path == root or root in path.parents for root in blocked_roots):
+            raise ValueError("Target file path is inside a protected system filesystem")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        uid = args.get("uid", self.caller.get("uid"))
+        gid = args.get("gid", self.caller.get("gid"))
+        if uid is not None and gid is not None and os.geteuid() == 0:
+            try:
+                os.chown(path, int(uid), int(gid))
+            except OSError:
+                pass
+        return ToolResult(True, f"File created: {path}")
+
+    def tool_file_query(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if path.is_file():
+            return ToolResult(True, f"File exists: {path}")
+        return ToolResult(False, f"File does not exist: {path}", exit_code=1)
+
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
@@ -406,61 +487,165 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
     )
 
 
-def deterministic_plan(intent: str) -> Plan | None:
+def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Plan | None:
     """Compile common local OS intents without spending a model request.
 
     This gives the appliance a reliable fast path for the initial typed-tool
     catalog. Requests outside this narrow grammar still require a validated
     model plan and are blocked if the model cannot provide one.
     """
-    text = " ".join(intent.lower().split())
+    caller = caller or {}
+    home_dir = caller.get("home") or "/root"
+    cwd_dir = caller.get("cwd") or home_dir
+    uid = caller.get("uid")
+    gid = caller.get("gid")
+
+    def resolve_target(name: str, loc: str | None = None) -> str:
+        name = name.strip("'\"")
+        if loc:
+            loc = loc.strip("'\"")
+            if loc.lower() == "desktop":
+                return posixpath.normpath(posixpath.join(home_dir, "Desktop", name))
+            elif loc.startswith("~/"):
+                return posixpath.normpath(posixpath.join(home_dir, loc[2:], name))
+            elif loc.startswith("/"):
+                return posixpath.normpath(posixpath.join(loc, name))
+            else:
+                return posixpath.normpath(posixpath.join(cwd_dir, loc, name))
+        else:
+            if name.startswith("~/"):
+                return posixpath.normpath(posixpath.join(home_dir, name[2:]))
+            elif name.startswith("/"):
+                return posixpath.normpath(name)
+            elif name.lower().startswith("desktop/"):
+                return posixpath.normpath(posixpath.join(home_dir, name))
+            else:
+                return posixpath.normpath(posixpath.join(cwd_dir, name))
+
+    raw_clean = intent.strip()
+    clean_intent = re.sub(r"^/+(?:assist|suggest|apply)?\s*", "", raw_clean, flags=re.IGNORECASE)
+    text = " ".join(clean_intent.split())
+    text_lower = text.lower()
     steps: list[Step] = []
     criteria: list[dict[str, Any]] = []
 
-    package_match = re.search(r"\binstall\s+([a-z0-9][a-z0-9._+-]{0,127})", text)
-    if package_match:
-        package = package_match.group(1)
-        steps.append(Step("install-package", f"Install package {package}", "package.install",
-                          {"package": package}, [{"tool": "package.query", "args": {"package": package}}],
+    # 1. Directory / folder creation
+    dir_match = None
+    m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+in\s+([^\s]+)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+    if m:
+        dir_match = (m.group(2), m.group(1))
+    else:
+        m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:(?:called|named)\s+)?([^\s]+)\s+in\s+([^\s]+)", text, re.IGNORECASE)
+        if m:
+            dir_match = (m.group(1), m.group(2))
+        else:
+            m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+            if m:
+                dir_match = (m.group(1), None)
+            else:
+                m = re.search(r"\bmkdir\s+(?:-[a-zA-Z]+\s+)?([^\s]+)", text, re.IGNORECASE)
+                if m:
+                    dir_match = (m.group(1), None)
+
+    if dir_match:
+        name, loc = dir_match
+        target_path = resolve_target(name, loc)
+        args: dict[str, Any] = {"path": target_path}
+        if uid is not None and gid is not None:
+            args["uid"] = uid
+            args["gid"] = gid
+        steps.append(Step("create-directory", f"Create directory {target_path}", "dir.create",
+                          args, [{"tool": "dir.query", "args": {"path": target_path}}],
                           "system_change"))
-        criteria.append({"description": f"Package {package} is installed", "tool": "package.query",
-                         "args": {"package": package}})
+        criteria.append({"description": f"Directory {target_path} exists", "tool": "dir.query",
+                         "args": {"path": target_path}})
 
-    service_match = re.search(r"\b(restart|start)\s+([a-z0-9][a-z0-9._+-]{0,127})", text)
-    if service_match:
-        action, service = service_match.groups()
-        step_id = f"{action}-service"
-        dependencies = ["install-package"] if package_match and package_match.group(1) == service else []
-        steps.append(Step(step_id, f"{action.title()} service {service}", f"service.{action}",
-                          {"name": service}, [{"tool": "service.status", "args": {"name": service}}],
-                          "system_change", dependencies))
-        criteria.append({"description": f"Service {service} is running", "tool": "service.status",
-                         "args": {"name": service}})
+    # 2. File creation
+    if not steps:
+        file_match = None
+        m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+in\s+([^\s]+)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+        if m:
+            file_match = (m.group(2), m.group(1))
+        else:
+            m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+(?:(?:called|named)\s+)?([^\s]+)\s+in\s+([^\s]+)", text, re.IGNORECASE)
+            if m:
+                file_match = (m.group(1), m.group(2))
+            else:
+                m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+                if m:
+                    file_match = (m.group(1), None)
+                else:
+                    m = re.search(r"\btouch\s+([^\s]+)", text, re.IGNORECASE)
+                    if m:
+                        file_match = (m.group(1), None)
+        if file_match:
+            name, loc = file_match
+            target_path = resolve_target(name, loc)
+            args = {"path": target_path, "content": ""}
+            if uid is not None and gid is not None:
+                args["uid"] = uid
+                args["gid"] = gid
+            steps.append(Step("create-file", f"Create file {target_path}", "file.write",
+                              args, [{"tool": "file.query", "args": {"path": target_path}}],
+                              "system_change"))
+            criteria.append({"description": f"File {target_path} exists", "tool": "file.query",
+                             "args": {"path": target_path}})
 
-    if any(token in text for token in ("system information", "system info", "system status", "os information")):
+    # 3. Package installation
+    if not steps:
+        package_match = re.search(r"\binstall\s+([a-z0-9][a-z0-9._+-]{0,127})", text_lower)
+        if package_match:
+            package = package_match.group(1)
+            steps.append(Step("install-package", f"Install package {package}", "package.install",
+                              {"package": package}, [{"tool": "package.query", "args": {"package": package}}],
+                              "system_change"))
+            criteria.append({"description": f"Package {package} is installed", "tool": "package.query",
+                             "args": {"package": package}})
+
+    # 4. Service restart / start
+    if not steps:
+        service_match = re.search(r"\b(restart|start)\s+([a-z0-9][a-z0-9._+-]{0,127})", text_lower)
+        if service_match:
+            action, service = service_match.groups()
+            step_id = f"{action}-service"
+            dependencies = ["install-package"] if package_match and package_match.group(1) == service else []
+            steps.append(Step(step_id, f"{action.title()} service {service}", f"service.{action}",
+                              {"name": service}, [{"tool": "service.status", "args": {"name": service}}],
+                              "system_change", dependencies))
+            criteria.append({"description": f"Service {service} is running", "tool": "service.status",
+                             "args": {"name": service}})
+
+    # 5. Monitoring: system information
+    if not steps and any(token in text_lower for token in ("system information", "system info", "system status", "os information")):
         steps.append(Step("inspect-system", "Collect system information", "system.info", {}, []))
         criteria.append({"description": "System information was collected", "tool": "system.info", "args": {}})
 
-    if any(token in text for token in ("disk usage", "disk status", "disk space")):
+    # 6. Monitoring: disk usage / status / space
+    if not steps and any(token in text_lower for token in ("disk usage", "disk status", "disk space")):
         steps.append(Step("inspect-disk", "Collect disk usage", "disk.status", {}, []))
         criteria.append({"description": "Disk usage was collected", "tool": "disk.status", "args": {}})
 
-    if any(token in text for token in ("memory usage", "memory status", "memory information")):
+    # 7. Monitoring: memory usage / status
+    if not steps and any(token in text_lower for token in ("memory usage", "memory status", "memory information")):
         steps.append(Step("inspect-memory", "Collect memory usage", "memory.status", {}, []))
         criteria.append({"description": "Memory usage was collected", "tool": "memory.status", "args": {}})
 
-    port_match = re.search(r"\b(?:port|listening on)\s+(\d{1,5})\b", text)
-    if port_match and any(token in text for token in ("check", "inspect", "listen", "listening", "what is")):
-        port = int(port_match.group(1))
-        if 1 <= port <= 65535:
-            steps.append(Step("inspect-port", f"Inspect listening port {port}", "port.inspect", {"port": port}, []))
-            criteria.append({"description": f"Port {port} was inspected", "tool": "port.inspect", "args": {"port": port}})
+    # 8. Monitoring: port inspection
+    if not steps:
+        port_match = re.search(r"\b(?:port|listening on)\s+(\d{1,5})\b", text_lower)
+        if port_match and any(token in text_lower for token in ("check", "inspect", "listen", "listening", "what is")):
+            port = int(port_match.group(1))
+            if 1 <= port <= 65535:
+                steps.append(Step("inspect-port", f"Inspect listening port {port}", "port.inspect", {"port": port}, []))
+                criteria.append({"description": f"Port {port} was inspected", "tool": "port.inspect", "args": {"port": port}})
 
-    url_match = re.search(r"\b(http://(?:127\.0\.0\.1|localhost)(?::\d+)?(?:/[^\s]*)?)", text)
-    if url_match and any(token in text for token in ("check", "verify", "test", "health")):
-        url = url_match.group(1).rstrip(".,;:)")
-        steps.append(Step("check-http", f"Check local URL {url}", "http.check", {"url": url}, []))
-        criteria.append({"description": f"Local URL {url} is reachable", "tool": "http.check", "args": {"url": url}})
+    # 9. Monitoring: local http check
+    if not steps:
+        url_match = re.search(r"\b(http://(?:127\.0\.0\.1|localhost)(?::\d+)?(?:/[^\s]*)?)", text_lower)
+        if url_match and any(token in text_lower for token in ("check", "verify", "test", "health")):
+            url = url_match.group(1).rstrip(".,;:)")
+            steps.append(Step("check-http", f"Check local URL {url}", "http.check", {"url": url}, []))
+            criteria.append({"description": f"Local URL {url} is reachable", "tool": "http.check", "args": {"url": url}})
 
     if not steps:
         return None
@@ -536,6 +721,10 @@ class Harness:
                 "Check package-manager output, repository reachability, DNS, and free disk space; "
                 "then retry the package action."
             )
+        elif step.tool.startswith("dir.") or step.tool.startswith("file."):
+            recommendation = (
+                "Check target path validity, filesystem permissions, and parent directory accessibility before retrying."
+            )
         elif step.tool == "http.check":
             recommendation = (
                 "Inspect the local service state and its listening port, then verify the localhost URL again."
@@ -573,9 +762,17 @@ class Harness:
         inventory = self._inventory()
         raw = self.llm(plan_prompt(intent, inventory))
         try:
-            plan = validate_plan(json.loads(raw))
+            cleaned_raw = raw.strip()
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned_raw, re.DOTALL)
+            if match:
+                cleaned_raw = match.group(1)
+            else:
+                match = re.search(r"(\{.*\})", cleaned_raw, re.DOTALL)
+                if match:
+                    cleaned_raw = match.group(1)
+            plan = validate_plan(json.loads(cleaned_raw))
         except (json.JSONDecodeError, PlanError) as exc:
-            plan = deterministic_plan(intent)
+            plan = deterministic_plan(intent, caller=self.caller)
             if plan is None:
                 reason = f"Planner returned an invalid structured plan: {exc}"
                 self.store.set_status(JobStatus.BLOCKED, reason=reason)

@@ -131,19 +131,39 @@ The system automatically initializes:
 
 ### Accessing the Sentinel Control Center (GUI)
 
-By default, the OS appliance boots in headless mode (`-nographic`). To use the graphical desktop and the Sentinel dashboard:
+The OS appliance includes a full graphical desktop (XFCE4 with LightDM) and autologins as `aiuser`.
 
-1. **Modify the boot script:** Open `boot.sh` or `boot.ps1` and remove the `-nographic` and `-serial stdio` flags. You may optionally add a display backend like `-display gtk` or `-display sdl`.
-2. **Launch the Dashboard:** The GUI auto-logs in as `aiuser`. To access the agent's files, open a terminal and switch to root using `su`:
+#### Launching GUI Desktop (Seamless Mouse Integration)
 
-   ```bash
-   su
-   # (enter password 'password')
-   python3 /root/os-ai-agent/dashboard/dashboard.py
-   ```
+To launch QEMU with the graphical window and seamless 1:1 mouse synchronization (no displaced cursor or mouse grabbing required):
 
-   > **Note:** If `su` says "incorrect password", it is because `aiuser` is not in the `wheel` group. You can fix this by opening a terminal on your **host Windows machine** and running:
-   > `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 root@127.0.0.1 "addgroup aiuser wheel"` (password: `password`), then try `su` again.
+**Windows (PowerShell):**
+```powershell
+# From os-ai-agent directory:
+.\boot.ps1 -Gui
+
+# Or from workspace root:
+..\boot_gui.ps1
+```
+
+**Linux / macOS (Bash):**
+```bash
+GUI=1 ./boot.sh
+# or
+./boot.sh --gui
+```
+
+> **Cursor Synchronization Note:** The VM image is pre-configured with `xf86-input-libinput` and `/etc/X11/xorg.conf.d/50-qemu-tablet.conf`. When booted with `-device virtio-tablet-pci -usb -device usb-tablet -vga virtio -display sdl`, the guest coordinates map 1:1 to host mouse coordinates with zero acceleration drift or displacement.
+
+#### Launching the Dashboard
+
+Once the desktop loads:
+
+```bash
+su
+# Password: password
+python3 /root/os-ai-agent/dashboard/dashboard.py
+```
 
 ---
 

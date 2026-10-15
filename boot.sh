@@ -38,10 +38,24 @@ echo "  vCPUs:    $CPUS"
 echo "  SSH Port: $SSH_PORT (root / password)"
 echo "--------------------------------------------------"
 
+GUI_ARGS=()
+if [ "${GUI:-0}" = "1" ] || [ "$1" = "--gui" ] || [ "$2" = "--gui" ]; then
+    GUI_ARGS=(
+        -device virtio-tablet-pci
+        -usb
+        -device usb-tablet
+        -vga virtio
+        -display sdl
+    )
+else
+    GUI_ARGS=(-display none)
+fi
+
 exec qemu-system-x86_64 \
     -m "$MEMORY" \
     -smp "$CPUS" \
     -hda "$IMAGE" \
     -boot c \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
-    -device e1000,netdev=n1
+    -device e1000,netdev=n1 \
+    "${GUI_ARGS[@]}"
