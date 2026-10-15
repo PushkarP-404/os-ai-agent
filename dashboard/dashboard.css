@@ -1,0 +1,252 @@
+/* ==========================================================================
+   AI-Agent OS: Sentinel Control Center Modern Dark Stylesheet
+   ========================================================================== */
+
+/* Root window */
+window, .main-window {
+    background-color: #0c0e17;
+    color: #f8fafc;
+    font-family: 'Inter', 'Noto Sans', 'Cantarell', -apple-system, sans-serif;
+}
+
+/* HeaderBar */
+headerbar, .header-bar {
+    background: #131622;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    padding: 6px 16px;
+    min-height: 48px;
+}
+
+headerbar .title {
+    font-weight: 700;
+    font-size: 14px;
+    color: #f8fafc;
+}
+
+headerbar .subtitle {
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+/* Navigation Sidebar */
+.sidebar-box {
+    background-color: #131622;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 10px;
+}
+
+.nav-item {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 10px 14px;
+    margin-bottom: 4px;
+    transition: all 150ms ease;
+    outline: none;
+}
+
+.nav-item:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #f8fafc;
+}
+
+.nav-item.active, .nav-item:checked {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(139, 92, 246, 0.16));
+    border-left: 3px solid #6366f1;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* Card Containers */
+.card {
+    background-color: #181c2b;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    transition: all 200ms ease;
+}
+
+.card:hover {
+    border-color: rgba(99, 102, 241, 0.25);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.card-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #94a3b8;
+    margin-bottom: 8px;
+}
+
+.metric-value {
+    font-size: 24px;
+    font-weight: 800;
+    color: #f8fafc;
+}
+
+.metric-sub {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 4px;
+}
+
+/* Status Pills */
+.pill-online {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.pill-offline {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.pill-info {
+    background-color: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Action Buttons */
+button {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: #202538;
+    color: #f8fafc;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 8px 16px;
+    transition: all 150ms ease;
+    outline: none;
+}
+
+button:hover {
+    background-color: #2a3148;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border: none;
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.5);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border: none;
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+}
+
+.btn-success:hover {
+    background: linear-gradient(135deg, #059669, #047857);
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: none;
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.5);
+}
+
+/* Inputs & Form Controls */
+entry, spinbutton, combobox text {
+    background-color: #131622;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    transition: all 150ms ease;
+}
+
+entry:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+}
+
+/* Monospace Live Log Terminal */
+.terminal-card {
+    background-color: #08090f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 12px;
+}
+
+textview.terminal-view, textview.terminal-view text {
+    background-color: #08090f;
+    color: #cbd5e1;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+}
+
+/* Custom Scrollbars */
+scrollbar {
+    background-color: transparent;
+}
+
+scrollbar slider {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+    min-width: 6px;
+    min-height: 6px;
+    transition: all 150ms ease;
+}
+
+scrollbar slider:hover {
+    background-color: rgba(99, 102, 241, 0.5);
+}
+
+/* TreeView (Process Stats) */
+treeview {
+    background-color: #131622;
+    color: #f8fafc;
+    border-radius: 8px;
+}
+
+treeview:selected {
+    background-color: rgba(99, 102, 241, 0.25);
+    color: #ffffff;
+}
+
+treeview header button {
+    background: #181c2b;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0;
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 8px 12px;
+}

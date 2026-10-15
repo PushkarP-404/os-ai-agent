@@ -1,27 +1,30 @@
 # Maintainer: AI-Agent OS <developer@ai-agent-os.org>
-# ai-agent-daemon — AI-Agent OS kernel-userspace daemon + CLI
+# ai-agent-daemon — AI-Agent OS kernel-userspace daemon, CLI, & Sentinel UI
 #
 # Packages:
 #   - agent_daemon.py  (Netlink listener + Phase 11 task dispatcher)
 #   - task_runner.py   (async task execution engine)
 #   - logger.py        (structured JSONL logger)
 #   - agent-cli        (compiled C binary — syscall 548 interface)
-#   - OpenRC init script for the daemon
+#   - dashboard.py     (Sentinel Control Center GUI)
+#   - dashboard.css    (Modern dark rounded GTK3 stylesheet)
+#   - OpenRC init scripts and system UI configuration
 
 pkgname="ai-agent-daemon"
 pkgver="0.1.0"
-pkgrel=1
-pkgdesc="AI-Agent OS kernel-userspace daemon and agent-cli (Phase 11)"
+pkgrel=2
+pkgdesc="AI-Agent OS kernel-userspace daemon, agent-cli, and Sentinel Control Center UI"
 arch="x86_64"
 license="GPL-2.0-only"
 url="https://github.com/ai-agent-os/ai-agent"
-depends="python3 llama-server-musl"
+depends="python3 llama-server-musl py3-gobject3 gtk+3.0 papirus-icon-theme font-jetbrains-mono font-noto albatross-themes-gtk3"
 makedepends="gcc make"
 options="!check !fhs"
 
 # Source is in the VM at /root/os-ai-agent (uploaded by sync.py / sync_repo.py)
 _daemon_src="/root/os-ai-agent/agent-daemon"
 _cli_src="/root/os-ai-agent/agent-cli"
+_dashboard_src="/root/os-ai-agent/dashboard"
 
 build() {
     # Compile agent-cli C binary against system libc (musl)
@@ -37,6 +40,199 @@ package() {
             install -Dm644 "$pyf" "$pkgdir/usr/lib/ai-agent/$(basename "$pyf")"
         fi
     done
+
+    # ── Sentinel Control Center GUI + CSS ───────────────────────────────
+    if [ -d "$_dashboard_src" ]; then
+        install -Dm755 "$_dashboard_src/dashboard.py" \
+            "$pkgdir/usr/lib/ai-agent/dashboard.py"
+        install -Dm644 "$_dashboard_src/dashboard.css" \
+            "$pkgdir/usr/lib/ai-agent/dashboard.css"
+
+        # Binary launcher wrapper
+        mkdir -p "$pkgdir/usr/bin"
+        cat << 'EOF' > "$pkgdir/usr/bin/ai-agent-dashboard"
+#!/bin/sh
+exec python3 /usr/lib/ai-agent/dashboard.py "$@"
+EOF
+        chmod 755 "$pkgdir/usr/bin/ai-agent-dashboard"
+
+        # Compatibility symlinks in /usr/local/lib/ai-agent/
+        mkdir -p "$pkgdir/usr/local/lib/ai-agent"
+        ln -sf /usr/lib/ai-agent/dashboard.py "$pkgdir/usr/local/lib/ai-agent/dashboard.py"
+        ln -sf /usr/lib/ai-agent/dashboard.css "$pkgdir/usr/local/lib/ai-agent/dashboard.css"
+
+        # Desktop application launcher
+        if [ -f "$_dashboard_src/ai-agent-dashboard.desktop" ]; then
+            install -Dm644 "$_dashboard_src/ai-agent-dashboard.desktop" \
+                "$pkgdir/usr/share/applications/ai-agent-dashboard.desktop"
+            install -Dm755 "$_dashboard_src/ai-agent-dashboard.desktop" \
+                "$pkgdir/etc/skel/Desktop/ai-agent-dashboard.desktop"
+        fi
+
+        # Wallpaper
+        if [ -f "$_dashboard_src/agent-os-wallpaper.jpg" ]; then
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/usr/share/backgrounds/agent-os-wallpaper.jpg"
+        fi
+    fi
+
+    # ── Global Dark Rounded GTK 3 Stylesheet ────────────────────────────
+    install -d "$pkgdir/etc/xdg/gtk-3.0"
+    install -d "$pkgdir/etc/skel/.config/gtk-3.0"
+    cat << 'EOF' > "$pkgdir/etc/xdg/gtk-3.0/gtk.css"
+/* AgentOS Global Dark Rounded GTK 3 Stylesheet */
+window, .background {
+    background-color: #0c0e17;
+    color: #f8fafc;
+    font-family: 'Noto Sans', 'Inter', sans-serif;
+}
+
+.xfce4-panel {
+    background-color: rgba(18, 22, 34, 0.90);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 3px 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.xfce4-panel button {
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    color: #f8fafc;
+    padding: 3px;
+    margin: 2px;
+    transition: all 150ms ease;
+}
+
+.xfce4-panel button:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+dialog, .dialog, frame, .frame {
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: #131622;
+}
+
+button {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: #1a1e2d;
+    color: #f8fafc;
+    padding: 6px 14px;
+    transition: all 150ms ease;
+}
+
+button:hover {
+    background-color: #23283c;
+    border-color: rgba(99, 102, 241, 0.4);
+}
+
+button.suggested-action {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border: none;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+button.destructive-action {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border: none;
+    color: #ffffff;
+}
+
+scrollbar slider {
+    min-width: 6px;
+    min-height: 6px;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+scrollbar slider:hover {
+    background-color: rgba(99, 102, 241, 0.6);
+}
+
+entry {
+    background-color: #131622;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+
+entry:focus {
+    border-color: #6366f1;
+}
+EOF
+    cp "$pkgdir/etc/xdg/gtk-3.0/gtk.css" "$pkgdir/etc/skel/.config/gtk-3.0/gtk.css"
+
+    # ── Modern Monospace Dark Terminal Configuration ───────────────────
+    install -d "$pkgdir/etc/skel/.config/xfce4/terminal"
+    cat << 'EOF' > "$pkgdir/etc/skel/.config/xfce4/terminal/terminalrc"
+[Configuration]
+FontName=JetBrains Mono 10
+ColorPalette=#0f1117;#ef4444;#10b981;#f59e0b;#6366f1;#8b5cf6;#06b6d4;#cbd5e1;#475569;#f87171;#34d399;#fbbf24;#818cf8;#a78bfa;#22d3ee;#f8fafc
+ColorForeground=#f8fafc
+ColorBackground=#0c0e17
+ColorCursor=#6366f1
+TabActivityColor=#6366f1
+ScrollingBar=TERMINAL_SCROLLBAR_NONE
+ScrollingOnOutput=TRUE
+MiscShowUnsafePasteDialog=FALSE
+EOF
+
+    # ── Presets for LightDM Greeter & XFCE4 Settings ───────────────────
+    install -d "$pkgdir/usr/share/ai-agent/themes"
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/lightdm-gtk-greeter.conf"
+[greeter]
+background=/usr/share/backgrounds/agent-os-wallpaper.jpg
+theme-name=Adwaita-dark
+icon-theme-name=Papirus-Dark
+font-name=Noto Sans 10
+xft-antialias=true
+xft-dpi=96
+xft-hintstyle=hintslight
+xft-rgba=rgb
+indicators=~host;~spacer;~clock;~power
+EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xsettings.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="DoubleClickTime" type="int" value="400"/>
+    <property name="DoubleClickDistance" type="int" value="5"/>
+    <property name="DndDragThreshold" type="int" value="8"/>
+    <property name="CursorBlink" type="bool" value="true"/>
+    <property name="CursorBlinkTime" type="int" value="1200"/>
+    <property name="SoundThemeName" type="string" value="default"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+    <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
+  </property>
+  <property name="Xft" type="empty">
+    <property name="DPI" type="empty"/>
+    <property name="Antialias" type="int" value="1"/>
+    <property name="Hinting" type="int" value="-1"/>
+    <property name="HintStyle" type="string" value="hintslight"/>
+    <property name="RGBA" type="string" value="rgb"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CanChangeAccels" type="bool" value="false"/>
+    <property name="FontName" type="string" value="Noto Sans 10"/>
+    <property name="MonospaceFontName" type="string" value="JetBrains Mono 10"/>
+    <property name="ToolbarStyle" type="string" value="icons"/>
+    <property name="ToolbarIconSize" type="int" value="3"/>
+    <property name="MenuImages" type="bool" value="true"/>
+    <property name="ButtonImages" type="bool" value="true"/>
+    <property name="MenuBarAccel" type="string" value="F10"/>
+    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  </property>
+</channel>
+EOF
 
     # ── agent-cli binary ─────────────────────────────────────────────────
     install -Dm755 "$_cli_src/agent-cli" \
@@ -88,14 +284,53 @@ post_install() {
     rc-update add ai-agent default 2>/dev/null || true
     rc-update add ai-agent-privileged default 2>/dev/null || true
 
-    einfo "AI-Agent daemon installed."
-    einfo "Start with: rc-service ai-agent start"
-    einfo "CLI usage:  agent-cli \"install curl and test it\""
+    # Apply LightDM greeter theme if lightdm is installed
+    if [ -d "/etc/lightdm" ]; then
+        cp -f /usr/share/ai-agent/themes/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+    fi
+
+    # Apply XFCE4 default settings if xfconf is present
+    if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
+        cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+    fi
+
+    # Sync desktop shortcuts and configs to active user if present
+    if [ -d "/home/aiuser" ]; then
+        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal
+        cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
+        chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
+        cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
+        cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
+        chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
+    fi
+
+    einfo "AI-Agent daemon and Sentinel Control Center installed."
+    einfo "Start service: rc-service ai-agent start"
+    einfo "CLI usage:     agent-cli \"install curl and test it\""
+    einfo "Dashboard:     ai-agent-dashboard"
 }
 
 post_upgrade() {
     rc-service ai-agent-privileged restart 2>/dev/null || true
     rc-service ai-agent restart 2>/dev/null || true
+
+    # Apply LightDM greeter theme if lightdm is installed
+    if [ -d "/etc/lightdm" ]; then
+        cp -f /usr/share/ai-agent/themes/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+    fi
+
+    # Apply XFCE4 default settings if xfconf is present
+    if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
+        cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+    fi
+
+    # Update active user files on upgrade
+    if [ -d "/home/aiuser" ]; then
+        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal
+        cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
+        chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
+        chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
+    fi
 }
 
 post_deinstall() {

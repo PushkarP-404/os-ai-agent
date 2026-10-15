@@ -19,7 +19,7 @@ Modern AI assistants integrate with applications via plugins, APIs, or protocols
 **AI-Agent OS flips this model:**
 > **The integration point is the operating system itself, not the application.**
 
-Every process : legacy binaries, CLI tools, services, scripts, containers — must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
+Every process : legacy binaries, CLI tools, services, scripts, containers - must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
 
 - **Universal Observability:** Intercept process events and syscall activity without application knowledge.
 - **Synchronous Kernel-AI Syscall (`sys_agent_query` #548):** Any program can query the operating system's built-in reasoning engine natively.
@@ -138,6 +138,7 @@ The OS appliance includes a full graphical desktop (XFCE4 with LightDM) and auto
 To launch QEMU with the graphical window and seamless 1:1 mouse synchronization (no displaced cursor or mouse grabbing required):
 
 **Windows (PowerShell):**
+
 ```powershell
 # From os-ai-agent directory:
 .\boot.ps1 -Gui
@@ -147,6 +148,7 @@ To launch QEMU with the graphical window and seamless 1:1 mouse synchronization 
 ```
 
 **Linux / macOS (Bash):**
+
 ```bash
 GUI=1 ./boot.sh
 # or
