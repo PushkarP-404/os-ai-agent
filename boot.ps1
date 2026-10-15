@@ -36,6 +36,13 @@ if (-not (Test-Path $QemuExe)) {
     }
 }
 
+$running = Get-Process qemu-system-x86_64 -ErrorAction SilentlyContinue
+if ($running) {
+    Write-Host "[!] Found running QEMU process (PID: $($running.Id)). Stopping it to release disk lock..." -ForegroundColor Yellow
+    Stop-Process -Id $running.Id -Force
+    Start-Sleep -Seconds 2
+}
+
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "       Starting AI-Agent OS Appliance v0.1        " -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Cyan
