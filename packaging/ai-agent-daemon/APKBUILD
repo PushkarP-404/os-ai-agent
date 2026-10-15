@@ -12,7 +12,7 @@
 
 pkgname="ai-agent-daemon"
 pkgver="0.1.0"
-pkgrel=2
+pkgrel=3
 pkgdesc="AI-Agent OS kernel-userspace daemon, agent-cli, and Sentinel Control Center UI"
 arch="x86_64"
 license="GPL-2.0-only"
@@ -195,8 +195,27 @@ xft-antialias=true
 xft-dpi=96
 xft-hintstyle=hintslight
 xft-rgba=rgb
-indicators=~host;~spacer;~clock;~power
+indicators=~host;~spacer;~clock;~spacer;~session;~power
 EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/50-autologin.conf"
+[Seat:*]
+autologin-user=aiuser
+autologin-user-timeout=0
+autologin-session=xfce
+user-session=xfce
+greeter-session=lightdm-gtk-greeter
+display-setup-script=/usr/local/bin/agent-display-setup.sh
+session-setup-script=/usr/local/bin/agent-display-setup.sh
+EOF
+
+    install -d "$pkgdir/usr/local/bin"
+    cat << 'EOF' > "$pkgdir/usr/local/bin/agent-display-setup.sh"
+#!/bin/sh
+chvt 7 2>/dev/null || true
+EOF
+    chmod +x "$pkgdir/usr/local/bin/agent-display-setup.sh"
+
 
     cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xsettings.xml"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -284,8 +303,14 @@ post_install() {
     rc-update add ai-agent default 2>/dev/null || true
     rc-update add ai-agent-privileged default 2>/dev/null || true
 
-    # Apply LightDM greeter theme if lightdm is installed
+    # Purge buggy vmmouse driver if present to prevent Xorg segfault
+    apk del xf86-input-vmmouse 2>/dev/null || true
+    rm -f /usr/lib/xorg/modules/input/vmmouse_drv.so /usr/share/X11/xorg.conf.d/*vmmouse* /etc/X11/xorg.conf.d/*vmmouse* 2>/dev/null || true
+
+    # Apply LightDM autologin & greeter theme if lightdm is installed
     if [ -d "/etc/lightdm" ]; then
+        mkdir -p /etc/lightdm/lightdm.conf.d
+        cp -f /usr/share/ai-agent/themes/50-autologin.conf /etc/lightdm/lightdm.conf.d/50-autologin.conf 2>/dev/null || true
         cp -f /usr/share/ai-agent/themes/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
     fi
 
@@ -314,8 +339,14 @@ post_upgrade() {
     rc-service ai-agent-privileged restart 2>/dev/null || true
     rc-service ai-agent restart 2>/dev/null || true
 
-    # Apply LightDM greeter theme if lightdm is installed
+    # Purge buggy vmmouse driver if present to prevent Xorg segfault
+    apk del xf86-input-vmmouse 2>/dev/null || true
+    rm -f /usr/lib/xorg/modules/input/vmmouse_drv.so /usr/share/X11/xorg.conf.d/*vmmouse* /etc/X11/xorg.conf.d/*vmmouse* 2>/dev/null || true
+
+    # Apply LightDM autologin & greeter theme if lightdm is installed
     if [ -d "/etc/lightdm" ]; then
+        mkdir -p /etc/lightdm/lightdm.conf.d
+        cp -f /usr/share/ai-agent/themes/50-autologin.conf /etc/lightdm/lightdm.conf.d/50-autologin.conf 2>/dev/null || true
         cp -f /usr/share/ai-agent/themes/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
     fi
 

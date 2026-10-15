@@ -58,7 +58,8 @@ $displayArgs = if ($Gui) {
         "-usb",
         "-device", "usb-tablet",
         "-vga", "virtio",
-        "-display", "sdl"
+        "-display", "sdl",
+        "-name", "AI-Agent OS v0.1 (XFCE4 Desktop)"
     )
 } else {
     @(
@@ -68,10 +69,12 @@ $displayArgs = if ($Gui) {
 
 & $QemuExe `
     -m "$($MemoryMB)M" `
-    -smp $Cores `
+    -smp "$Cores,cores=$Cores,threads=1,sockets=1" `
     -hda "$Image" `
     -boot c `
-    -netdev "user,id=n1,hostfwd=tcp:127.0.0.1:$($SshPort)-:22" `
-    -device e1000,netdev=n1 `
+    -netdev "user,id=n1,hostfwd=tcp:127.0.0.1:$($SshPort)-:22,hostfwd=tcp:127.0.0.1:8080-:8080,hostfwd=tcp:127.0.0.1:9222-:9222" `
+    -device virtio-net-pci,netdev=n1 `
     -monitor telnet:127.0.0.1:4444,server,nowait `
+    -accel tcg,thread=multi `
     @displayArgs
+
