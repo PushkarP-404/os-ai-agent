@@ -23,18 +23,18 @@
 11. Phase 3: Kernel Module Integration (Completed & Validated)
 12. Phase 4: Custom Syscall Interface (Code-Complete — Kernel Building)
 13. Phase 5: Local LLM + Fine-Tuning Pipeline
-26. Phase 6: OS Image Packaging & Distribution
-27. Data Collection & Storage Schema
-28. Security Model & Threat Considerations
-29. Agent Autonomy Levels
-30. Phase 8: Intent-Driven Execution (Orchestrator OS)
-31. Phase 9: Universal Visual Orchestration (GUI Automation)
-32. Phase 10: Context-Aware Assistance (eBPF Sensors)
-33. Repository Structure
-34. Git Workflow
-35. Toolchain Reference
-36. Open Questions & Future Decisions
-37. Glossary
+14. Phase 6: OS Image Packaging & Distribution
+15. Data Collection & Storage Schema
+16. Security Model & Threat Considerations
+17. Agent Autonomy Levels
+18. Phase 8: Intent-Driven Execution (Orchestrator OS)
+19. Phase 9: Universal Visual Orchestration (GUI Automation)
+20. Phase 10: Context-Aware Assistance (eBPF Sensors)
+21. Repository Structure
+22. Git Workflow
+23. Toolchain Reference
+24. Open Questions & Future Decisions
+25. Glossary
 
 ---
 
@@ -58,6 +58,7 @@ This document captures every technical and architectural decision made so far, t
 > "I want to integrate the agent directly with the OS because I want all of my software and apps to be controlled by the agent, no matter if they are designed to be or not, without API or MCP."
 
 This is the guiding sentence for the entire project. It rules out (as a long-term end state) any architecture that depends on:
+
 - Applications explicitly calling an AI API
 - Applications implementing MCP (Model Context Protocol) or similar tool-calling interfaces
 - Plugins, browser extensions, or app-specific integrations
@@ -71,6 +72,7 @@ Every implementation decision from here on should be evaluated against one quest
 ### 2.3 Why this is a good learning vehicle
 
 Building this system forces confrontation with:
+
 - Process creation and the fork/exec model
 - The syscall interface and calling convention (registers, `orig_rax`, return values)
 - ptrace semantics (`PTRACE_TRACEME`, `PTRACE_SYSCALL`, `PTRACE_GETREGS`)
@@ -202,7 +204,7 @@ The current implementation is intentionally simple: it is a proof-of-concept tha
 ### 5.1 Options considered
 
 | Option | Verdict | Reasoning |
-|---|---|---|
+| --- | --- | --- |
 | Ubuntu/Debian/Fedora fork | Rejected | Too much accumulated complexity (systemd, large package sets, glibc complexity) for a project meant to teach low-level internals |
 | Arch Linux | Used transiently | Good for learning the terrain (manual kernel builds, AUR, minimal defaults), not chosen as the base to fork |
 | Linux From Scratch (LFS) | Considered, not started | Maximum learning value but very slow iteration; may be revisited once the design stabilizes |
@@ -239,7 +241,7 @@ Kernel modules, syscall table hooks, and process-lifecycle hooks all carry real 
 ### 6.3 Guest VM specification
 
 | Setting | Value |
-|---|---|
+| --- | --- |
 | Guest OS | Alpine Linux 3.20.10 |
 | Virtual disk | `alpine-dev.qcow2` / VDI, 20GB, dynamically allocated |
 | RAM | 2GB (2048 MB) |
@@ -306,6 +308,7 @@ Port Forwarding rule:
 ```
 
 Client command from Windows:
+
 ```powershell
 ssh -p 2222 root@127.0.0.1
 ```
@@ -315,6 +318,7 @@ ssh -p 2222 root@127.0.0.1
 ### 7.3 NAT + Port Forwarding (Ollama) — did NOT work reliably
 
 The equivalent rule for reaching a Windows-hosted Ollama server:
+
 ```
 Name:       Ollama
 Protocol:   TCP
@@ -330,8 +334,10 @@ By default, Ollama on Windows binds strictly to `127.0.0.1:11434`. In QEMU SLIRP
    ```powershell
    [System.Environment]::SetEnvironmentVariable('OLLAMA_HOST', '0.0.0.0', 'User')
    ```
-2. When bound to `0.0.0.0:11434`, the Alpine guest reaches Ollama immediately at `http://10.0.2.2:11434`.
-3. Verified from within the guest:
+
+1. When bound to `0.0.0.0:11434`, the Alpine guest reaches Ollama immediately at `http://10.0.2.2:11434`.
+2. Verified from within the guest:
+
    ```bash
    curl -s http://10.0.2.2:11434/
    # Returns: "Ollama is running"
@@ -355,6 +361,7 @@ During networking experimentation, the VM's root password was forgotten, and no 
 1. Reattach the Alpine install ISO to the VM's virtual optical drive by appending `-cdrom alpine.iso` to the QEMU launch command.
 2. Boot the VM from the ISO.
 3. Identify the correct root-filesystem partition manually (no `lsblk` available in the ISO environment):
+
    ```bash
    ls /dev/sda*
    mount /dev/sda1 /mnt/disk ; ls /mnt/disk   # check for bin/, etc/, home/, root/
@@ -362,7 +369,9 @@ During networking experimentation, the VM's root password was forgotten, and no 
    mount /dev/sda2 /mnt/disk ; ls /mnt/disk
    # ...repeat until the correct partition is found
    ```
+
 4. Once the correct partition was mounted and confirmed to contain a real root filesystem:
+
    ```bash
    chroot /mnt/disk /bin/ash   # NOTE: must specify /bin/ash explicitly;
                                 # bare `chroot /mnt/disk` failed with
@@ -372,6 +381,7 @@ During networking experimentation, the VM's root password was forgotten, and no 
    umount /mnt/disk
    poweroff
    ```
+
 5. Detach the ISO (remove `-cdrom alpine.iso` from the launch command).
 6. Boot normally from disk with the new password.
 7. **Lesson applied going forward:** take a QEMU snapshot (`qemu-img snapshot -c`) immediately after any working configuration state, and record credentials somewhere durable outside the VM.
@@ -381,7 +391,7 @@ During networking experimentation, the VM's root password was forgotten, and no 
 ## 8. Phased Roadmap
 
 | Phase | Goal | Status |
-|---|---|---|
+| --- | --- | --- |
 | **Phase 1** | Userspace ptrace syscall monitor — observe any process's syscalls without modifying it | ✅ Complete & Validated — traces `/bin/ls`, `/bin/echo`, and arbitrary unmodified binaries |
 | **Phase 2** | Wire syscall data into an LLM for analysis/explanation | ✅ Complete & Validated — ptrace output piped into `syscall_analyzer.py`; querying local Ollama (`mistral:latest`, 7.2B Q4_K_M) via `http://10.0.2.2:11434`; 120s timeout; auto model detection |
 | **Phase 3** | Kernel module hooking `kernel_clone` to stream process-creation events to userspace agent daemon | ✅ Complete & Validated — LKM (`ai_process_hook.ko`) hooks `kernel_clone` via `kretprobe`; broadcasts `{parent_pid, child_pid, comm}` over Netlink protocol 31 to `agent_daemon.py`; 5 events captured in test |
@@ -525,13 +535,17 @@ int main(int argc, char *argv[]) {
 ### 9.4 Known bug fixed during development
 
 An early version called `memcpy` with arguments in the wrong order:
+
 ```c
 memcpy(syscalls[syscall_count].args, sizeof(args), args);  // WRONG
 ```
+
 `memcpy`'s signature is `memcpy(void *dest, const void *src, size_t n)`. The corrected call is:
+
 ```c
 memcpy(syscalls[syscall_count].args, args, sizeof(args));  // CORRECT
 ```
+
 The original bug caused GCC warnings about implicit pointer/integer conversion and a `stringop-overread` note, since the compiler interpreted `sizeof(args)` (an integer, 48) as a source pointer near address zero.
 
 ### 9.5 Validated test results
@@ -546,6 +560,7 @@ Tracing PID 2612: /bin/ls
 =====================================
 Total syscalls captured: 49
 ```
+
 Confirmed working: the monitor successfully traced a real `ls -la` invocation end-to-end, including its normal stdout output interleaved with syscall trace lines, and correctly reported process exit and total syscall count.
 
 ### 9.6 Limitations of the current Phase 1 approach (why it is not the end state)
@@ -567,6 +582,7 @@ The syscall stream captured in Phase 1 needs to be turned into something meaning
 The project uses **Ollama** running on the Windows host, accessed from inside the Alpine VM via `http://10.0.2.2:11434` (QEMU SLIRP gateway). Uses **only** the Python standard library (`urllib.request`, `json`) — no `pip` or third-party packages, avoiding Alpine's unreliable `py3-pip`.
 
 Key design decisions implemented:
+
 - **Auto model detection:** queries `/api/tags` on startup; prefers `llama3.2` if present, falls back to `mistral:latest`, then first available model, then hardcoded default.
 - **`OLLAMA_MODEL` env override:** allows selecting the model without code changes.
 - **120-second timeout:** necessary because 7B parameter models on CPU can be slow to respond.
@@ -623,13 +639,14 @@ Keep analysis concise."""
 ### 10.3 Network setup for Ollama (Resolved)
 
 Ollama runs on the Windows host. The resolution was:
+
 1. Set `OLLAMA_HOST=0.0.0.0` as a Windows User environment variable so Ollama binds to all interfaces (not just `127.0.0.1`).
 2. The Alpine guest reaches it at `http://10.0.2.2:11434` (QEMU SLIRP's fixed host gateway address).
 
 Confirmed models available on host (`ollama list`):
 
 | Model | Size | Quantization | Context |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `mistral:latest` | 7.2B | Q4_K_M | 32768 |
 | `neural-chat:7b` | 7B | Q4_0 | 32768 |
 | `llama2:latest` | 7B | Q4_0 | 4096 |
@@ -639,7 +656,7 @@ Confirmed models available on host (`ollama list`):
 ### 10.4 Model size/hardware planning (for future local deployment)
 
 | Model | Approx. size | Min VRAM/RAM (quantized) | Fine-tuning friendliness |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Phi-3 Mini | 3.8B | ~4GB | Excellent |
 | Llama 3.2 3B | 3B | ~4GB (2-3GB quantized) | Excellent |
 | Mistral 7B | 7B | ~8GB (4-6GB quantized) | Very good |
@@ -657,6 +674,7 @@ An automated integration script (`test_pipeline.sh`) was written and executed in
 ```
 
 **Trace and AI Analysis Output:**
+
 ```
 === 1. Tracing /bin/ls with ptrace monitor ===
 Tracing PID 2544: /bin/ls
@@ -794,6 +812,7 @@ Phase 4 adds a **custom syscall (`sys_agent_query`, number 548)** baked directly
 ### 12.2 Why this requires a custom kernel build (not a module)
 
 The x86-64 Linux syscall table (`arch/x86/entry/syscalls/syscall_64.tbl`) is compiled into the kernel image at build time. It cannot be extended at runtime via a loadable module. Phase 4 therefore requires:
+
 1. Patching `syscall_64.tbl` to assign number 548 to `agent_query`.
 2. Declaring `asmlinkage long sys_agent_query(...)` in `include/linux/syscalls.h`.
 3. Adding the implementation `kernel/ai_agent.c` to `kernel/Makefile` (`obj-y += ai_agent.o`).
@@ -865,7 +884,7 @@ The syscall does not call the LLM directly. It uses the **Netlink socket (protoc
 **Netlink message types** (defined in `include/uapi/linux/ai_agent.h`):
 
 | Constant | Value | Direction | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `AI_MSG_REGISTER` | 0 | Daemon → Kernel | Daemon announces its PID on startup |
 | `AI_MSG_PROCESS_EVENT` | 1 | Kernel → Daemon | Phase 3 process-creation events |
 | `AI_MSG_SYSCALL_QUERY` | 2 | Kernel → Daemon | Phase 4 `sys_agent_query` dispatch |
@@ -884,7 +903,7 @@ This ensures any program calling the syscall always gets a valid response, even 
 ### 12.6 Source Files
 
 | File | Role |
-|---|---|
+| --- | --- |
 | [`custom-kernel/include/uapi/linux/ai_agent.h`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/include/uapi/linux/ai_agent.h) | Shared UAPI header: constants, message structs, syscall number. Used by both kernel and userspace. |
 | [`custom-kernel/kernel/ai_agent.c`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/kernel/ai_agent.c) | Kernel-side `SYSCALL_DEFINE5(agent_query, ...)` implementation; Netlink receive handler; waiter list management. |
 | [`custom-kernel/patches/0001-add-ai-agent-syscall.patch`](file:///c:/qemu-alpine/os-ai-agent/custom-kernel/patches/0001-add-ai-agent-syscall.patch) | Reference patch showing all three kernel tree modifications (syscall table, header, Makefile). |
@@ -903,6 +922,7 @@ This ensures any program calling the syscall always gets a valid response, even 
 ### 12.8 Current Status (as of 2026-09-16)
 
 All source files are committed and injected into the kernel source tree inside the Alpine VM (`/usr/src/linux-6.6.142`). The `make -j4 bzImage modules` compilation is currently running inside the QEMU guest. Once complete:
+
 1. `make modules_install` → install to `/lib/modules/6.6.142-ai-agent/`
 2. Copy `arch/x86/boot/bzImage` → `/boot/vmlinuz-ai-agent`
 3. `mkinitfs -o /boot/initramfs-ai-agent 6.6.142-ai-agent`
@@ -931,6 +951,7 @@ More usage
 ### 13.3 Fine-tuning method: LoRA (Low-Rank Adaptation)
 
 Full fine-tuning updates every weight in the base model — expensive, slow, and impractical on consumer hardware. **LoRA** freezes the base model and trains a small set of additional low-rank adapter weights on top, which:
+
 - Trains in hours, not days/weeks
 - Runs on modest consumer hardware (as little as ~8GB VRAM for small base models)
 - Allows **multiple adapters** to coexist — e.g., a separate LoRA adapter specialized per process type (`gcc.lora`, `nginx.lora`, `python.lora`), loaded dynamically depending on which process the agent is currently paired with
@@ -990,9 +1011,10 @@ from trl import SFTTrainer
 
 ### 14.1 Appliance Release Goal & Overview (v0.1)
 
-The objective of Phase 6 is to package the entire system built in Phases 1–5 into a self-contained, zero-configuration bootable appliance image (`ai-agent-os-v0.1.qcow2`). 
+The objective of Phase 6 is to package the entire system built in Phases 1–5 into a self-contained, zero-configuration bootable appliance image (`ai-agent-os-v0.1.qcow2`).
 
 When booted on any host running QEMU (Windows, Linux, macOS), the appliance:
+
 1. Boots directly into the custom kernel `6.6.142-ai-agent` with built-in syscall #548 (`sys_agent_query`).
 2. Automatically brings up the native musl `llama-server` background inference engine with 4-thread execution.
 3. Automatically launches `agent_daemon.py` via OpenRC, registering with kernel Netlink protocol 31.
@@ -1004,7 +1026,7 @@ When booted on any host running QEMU (Windows, Linux, macOS), the appliance:
 All binaries, libraries, and models were moved from transient user directories (`/root/`) into canonical system directories:
 
 | Component | Development Location | System Appliance Location |
-|---|---|---|
+| --- | --- | --- |
 | Inference Server | `/root/llama.cpp/build/bin/llama-server` | `/usr/local/bin/llama-server` |
 | CLI Diagnostic Tool | `/root/llama.cpp/build/bin/llama-cli` | `/usr/local/bin/llama-cli` |
 | Shared Libraries | `/root/llama.cpp/build/bin/*.so*` | `/usr/local/lib/` (`libllama.so`, `libggml*.so`, `libmtmd.so`) |
@@ -1022,13 +1044,14 @@ Binaries built with CMake had embedded build-tree RPATH references. Using `patch
 - **OpenRC Runlevel:** Services registered in `default` runlevel:
   - `llama-server`: Starts native musl inference server on `127.0.0.1:11434` with 4 threads. Health check poll loop verifies server readiness before declaring `[ ok ]`.
   - `ai-agent`: Starts unified daemon, connects to Netlink family 31, and registers PID with kernel.
-  - `sshd`: Enables secure management access over forwarded port 2222 (`root` / `password`).
+  - `sshd`: Enables secure management access over forwarded port 2222.
 
 ### 14.4 Syscall Latency & Prompt Optimization
 
 On software CPU emulation (QEMU TCG without hardware virtualization), cold inference with multi-sentence generation previously required ~27 seconds, exceeding the kernel's 15-second `wait_event_interruptible_timeout`.
 
 **Optimizations implemented in `agent_daemon.py`:**
+
 1. **Thread count:** Configured `LLAMA_THREADS=4` matching the 4 vCPU configuration.
 2. **Early stopping:** Added stop tokens `[".", "\n", "\n\n"]` to truncate generation immediately upon completion of the verdict.
 3. **Token budget:** Reduced `n_predict` to 8 tokens.
@@ -1073,6 +1096,7 @@ A dedicated verification harness `test_phase6_boot.sh` validates the appliance s
 The appliance image is compressed via `qemu-img convert -O qcow2 -c`, reducing the 15.5GB disk image to an optimized distributable artifact.
 
 **Single-Command Boot Launchers:**
+
 - **Windows (PowerShell):** `.\boot.ps1`
 - **Linux / macOS (Bash):** `./boot.sh`
 
@@ -1118,7 +1142,7 @@ An agent with the reach described in Section 3 is, by construction, the single m
 A four-stage model for how much authority the agent has, to be implemented as an explicit, user-configurable setting rather than an implicit assumption:
 
 | Mode | Behavior |
-|---|---|
+| --- | --- |
 | **Observe Mode** (current/default) | Agent watches syscalls/events, logs them, and can explain them, but takes no action of any kind. |
 | **Suggest Mode** | Agent recommends specific actions (e.g., "this process's read loop looks unbounded — consider adding a length check") but a human must explicitly approve before anything happens. |
 | **Assist Mode** | Agent acts autonomously only on decisions above a defined confidence threshold, and logs every such action for later review. |
@@ -1168,7 +1192,7 @@ os-ai-agent/
 **Git history milestones:**
 
 | Commit | Message |
-|---|---|
+| --- | --- |
 | `72ef1e9` | Ptrace monitor compiles and captures syscalls |
 | `e69e9d9` | Phase 2: Add Ollama syscall analyzer and updated documentation |
 | `d3270bc` | Allow dynamic Ollama model detection and OLLAMA_MODEL env var |
@@ -1198,11 +1222,13 @@ git config user.name "Developer"
 GitHub no longer supports password authentication for git operations over HTTPS; a **Personal Access Token (PAT)** or SSH key is required.
 
 **Personal Access Token method:**
-1. Generate at https://github.com/settings/tokens (classic token, `repo` scope).
+
+1. Generate at <https://github.com/settings/tokens> (classic token, `repo` scope).
 2. Use the token as the password when prompted during `git push`.
 3. Optionally cache it: `git config --global credential.helper store`.
 
 **SSH method (more secure, recommended long-term):**
+
 ```bash
 ssh-keygen -t ed25519 -C "your@email.com"
 cat ~/.ssh/id_ed25519.pub   # add this to https://github.com/settings/keys
@@ -1212,6 +1238,7 @@ git remote set-url origin git@github.com:<user>/os-ai-agent.git
 ### 19.3 Commit discipline observed so far
 
 Commits made at each meaningful milestone, e.g.:
+
 - "Initial commit: project structure"
 - "Add ptrace syscall monitor - captures all syscalls from any process"
 - "Ptrace monitor working - successfully traces ls syscalls"
@@ -1222,7 +1249,7 @@ Commits made at each meaningful milestone, e.g.:
 ## 20. Toolchain Reference
 
 | Tool | Purpose | Install command (Alpine) |
-|---|---|---|
+| --- | --- | --- |
 | `build-base` | GCC, make, core build tools | `apk add build-base` |
 | `linux-headers` | Kernel headers for LKM compilation | `apk add linux-headers` |
 | `linux-lts-dev` / `linux-6.6.142.tar.xz` | Full kernel source for Phase 4 custom build | `apk add linux-lts-dev` or manual download |
@@ -1315,7 +1342,7 @@ Kernel: wakes wait_queue, copies response to userspace
 ### 12.3 Key kernel files
 
 | File | Role |
-|------|------|
+| ------ | ------ |
 | `kernel/ai_agent.c` | Syscall impl, Netlink socket, wait queue, fallback |
 | `kernel/include/uapi/linux/ai_agent.h` | Public ABI structs shared with userspace |
 | `arch/x86/entry/syscalls/syscall_64.tbl` | Entry `548 common agent_query sys_agent_query` |
@@ -1361,6 +1388,7 @@ SIMD flags are disabled because QEMU's emulated x86 CPU does not support AVX/AVX
 ### 13.3 Model choice
 
 **SmolLM2-135M-Instruct-Q4_K_M.gguf** (100.6MB)
+
 - Smallest usable instruct model with coherent JSON-style output
 - Q4_K_M: 4-bit quantization, Medium variant — best quality/size tradeoff in the <200MB range
 - Performance on QEMU x86 (no AVX): **1.1–1.7 t/s** (generation), **~647ms/token** (prompt processing)
@@ -1410,12 +1438,14 @@ This dataset accumulates per-process-type examples and will be used for LoRA fin
 ### 13.6 Performance constraints & hardware note
 
 On **QEMU emulated x86 (no AVX/AVX2)**:
+
 - Prompt processing: ~647ms/token → 25-token prompt ≈ 16s
 - Generation: ~907ms/token → 30-token response ≈ 27s
 - **Total per query: ~20–45s** — exceeds the kernel's 15s `wait_event_timeout`
 - Kernel correctly returns `ETIMEDOUT` (errno 110); fallback message delivered; no hang
 
 On **real x86-64 hardware (AVX2)**:
+
 - Projected 10–50 t/s → full query completes in **<2 seconds**
 - Fits comfortably within 15s kernel wait window
 - Phase 5 is architecturally complete; only the emulation environment is slow
@@ -1423,7 +1453,7 @@ On **real x86-64 hardware (AVX2)**:
 ### 13.7 Validation results (`test_phase5.sh`)
 
 | Step | Result |
-|------|--------|
+| ------ | -------- |
 | Kernel `6.6.142-ai-agent` detected | ✅ PASS |
 | `llama-server` binary (musl, 20KB) | ✅ PASS |
 | GGUF model (100.6MB) present | ✅ PASS |
@@ -1449,9 +1479,11 @@ On **real x86-64 hardware (AVX2)**:
 **Status:** ✅ Validated (2026-09-24) — Bootable standalone OS appliance image (`ai-agent-os-v0.1.qcow2`)
 
 ### 14.1 Objective
+
 Transform the fragile, manually-configured QEMU development environment into a standalone, hardened, bootable virtual appliance. A user should be able to download a single file, boot it in QEMU, and instantly have a working Linux kernel with a native AI agent integrated via syscall 548.
 
 ### 14.2 Implementation
+
 - Hardened system paths (`/var/lib/ai-agent/models/`, `/etc/init.d/`)
 - Packaged the custom `6.6.142-ai-agent` kernel and compiled `llama.cpp` + `SmolLM2-135M-Instruct`
 - Configured OpenRC to automatically start the services in the correct sequence.
@@ -1464,15 +1496,16 @@ Transform the fragile, manually-configured QEMU development environment into a s
 **Status:** ✅ Validated (2026-09-26) — Automated host-to-guest fine-tuning and hot-reloading.
 
 ### 15.1 Objective
+
 Enable the operating system to mechanically learn from its own observations and improve its decision-making over time without requiring large parameter models, full retraining, or internet connectivity.
 
 ### 15.2 How exactly is it learning from its own observations?
 
 The learning cycle relies on a continuous feedback loop between the kernel, the agent daemon, and a host-side training pipeline utilizing Low-Rank Adaptation (LoRA):
 
-1. **Continuous Data Collection (The Observation):** 
+1. **Continuous Data Collection (The Observation):**
    Every time a process interacts with the kernel (e.g. making a syscall) and the AI agent daemon intercepts it, the daemon evaluates the process state. It records the exact prompt it was given (the syscall details, PID, etc.) and the outcome/response it generated. This is continuously appended to `/var/ai-agent/training_data/dataset.jsonl`.
-   
+
 2. **LoRA Fine-Tuning (The Learning):**
    Instead of retraining the entire model, we use LoRA to freeze the pre-trained weights of the base model. A tiny set of "adapter" weights (Low-Rank matrices) is injected into the attention layers. During training, the model learns to map the specific structured syscall prompts it sees in `dataset.jsonl` to the correct analytical responses.
    Because the OS generates its own localized JSONL dataset simply by running, the adapter becomes heavily specialized in recognizing the exact process behaviors that occur on *this specific machine*.
@@ -1484,6 +1517,7 @@ The learning cycle relies on a continuous feedback loop between the kernel, the 
    The `.gguf` adapter is pushed back into the VM. The OS's `llama-server` is restarted with the `--lora os_agent_lora.gguf` flag. When the kernel routes the next syscall to the LLM, the model uses its new adapter weights, instantly exhibiting the behavior it just learned from its historical logs.
 
 ### 15.3 Validation Results
+
 - **Training Setup:** `train_lora.py` successfully trained an adapter over 50 steps using the extracted `dataset.jsonl`.
 - **Conversion:** `convert_lora_to_gguf.py` successfully packed the adapter into a 1.8MB file.
 - **In-Guest Testing:** The adapter was loaded into the Alpine VM's `llama-server`. Syscall #548 successfully routed through the kernel, to the daemon, to the adapted LLM, and successfully responded in ~11.8s (under emulation).
@@ -1493,14 +1527,18 @@ The learning cycle relies on a continuous feedback loop between the kernel, the 
 *End of document. This is a living record and should be updated as each phase progresses.*
 
 ## 16. Phase 8: Intent-Driven Execution (The Orchestrator OS)
+
 **Status:** ✅ Validated (2026-09-26) — The OS agent can autonomously orchestrate and execute shell commands to fulfill user intents.
 
 ### 16.1 Objective
+
 Pivot from passive "Observe Mode" (where the agent simply analyzes processes) into "Assist Mode" (autonomous operation). Instead of the LLM trying to micromanage files or execute complex tasks by writing raw bytes itself, the OS acts as an **Orchestrator**. It translates high-level user intents into structured delegation commands, delegating the actual work to existing software (like `sh`, `apk`, `gcc`, etc.).
 
 ### 16.2 Architecture
+
 1. **The Intent Interface (`agent-cli`)**: A lightweight C utility that takes a natural language string and pipes it into the kernel via Syscall #548.
 2. **The Delegation Protocol**: `agent_daemon.py` instructs the LLM to output a JSON payload defining which software to use and what arguments to pass:
+
    ```json
    {
      "target_software": "apk",
@@ -1508,17 +1546,21 @@ Pivot from passive "Observe Mode" (where the agent simply analyzes processes) in
      "args": ["add", "curl"]
    }
    ```
+
 3. **Execution Engine & ReAct Loop**: The daemon parses this JSON and executes it as a background subprocess. If the command fails (`exit code != 0`), the daemon captures `STDERR` and feeds it *back* into the LLM as a new prompt to self-correct. It implements a hybrid safety model:
    - **Dynamic Abort**: The LLM can choose to stop the loop by outputting `{"action": "abort", "reason": "..."}` if the error is unfixable.
    - **Hard Limit**: A strict maximum of 2 retries is enforced to prevent the kernel's `sys_agent_query` 15-second wait queue from timing out.
 
 ### 16.3 Validation Results
+
 - Created `agent-cli.c` and updated `agent_daemon.py` to support subprocess delegation.
 - **End-to-End Test:** Running `agent-cli "install curl"` successfully routed into the kernel, reached the daemon, was converted into the JSON intent, and successfully spawned `apk add curl`. The system returned the `apk` package manager's output directly to the CLI, and `curl --version` confirmed successful installation.
 - *(Note: To bypass QEMU software-emulation delays during testing, the JSON intent was hardcoded for the "install curl" query, but the architectural plumbing is identical.)*
 
 ### 16.4 Edge Case Handling & Hardening
+
 During Phase 8 development, we identified and hardened several critical execution edge cases to ensure the daemon doesn't crash or corrupt the kernel subsystem when delegated tasks fail:
+
 1. **Missing Target Software:** If the LLM delegates to a tool that isn't installed (e.g., `{"target_software": "nonexistent_tool"}`), the `FileNotFoundError` is caught by Python, preventing a daemon crash, and returning the exact error text to the kernel.
 2. **Infinite Loops / Timeout:** If the target software hangs (e.g., `sleep 15`), a strict 10-second subprocess timeout kills the rogue process and returns `[FAILED] Command timed out` to the user, preventing system lockup.
 3. **Non-Zero Exits:** If the command fails (e.g., `ls /nonexistent`), the orchestrator returns the non-zero exit code along with both `STDOUT` and `STDERR` so the user (or LLM) knows exactly why it failed.
