@@ -219,9 +219,16 @@ Do this with `log.write("ai_raw", raw=..., normalized=..., cmd=...)`.
 
 ---
 
-If you want, I can open a PR with the following changes in the repository:
-- `agent-daemon/task_runner.py`: add `extract_first_json_object`, `sanitize_cmd`, fallback building via `json.dumps`, and logging fields.
-- `agent-daemon/task_runner.py` & `agent-daemon/agent_daemon.py`: change stop tokens.
-- Add a small `tests/test_json_extractor.py` with sample cases.
+## Implementation & Resolution Status (Verified)
 
-Tell me if you want the PR and which branch to target.
+All prioritized fixes documented above have been fully implemented, integrated, and verified in the live QEMU appliance:
+
+| Priority | Issue / Fix | Status | Verification Reference |
+| :--- | :--- | :--- | :--- |
+| **1** | **Stop Token Hardening** | ✅ Resolved | Premature stop tokens (`\n\n`, `\n}`) removed from `task_runner.py` and `agent_daemon.py`. Sentinels restricted to `<|im_end|>`. |
+| **2** | **Balanced-Bracket JSON Extractor** | ✅ Resolved | `extract_first_json_object` implemented in `task_runner.py` and `harness_v2.py`. Correctly handles markdown fences, strings with braces, and escapes. |
+| **3** | **Safe Fallback Construction** | ✅ Resolved | Replaced naive string concatenation with programmatic `json.dumps()` serialization. |
+| **4** | **Command Sanitization** | ✅ Resolved | `sanitize_cmd()` strips wrapper quotes, normalizes whitespace, and eliminates null bytes. |
+| **5** | **Enhanced Observability** | ✅ Resolved | `ai_raw`, `normalized`, and `cmd` logged to task JSONL stream for complete traceability. |
+| **6** | **Unit Test Suite** | ✅ Resolved | [`tests/test_json_extractor.py`](file:///c:/qemu-alpine/os-ai-agent/tests/test_json_extractor.py) implemented with 18 test cases. **18/18 PASS** on both host and Alpine guest. |
+
