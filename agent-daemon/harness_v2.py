@@ -471,6 +471,89 @@ def validate_plan(value: Any) -> Plan:
     return Plan(goal=goal.strip(), success_criteria=criteria, steps=steps, assumptions=value.get("assumptions", []))
 
 
+def extract_first_json_object(text: str) -> Any | None:
+    """
+    Extract the first well-formed, balanced JSON object ({...}) or array ([...]) from text.
+    Properly ignores brackets inside string literals and escaped characters.
+    Handles conversational prose, markdown code fences, and minor formatting imperfections.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    # Priority 1: Check for markdown code fences: ```json ... ``` or ``` ... ```
+    fence_pattern = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    for fence_match in fence_pattern.finditer(cleaned):
+        block = fence_match.group(1).strip()
+        try:
+            return json.loads(block)
+        except json.JSONDecodeError:
+            res = _scan_balanced_json(block)
+            if res is not None:
+                return res
+
+    # Priority 2: Direct parse if cleaned text is pure JSON container
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or (cleaned.startswith("[") and cleaned.endswith("]")):
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+    # Priority 3: Scan text for balanced brackets aware of strings & escapes
+    return _scan_balanced_json(cleaned)
+
+
+def _scan_balanced_json(text: str) -> Any | None:
+    """Scan string for the first balanced JSON container ({...} or [...]) respecting string escapes."""
+    n = len(text)
+    for i in range(n):
+        ch = text[i]
+        if ch not in ('{', '['):
+            continue
+
+        opening = ch
+        closing = '}' if opening == '{' else ']'
+        stack_depth = 0
+        in_string = False
+        escape = False
+
+        for j in range(i, n):
+            c = text[j]
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif c == '"':
+                    in_string = False
+                continue
+
+            if c == '"':
+                in_string = True
+                escape = False
+                continue
+
+            if c == opening:
+                stack_depth += 1
+            elif c == closing:
+                stack_depth -= 1
+                if stack_depth == 0:
+                    candidate = text[i:j + 1].strip()
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        fixed = re.sub(r",\s*([\]}])", r"\1", candidate)
+                        try:
+                            return json.loads(fixed)
+                        except json.JSONDecodeError:
+                            break
+    return None
+
+
 def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
     tools = sorted(ALLOWED_TOOLS)
     return (
@@ -482,7 +565,9 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
         "\"steps\":[{\"id\":string,\"purpose\":string,\"tool\":string,\"args\":object,"
         "\"depends_on\":[string],\"verify\":[{\"tool\":string,\"args\":object}]}]}.\n"
         "<|im_end|>\n<|im_start|>user\n"
-        f"Intent: {intent}\nInventory: {json.dumps(inventory, ensure_ascii=False)[:6000]}"
+        "End your JSON response with <|im_end|>.\n"
+        "<|im_end|>\n<|im_start|>user\n"
+        f"Intent: {intent}\nInventory: {json.dumps(inventory, ensure_ascii=False)[:2500]}"
         "\n<|im_end|>\n<|im_start|>assistant\n"
     )
 
@@ -761,17 +846,14 @@ class Harness:
         self.store.event("planner_start", intent=intent)
         inventory = self._inventory()
         raw = self.llm(plan_prompt(intent, inventory))
+        self.store.event("planner_raw", raw=raw[:2000] if isinstance(raw, str) else "")
+        parsed_plan = extract_first_json_object(raw)
         try:
-            cleaned_raw = raw.strip()
-            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned_raw, re.DOTALL)
-            if match:
-                cleaned_raw = match.group(1)
-            else:
-                match = re.search(r"(\{.*\})", cleaned_raw, re.DOTALL)
-                if match:
-                    cleaned_raw = match.group(1)
-            plan = validate_plan(json.loads(cleaned_raw))
+            if not parsed_plan or not isinstance(parsed_plan, dict):
+                raise PlanError(f"Model did not return a structured plan dictionary (raw: {repr(raw[:150]) if isinstance(raw, str) else ''})")
+            plan = validate_plan(parsed_plan)
         except (json.JSONDecodeError, PlanError) as exc:
+            self.store.event("planner_parse_fail", error=str(exc))
             plan = deterministic_plan(intent, caller=self.caller)
             if plan is None:
                 reason = f"Planner returned an invalid structured plan: {exc}"

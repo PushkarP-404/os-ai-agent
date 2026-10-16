@@ -169,7 +169,7 @@ def query_ollama(prompt, min_tokens=8, n_predict=200):
         "prompt": prompt,
         "n_predict": n_predict,
         "temperature": 0.1,
-        "stop": ["\n\n", "<|im_end|>", "<|im_start|>"],
+        "stop": ["<|im_end|>", "<|im_start|>"],
     }
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(

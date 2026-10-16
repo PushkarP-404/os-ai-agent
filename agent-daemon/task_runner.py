@@ -10,10 +10,16 @@ environment) from /proc/<caller_pid> so that actions are executed with the
 actual caller's context rather than assuming hardcoded accounts or paths.
 """
 
+from __future__ import annotations
+
 import json
 import os
-import pwd
 import re
+from typing import Any
+try:
+    import pwd
+except ImportError:
+    pwd = None
 import shutil
 import signal
 import socket
@@ -118,12 +124,116 @@ def get_caller_context(caller_pid: int | None = None) -> dict:
 
 
 # ── LLM helpers ──────────────────────────────────────────────────────────────
-def _llm_post(prompt: str, n_predict: int = 60) -> str:
+def extract_first_json_object(text: str) -> Any | None:
+    """
+    Extract the first well-formed, balanced JSON object ({...}) or array ([...]) from text.
+    Properly ignores brackets inside string literals and escaped characters.
+    Handles conversational prose, markdown code fences, and minor formatting imperfections.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+
+    # Priority 1: Check for markdown code fences: ```json ... ``` or ``` ... ```
+    fence_pattern = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    for fence_match in fence_pattern.finditer(cleaned):
+        block = fence_match.group(1).strip()
+        try:
+            return json.loads(block)
+        except json.JSONDecodeError:
+            res = _scan_balanced_json(block)
+            if res is not None:
+                return res
+
+    # Priority 2: Direct parse if cleaned text is pure JSON container
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or (cleaned.startswith("[") and cleaned.endswith("]")):
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+    # Priority 3: Scan text for balanced brackets aware of strings & escapes
+    return _scan_balanced_json(cleaned)
+
+
+def _scan_balanced_json(text: str) -> Any | None:
+    """Scan string for the first balanced JSON container ({...} or [...]) respecting string escapes."""
+    n = len(text)
+    for i in range(n):
+        ch = text[i]
+        if ch not in ('{', '['):
+            continue
+
+        opening = ch
+        closing = '}' if opening == '{' else ']'
+        stack_depth = 0
+        in_string = False
+        escape = False
+
+        for j in range(i, n):
+            c = text[j]
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif c == '"':
+                    in_string = False
+                continue
+
+            if c == '"':
+                in_string = True
+                escape = False
+                continue
+
+            if c == opening:
+                stack_depth += 1
+            elif c == closing:
+                stack_depth -= 1
+                if stack_depth == 0:
+                    candidate = text[i:j + 1].strip()
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        # Try removing trailing commas: , \s* [}\]]
+                        fixed = re.sub(r",\s*([\]}])", r"\1", candidate)
+                        try:
+                            return json.loads(fixed)
+                        except json.JSONDecodeError:
+                            break
+    return None
+
+
+def sanitize_cmd(cmd: str) -> str:
+    """Sanitize and normalize command string for safe execution."""
+    if not cmd or not isinstance(cmd, str):
+        return ""
+    cmd = cmd.strip()
+    # Strip surrounding quotes if whole command was wrapped in quotes
+    if (cmd.startswith('"') and cmd.endswith('"')) or (cmd.startswith("'") and cmd.endswith("'")):
+        cmd = cmd[1:-1].strip()
+    # Remove dangerous unescaped control chars (e.g. null bytes)
+    cmd = cmd.replace("\x00", "")
+    # Normalize multiple whitespace characters
+    cmd = " ".join(cmd.split())
+    return cmd
+
+
+def _llm_post(prompt: str, n_predict: int = 512) -> str:
+    """
+    Query local llama-server via HTTP POST.
+    Hardened stop tokens: Removed \n\n and \n} which prematurely truncated JSON generation
+    for small SLMs. Only explicit sentinel tokens are used.
+    """
     payload = {
         "prompt": prompt,
         "n_predict": n_predict,
         "temperature": 0.1,
-        "stop": ["\n\n", "```", "<|im_end|>", "<|im_start|>", "\n}"],
+        "stop": ["<|im_end|>", "<|im_start|>"],
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -145,31 +255,13 @@ def _llm_post(prompt: str, n_predict: int = 60) -> str:
 
 
 def _extract_json_obj(text: str) -> dict | None:
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start == -1 or end == -1:
-        return None
-    try:
-        return json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return None
+    res = extract_first_json_object(text)
+    return res if isinstance(res, dict) else None
 
 
 def _extract_json_list(text: str) -> list | None:
-    start = text.find("[")
-    end   = text.rfind("]")
-    if start == -1 or end == -1:
-        return None
-    try:
-        result = json.loads(text[start:end + 1])
-        return result if isinstance(result, list) else None
-    except json.JSONDecodeError:
-        return None
+    res = extract_first_json_object(text)
+    return res if isinstance(res, list) else None
 
 
 # ── Task log helpers ──────────────────────────────────────────────────────────
@@ -213,13 +305,12 @@ def extract_action(raw: str) -> tuple[str, str]:
     if "[LLM ERROR]" in raw or not raw.strip():
         return "unknown", raw
 
-    # 1. Structured JSON
+    # 1. Structured JSON using balanced extractor
     data = _extract_json_obj(raw)
     if data:
         if "cmd" in data:
-            val = str(data["cmd"]).strip()
-            val = re.sub(r'[\'"]\s*,?\s*$', '', val).strip()
-            if not val.startswith("[LLM"):
+            val = sanitize_cmd(str(data["cmd"]))
+            if val and not val.startswith("[LLM"):
                 return "execute", val
         action = data.get("action", "")
         if action in ("finish", "abort"):
@@ -227,27 +318,27 @@ def extract_action(raw: str) -> tuple[str, str]:
         if action == "execute":
             args = data.get("args", [])
             if isinstance(args, list) and len(args) >= 2 and args[0] == "-c":
-                return "execute", args[1]
-            return "execute", " ".join(str(a) for a in args) if isinstance(args, list) else str(args)
+                return "execute", sanitize_cmd(args[1])
+            raw_cmd = " ".join(str(a) for a in args) if isinstance(args, list) else str(args)
+            return "execute", sanitize_cmd(raw_cmd)
 
     # 2. Regex for "cmd": "..."
     m = re.search(r'"cmd"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"?', raw)
     if m:
-        candidate = m.group(1).strip()
-        candidate = re.sub(r'[\'"]\s*,?\s*$', '', candidate).strip()
-        if not candidate.startswith("[LLM"):
+        candidate = sanitize_cmd(m.group(1))
+        if candidate and not candidate.startswith("[LLM"):
             return "execute", candidate
 
     # 3. Markdown code block ```bash\n<cmd>\n```
     if "```" in raw:
         lines = [l.strip() for l in raw.split("```")[1].splitlines() if l.strip() and not l.strip().startswith("#")]
         if lines:
-            return "execute", lines[0]
+            return "execute", sanitize_cmd(lines[0])
 
     # 4. Command quoted in conversational text: `mkdir -p ...` or 'df -h'
     m = re.search(r'[`\'"]((?:mkdir|df|free|ps|ls|cat|rm|touch|apk|uptime|uname|whoami|hostname|ip|echo|cd)\s+[^`\'"]+)[`\'"]', raw)
     if m:
-        return "execute", m.group(1).strip()
+        return "execute", sanitize_cmd(m.group(1))
 
     # 5. Raw line starting with common shell command
     for line in raw.splitlines():
@@ -310,12 +401,21 @@ def run_worker_task(
         )
 
         log.write("step", task_idx=task_idx, step=step, cwd=cwd)
-        raw_output = _llm_post(prompt, n_predict=40)
-        if not raw_output.startswith("{\"cmd\": \""):
-            raw_output = "{\"cmd\": \"" + raw_output
-        log.write("ai_raw", task_idx=task_idx, step=step, raw=raw_output)
-
+        raw_output = _llm_post(prompt, n_predict=128)
         action, cmd_candidate = extract_action(raw_output)
+        normalized_json = ""
+
+        # If extraction failed, construct safe well-formed JSON object using json.dumps
+        if action != "execute" or not cmd_candidate:
+            cleaned_cmd = sanitize_cmd(raw_output)
+            cleaned_cmd = re.sub(r'^(?:\{"cmd":\s*")|(?:^"cmd":\s*")', '', cleaned_cmd).strip()
+            if cleaned_cmd and not cleaned_cmd.startswith("[LLM"):
+                fallback_obj = {"cmd": cleaned_cmd}
+                normalized_json = json.dumps(fallback_obj, ensure_ascii=False)
+                action, cmd_candidate = extract_action(normalized_json)
+
+        log.write("ai_raw", task_idx=task_idx, step=step, raw=raw_output,
+                  normalized=normalized_json, cmd=cmd_candidate)
 
         if action == "finish":
             summary = cmd_candidate or "Task finished."
