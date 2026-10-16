@@ -73,100 +73,175 @@ EOF
         if [ -f "$_dashboard_src/agent-os-wallpaper.jpg" ]; then
             install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
                 "$pkgdir/usr/share/backgrounds/agent-os-wallpaper.jpg"
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/usr/share/backgrounds/xfce/agent-os-wallpaper.jpg"
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/usr/share/backgrounds/xfce/xfce-blue.jpg"
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/usr/share/backgrounds/xfce/xfce-stripes.png"
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/usr/share/backgrounds/xfce/xfce-teal.jpg"
+            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
+                "$pkgdir/etc/skel/Pictures/Wallpapers/agent-os-wallpaper.jpg"
         fi
     fi
 
-    # ── Global Dark Rounded GTK 3 Stylesheet ────────────────────────────
+    # ── Global High-Contrast Dark GTK 3 Stylesheet ─────────────────────
     install -d "$pkgdir/etc/xdg/gtk-3.0"
     install -d "$pkgdir/etc/skel/.config/gtk-3.0"
     cat << 'EOF' > "$pkgdir/etc/xdg/gtk-3.0/gtk.css"
-/* AgentOS Global Dark Rounded GTK 3 Stylesheet */
-window, .background {
+/* AgentOS High-Contrast Dark GTK3 Stylesheet */
+
+/* Window & Dialog Backgrounds */
+window,
+dialog,
+.dialog,
+messagedialog {
     background-color: #0c0e17;
     color: #f8fafc;
-    font-family: 'Noto Sans', 'Inter', sans-serif;
 }
 
-.xfce4-panel {
-    background-color: rgba(18, 22, 34, 0.90);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
-    padding: 3px 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-.xfce4-panel button {
-    background: transparent;
-    border: none;
-    border-radius: 10px;
-    color: #f8fafc;
-    padding: 3px;
-    margin: 2px;
-    transition: all 150ms ease;
-}
-
-.xfce4-panel button:hover {
-    background-color: rgba(255, 255, 255, 0.12);
-    box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
-}
-
-dialog, .dialog, frame, .frame {
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+/* Headerbars & Titlebars */
+headerbar,
+.titlebar {
     background-color: #131622;
-}
-
-button {
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background-color: #1a1e2d;
     color: #f8fafc;
-    padding: 6px 14px;
-    transition: all 150ms ease;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-button:hover {
-    background-color: #23283c;
-    border-color: rgba(99, 102, 241, 0.4);
-}
-
-button.suggested-action {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
-    border: none;
-    color: #ffffff;
+headerbar label.title {
     font-weight: bold;
+    color: #f8fafc;
 }
 
-button.destructive-action {
-    background: linear-gradient(135deg, #ef4444, #dc2626);
-    border: none;
-    color: #ffffff;
-}
-
-scrollbar slider {
-    min-width: 6px;
-    min-height: 6px;
-    border-radius: 9999px;
-    background-color: rgba(255, 255, 255, 0.15);
-}
-
-scrollbar slider:hover {
-    background-color: rgba(99, 102, 241, 0.6);
-}
-
-entry {
+/* Menus, Popovers, & Dropdowns */
+menu,
+.menu,
+popover,
+.popover {
     background-color: #131622;
     color: #f8fafc;
     border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 4px;
+}
+
+menuitem {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #f8fafc;
+}
+
+menuitem:hover {
+    background-color: #23283c;
+    color: #ffffff;
+}
+
+/* Buttons */
+button {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: #1a1e2d;
+    color: #f8fafc;
+    padding: 6px 14px;
+}
+
+button:hover {
+    background-color: #262c42;
+    border-color: rgba(99, 102, 241, 0.5);
+    color: #ffffff;
+}
+
+button.suggested-action {
+    background-color: #6366f1;
+    border: none;
+    color: #ffffff;
+}
+
+button.destructive-action {
+    background-color: #ef4444;
+    border: none;
+    color: #ffffff;
+}
+
+/* Inputs & Entries */
+entry {
+    background-color: #131622;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 8px;
     padding: 6px 10px;
 }
 
 entry:focus {
     border-color: #6366f1;
+    background-color: #161a29;
+}
+
+/* Dark views */
+textview text {
+    background-color: #0f121d;
+    color: #e2e8f0;
+}
+
+/* High contrast readability on light views */
+.view {
+    background-color: #0c0e17;
+    color: #f8fafc;
+}
+
+/* Scrollbars */
+scrollbar slider {
+    min-width: 6px;
+    min-height: 6px;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+scrollbar slider:hover {
+    background-color: rgba(99, 102, 241, 0.7);
+}
+
+/* Tooltips */
+tooltip {
+    background-color: #1a1e2d;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+
+/* Desktop Icon Labels */
+XfceDesktop .label {
+    color: #ffffff;
+    text-shadow: 1px 1px 2px #000000;
 }
 EOF
     cp "$pkgdir/etc/xdg/gtk-3.0/gtk.css" "$pkgdir/etc/skel/.config/gtk-3.0/gtk.css"
+
+    # ── GTK3 settings.ini (Force dark theme preference) ─────────────────
+    install -d "$pkgdir/etc/gtk-3.0"
+    cat << 'EOF' > "$pkgdir/etc/xdg/gtk-3.0/settings.ini"
+[Settings]
+gtk-theme-name=Adwaita
+gtk-application-prefer-dark-theme=1
+gtk-icon-theme-name=Papirus-Dark
+gtk-font-name=Noto Sans 10
+gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-size=24
+gtk-toolbar-style=GTK_TOOLBAR_BOTH_HORIZ
+gtk-toolbar-icon-size=GTK_ICON_SIZE_LARGE_TOOLBAR
+gtk-button-images=1
+gtk-menu-images=1
+gtk-enable-event-sounds=0
+gtk-enable-input-feedback-sounds=0
+gtk-xft-antialias=1
+gtk-xft-hinting=1
+gtk-xft-hintstyle=hintslight
+gtk-xft-rgba=rgb
+EOF
+    cp "$pkgdir/etc/xdg/gtk-3.0/settings.ini" "$pkgdir/etc/gtk-3.0/settings.ini"
+    cp "$pkgdir/etc/xdg/gtk-3.0/settings.ini" "$pkgdir/etc/skel/.config/gtk-3.0/settings.ini"
 
     # ── Modern Monospace Dark Terminal Configuration ───────────────────
     install -d "$pkgdir/etc/skel/.config/xfce4/terminal"
@@ -188,7 +263,7 @@ EOF
     cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/lightdm-gtk-greeter.conf"
 [greeter]
 background=/usr/share/backgrounds/agent-os-wallpaper.jpg
-theme-name=Adwaita-dark
+theme-name=Adwaita
 icon-theme-name=Papirus-Dark
 font-name=Noto Sans 10
 xft-antialias=true
@@ -216,12 +291,11 @@ chvt 7 2>/dev/null || true
 EOF
     chmod +x "$pkgdir/usr/local/bin/agent-display-setup.sh"
 
-
     cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xsettings.xml"
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
-    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="ThemeName" type="string" value="Adwaita"/>
     <property name="IconThemeName" type="string" value="Papirus-Dark"/>
     <property name="DoubleClickTime" type="int" value="400"/>
     <property name="DoubleClickDistance" type="int" value="5"/>
@@ -232,26 +306,86 @@ EOF
     <property name="EnableEventSounds" type="bool" value="false"/>
     <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
   </property>
+  <property name="Gtk" type="empty">
+    <property name="FontName" type="string" value="Noto Sans 10"/>
+    <property name="MonospaceFontName" type="string" value="JetBrains Mono 10"/>
+    <property name="ApplicationPreferDarkTheme" type="bool" value="true"/>
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  </property>
   <property name="Xft" type="empty">
     <property name="DPI" type="empty"/>
     <property name="Antialias" type="int" value="1"/>
-    <property name="Hinting" type="int" value="-1"/>
+    <property name="Hinting" type="int" value="1"/>
     <property name="HintStyle" type="string" value="hintslight"/>
     <property name="RGBA" type="string" value="rgb"/>
   </property>
-  <property name="Gtk" type="empty">
-    <property name="CanChangeAccels" type="bool" value="false"/>
-    <property name="FontName" type="string" value="Noto Sans 10"/>
-    <property name="MonospaceFontName" type="string" value="JetBrains Mono 10"/>
-    <property name="ToolbarStyle" type="string" value="icons"/>
-    <property name="ToolbarIconSize" type="int" value="3"/>
-    <property name="MenuImages" type="bool" value="true"/>
-    <property name="ButtonImages" type="bool" value="true"/>
-    <property name="MenuBarAccel" type="string" value="F10"/>
-    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+</channel>
+EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xfwm4.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Albatross"/>
+    <property name="title_font" type="string" value="Noto Sans Bold 9"/>
+    <property name="title_alignment" type="string" value="center"/>
+    <property name="button_layout" type="string" value="O|HMC"/>
+    <property name="use_compositing" type="bool" value="false"/>
   </property>
 </channel>
 EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xfce4-desktop.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
+        </property>
+      </property>
+      <property name="monitorVirtual-1" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
+        </property>
+      </property>
+      <property name="monitorVirtual1" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
+        </property>
+      </property>
+    </property>
+  </property>
+  <property name="desktop-icons" type="empty">
+    <property name="file-icons" type="empty">
+      <property name="show-home" type="bool" value="true"/>
+      <property name="show-filesystem" type="bool" value="true"/>
+      <property name="show-trash" type="bool" value="false"/>
+      <property name="show-removable" type="bool" value="false"/>
+    </property>
+    <property name="icon-size" type="uint" value="48"/>
+  </property>
+</channel>
+EOF
+
+    # Install xfconf channels into skeleton and xdg templates
+    install -d "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
+    install -d "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xsettings.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xfwm4.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xfce4-desktop.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xsettings.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xfwm4.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
+    cp "$pkgdir/usr/share/ai-agent/themes/xfce4-desktop.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 
     # ── agent-cli binary ─────────────────────────────────────────────────
     install -Dm755 "$_cli_src/agent-cli" \
@@ -307,6 +441,9 @@ post_install() {
     apk del xf86-input-vmmouse 2>/dev/null || true
     rm -f /usr/lib/xorg/modules/input/vmmouse_drv.so /usr/share/X11/xorg.conf.d/*vmmouse* /etc/X11/xorg.conf.d/*vmmouse* 2>/dev/null || true
 
+    # Clean up empty or broken uca.xml in Thunar
+    rm -f /home/aiuser/.config/Thunar/uca.xml /etc/skel/.config/Thunar/uca.xml 2>/dev/null || true
+
     # Apply LightDM autologin & greeter theme if lightdm is installed
     if [ -d "/etc/lightdm" ]; then
         mkdir -p /etc/lightdm/lightdm.conf.d
@@ -317,15 +454,23 @@ post_install() {
     # Apply XFCE4 default settings if xfconf is present
     if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
         cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
     fi
 
     # Sync desktop shortcuts and configs to active user if present
     if [ -d "/home/aiuser" ]; then
-        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal
+        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml /home/aiuser/Pictures/Wallpapers
         cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
         chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
         cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
+        cp -f /etc/xdg/gtk-3.0/settings.ini /home/aiuser/.config/gtk-3.0/settings.ini 2>/dev/null || true
         cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xsettings.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfwm4.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/Wallpapers/agent-os-wallpaper.jpg 2>/dev/null || true
+        cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/agent-os-wallpaper.jpg 2>/dev/null || true
         chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
     fi
 
@@ -343,6 +488,9 @@ post_upgrade() {
     apk del xf86-input-vmmouse 2>/dev/null || true
     rm -f /usr/lib/xorg/modules/input/vmmouse_drv.so /usr/share/X11/xorg.conf.d/*vmmouse* /etc/X11/xorg.conf.d/*vmmouse* 2>/dev/null || true
 
+    # Clean up empty or broken uca.xml in Thunar
+    rm -f /home/aiuser/.config/Thunar/uca.xml /etc/skel/.config/Thunar/uca.xml 2>/dev/null || true
+
     # Apply LightDM autologin & greeter theme if lightdm is installed
     if [ -d "/etc/lightdm" ]; then
         mkdir -p /etc/lightdm/lightdm.conf.d
@@ -353,13 +501,23 @@ post_upgrade() {
     # Apply XFCE4 default settings if xfconf is present
     if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
         cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
     fi
 
     # Update active user files on upgrade
     if [ -d "/home/aiuser" ]; then
-        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal
+        mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml /home/aiuser/Pictures/Wallpapers
         cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
         chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
+        cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
+        cp -f /etc/xdg/gtk-3.0/settings.ini /home/aiuser/.config/gtk-3.0/settings.ini 2>/dev/null || true
+        cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xsettings.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfwm4.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
+        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/Wallpapers/agent-os-wallpaper.jpg 2>/dev/null || true
+        cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/agent-os-wallpaper.jpg 2>/dev/null || true
         chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
     fi
 }
