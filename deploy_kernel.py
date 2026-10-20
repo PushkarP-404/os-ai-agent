@@ -30,7 +30,7 @@ logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
 HOST      = "127.0.0.1"
 PORT      = 2222
 USER      = "root"
-PASSWORD  = os.environ.get("VM_PASSWORD", "password")
+PASSWORD  = os.environ.get("VM_PASSWORD", "password_123")
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 
