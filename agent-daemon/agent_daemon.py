@@ -28,6 +28,9 @@ import urllib.error
 import signal
 import subprocess
 import concurrent.futures
+import importlib.util
+import pathlib
+import threading
 
 # ── Conditionally import Phase 5 logger (graceful fallback if not present) ──
 try:
@@ -80,16 +83,38 @@ CAPABILITIES_FILE = "/var/ai-agent/capabilities.json"
 SYSTEM_CAPABILITIES = {}
 EBPF_EVENTS = []
 
-# ── Phase 11: task runner path ───────────────────────────────────────────────
+# ── Task runner + Harness V2 paths ──────────────────────────────────────────
 TASK_RUNNER_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "task_runner.py",
 )
-# Fall back to system install path
 if not os.path.exists(TASK_RUNNER_PATH):
     TASK_RUNNER_PATH = "/usr/local/lib/ai-agent/task_runner.py"
 
-TASKS_DIR = os.path.join(os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent"), "tasks")
+TASKS_DIR    = os.path.join(os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent"), "tasks")
+HARNESS_V2   = os.environ.get("HARNESS_V2", "1") == "1"
+
+# ── Load harness_v2 in-process (avoids subprocess startup cost) ───────────────
+_harness_mod = None
+if HARNESS_V2:
+    _hv2_path = pathlib.Path(__file__).parent / "harness_v2.py"
+    if not _hv2_path.exists():
+        _hv2_path = pathlib.Path("/usr/local/lib/ai-agent/harness_v2.py")
+    if _hv2_path.exists():
+        try:
+            _spec = importlib.util.spec_from_file_location("harness_v2", str(_hv2_path))
+            _harness_mod = importlib.util.module_from_spec(_spec)
+            sys.modules["harness_v2"] = _harness_mod
+            _spec.loader.exec_module(_harness_mod)
+            print(f"[DAEMON] harness_v2 loaded from {_hv2_path}")
+        except Exception as _hv2_err:
+            print(f"[WARN] harness_v2 load failed ({_hv2_err}); falling back to task_runner subprocess")
+            _harness_mod = None
+
+# Per-job cancellation tokens keyed by task_id
+_cancel_tokens: dict[str, threading.Event] = {}
+_cancel_lock   = threading.Lock()
+_worker_pool   = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def load_capabilities():
     global SYSTEM_CAPABILITIES
@@ -203,112 +228,190 @@ def query_ollama(prompt, min_tokens=8, n_predict=200):
 
 def handle_syscall_query(sock, query_payload):
     """Process a Phase 4 AI_MSG_SYSCALL_QUERY message and reply to kernel."""
-    query_id, caller_pid, target_pid, comm_raw, query_raw = struct.unpack(
-        QUERY_FORMAT, query_payload
-    )
-    comm  = comm_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
-    query = query_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
-    
-    # Bug fix: Prevent prompt injection by removing special tokens from query
-    query = query.replace("<|im_start|>", "").replace("<|im_end|>", "")
+    query_id = 0
+    try:
+        query_id, caller_pid, target_pid, comm_raw, query_raw = struct.unpack(
+            QUERY_FORMAT, query_payload
+        )
+        comm  = comm_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
+        query = query_raw.split(b"\x00")[0].decode("utf-8", errors="replace")
+        
+        # Bug fix: Prevent prompt injection by removing special tokens from query
+        query = query.replace("<|im_start|>", "").replace("<|im_end|>", "")
 
-    print(f"\n[QUERY #{query_id}] PID {caller_pid} ({comm}) -> target {target_pid}")
-    print(f"  Query: \"{query}\"")
-    sys.stdout.flush()
+        print(f"\n[QUERY #{query_id}] PID {caller_pid} ({comm}) -> target {target_pid}")
+        print(f"  Query: \"{query}\"")
+        sys.stdout.flush()
 
-    if comm == "agent-cli":
-        mode = AGENT_MODE
-        if query.startswith("/suggest "):
-            mode = "SUGGEST"
-            query = query[9:]
-        elif query.startswith("/assist "):
-            mode = "ASSIST"
-            query = query[8:]
-        elif query.startswith("/apply "):
-            mode = "APPLY"
-            query = query[7:]
+        if comm == "agent-cli":
+            mode = AGENT_MODE
+            if query.startswith("/suggest "):
+                mode = "SUGGEST"
+                query = query[9:]
+            elif query.startswith("/assist "):
+                mode = "ASSIST"
+                query = query[8:]
+            elif query.startswith("/apply "):
+                mode = "APPLY"
+                query = query[7:]
 
-        # ── Phase 11: dispatch to task_runner.py subprocess ──────────────────
-        # The kernel buffer (2048 bytes) is only used to return the task ID and
-        # task log path. The actual results are written to the JSONL task file
-        # and streamed by the updated agent-cli polling loop.
-        task_id = str(uuid.uuid4())[:8]
-        task_file = os.path.join(TASKS_DIR, f"{task_id}.jsonl")
-        os.makedirs(TASKS_DIR, exist_ok=True)
+            # ── Dispatch to harness_v2 (in-process) or task_runner subprocess ───────
+            task_id   = str(uuid.uuid4())[:8]
+            task_file = os.path.join(TASKS_DIR, f"{task_id}.jsonl")
+            os.makedirs(TASKS_DIR, exist_ok=True)
 
-        latency_ms = 0.0
-        t_start = time.monotonic()
+            latency_ms = 0.0
+            t_start    = time.monotonic()
 
-        if not os.path.exists(TASK_RUNNER_PATH):
-            final_response = (
-                f"[ERROR] task_runner.py not found at {TASK_RUNNER_PATH}. "
-                f"Deploy Phase 11 files and retry."
-            )
-        else:
-            try:
-                env = os.environ.copy()
-                env["LLAMA_URL"]        = LLAMA_URL
-                env["AI_AGENT_LOG_DIR"] = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
-                env["CALLER_PID"]       = str(caller_pid)
+            if HARNESS_V2 and _harness_mod is not None:
+                # ── In-process V2 harness (preferred) ────────────────────────────
+                try:
+                    from task_runner import TaskLog, get_caller_context
+                    _log = TaskLog(task_id)
+                    _caller = get_caller_context(caller_pid)
+                except Exception:
+                    _log    = type('_NullLog', (), {'write': lambda *a, **k: None, 'close': lambda s: None})()
+                    _caller = {"uid": os.getuid(), "gid": os.getgid(),
+                               "user": os.environ.get("USER", "root"),
+                               "home": os.environ.get("HOME", "/root"),
+                               "cwd":  "/"}
 
-                subprocess.Popen(
-                    [sys.executable, TASK_RUNNER_PATH, task_id, query, mode, str(caller_pid)],
-                    stdout=open("/var/log/task_runner.log", "a"),
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    close_fds=True,
-                )
-                latency_ms = (time.monotonic() - t_start) * 1000.0
+                cancel_event = threading.Event()
+                with _cancel_lock:
+                    _cancel_tokens[task_id] = cancel_event
+
+                base_dir = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
+                store    = _harness_mod.JobStore(base_dir, task_id, _log.write)
+                try:
+                    store.create(query, mode, _caller)
+                    _log.write("start", task_id=task_id, query=query, mode=mode)
+                except Exception as _ce:
+                    print(f"  [WARN] Failed to write initial job start: {_ce}")
+
+                def _run_v2_job():
+                    """Run the verified harness in a thread-pool worker."""
+                    harness = _harness_mod.Harness(
+                        store, _caller, mode,
+                        lambda prompt: query_ollama(prompt, n_predict=700),
+                        cancelled=cancel_event.is_set,
+                    )
+                    try:
+                        status = harness.run(query)
+                        print(f"  [V2] Job {task_id} finished: {status}")
+                        sys.stdout.flush()
+                    except Exception as exc:
+                        import traceback
+                        store.event("task_fail", task_idx=0, reason="harness_exception",
+                                    msg=str(exc))
+                        store.event("done", status="FAILED", task_count=0,
+                                    elapsed_s=0, summaries=[str(exc)])
+                        _log.write("done", status="FAILED", reason=str(exc))
+                        print(f"  [V2] Job {task_id} EXCEPTION: {exc}")
+                        traceback.print_exc()
+                        sys.stdout.flush()
+                    finally:
+                        _log.close()
+                        with _cancel_lock:
+                            _cancel_tokens.pop(task_id, None)
+
+                _worker_pool.submit(_run_v2_job)
+                latency_ms    = (time.monotonic() - t_start) * 1000.0
                 final_response = (
-                    f"[TASK:{task_id}] Running in background.\n"
+                    f"[TASK:{task_id}] Running in background (harness_v2).\n"
                     f"Log: {task_file}\n"
                     f"Mode: {mode}"
                 )
-                print(f"  [DISPATCH] Spawned task_runner for task {task_id}, mode={mode}")
+                print(f"  [DISPATCH-V2] Submitted job {task_id}, mode={mode}")
                 sys.stdout.flush()
-            except Exception as exc:
-                final_response = f"[ERROR] Failed to spawn task_runner: {exc}"
+
+            elif os.path.exists(TASK_RUNNER_PATH):
+                # ── Subprocess fallback (HARNESS_V2=0 or harness_v2 failed to load) ─
+                try:
+                    env = os.environ.copy()
+                    env["LLAMA_URL"]        = LLAMA_URL
+                    env["AI_AGENT_LOG_DIR"] = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
+                    env["CALLER_PID"]       = str(caller_pid)
+                    env["HARNESS_V2"]       = "0"   # legacy path in task_runner
+
+                    subprocess.Popen(
+                        [sys.executable, TASK_RUNNER_PATH, task_id, query, mode, str(caller_pid)],
+                        stdout=open("/var/log/task_runner.log", "a"),
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        close_fds=True,
+                    )
+                    latency_ms    = (time.monotonic() - t_start) * 1000.0
+                    final_response = (
+                        f"[TASK:{task_id}] Running in background (legacy).\n"
+                        f"Log: {task_file}\n"
+                        f"Mode: {mode}"
+                    )
+                    print(f"  [DISPATCH-LEGACY] Spawned task_runner for task {task_id}")
+                    sys.stdout.flush()
+                except Exception as exc:
+                    final_response = f"[ERROR] Failed to spawn task_runner: {exc}"
+                    latency_ms     = (time.monotonic() - t_start) * 1000.0
+            else:
+                final_response = (
+                    f"[ERROR] Neither harness_v2 nor task_runner.py is available. "
+                    f"Deploy the agent files and retry."
+                )
                 latency_ms = (time.monotonic() - t_start) * 1000.0
-                
-    else:
-        prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
-        t_start = time.monotonic()
-        ai_verdict = query_ollama(prompt)
-        latency_ms = (time.monotonic() - t_start) * 1000.0
-        final_response = ai_verdict
-        print(f"  [AI] ({latency_ms:.0f}ms): {ai_verdict}")
-        sys.stdout.flush()
+                    
+        else:
+            prompt = f"Security check for {comm}: '{query[:50]}'. Verdict (ALLOW/DENY):"
+            t_start = time.monotonic()
+            ai_verdict = query_ollama(prompt)
+            latency_ms = (time.monotonic() - t_start) * 1000.0
+            final_response = ai_verdict
+            print(f"  [AI] ({latency_ms:.0f}ms): {ai_verdict}")
+            sys.stdout.flush()
 
-    # ── Log to /var/ai-agent/ (Phase 5) ─────────────────────────────────────
-    if LOGGING_ENABLED:
+        # ── Log to /var/ai-agent/ (Phase 5) ─────────────────────────────────────
+        if LOGGING_ENABLED:
+            try:
+                agent_logger.log_interaction(
+                    query_id=query_id,
+                    caller_pid=caller_pid,
+                    comm=comm,
+                    target_pid=target_pid,
+                    query=query,
+                    response=final_response,
+                    response_latency_ms=latency_ms,
+                    model=OLLAMA_MODEL,
+                )
+            except Exception as log_err:
+                print(f"  [WARN] Logger error (non-fatal): {log_err}")
+
+        # ── Send response back to kernel via Netlink ─────────────────────────────
+        # Safely truncate string first to avoid cutting multi-byte UTF-8 chars in half
+        truncated_resp = final_response[:2000]
+        resp_bytes = truncated_resp.encode("utf-8", errors="replace")[:2047]
+        payload    = struct.pack(RESP_FORMAT, query_id, 0, resp_bytes)
+        total_len  = NLMSG_HDR_SIZE + len(payload)
+        hdr        = struct.pack(NLMSG_HDR_FORMAT, total_len, AI_MSG_SYSCALL_RESP,
+                                 0, 0, os.getpid())
         try:
-            agent_logger.log_interaction(
-                query_id=query_id,
-                caller_pid=caller_pid,
-                comm=comm,
-                target_pid=target_pid,
-                query=query,
-                response=final_response,
-                response_latency_ms=latency_ms,
-                model=OLLAMA_MODEL,
-            )
-        except Exception as log_err:
-            print(f"  [WARN] Logger error (non-fatal): {log_err}")
+            sock.sendto(hdr + payload, (0, 0))
+            print(f"  [REPLY] Sent response for query #{query_id}")
+            sys.stdout.flush()
+        except OSError as e:
+            print(f"  [ERROR] Netlink send failed: {e}")
 
-    # ── Send response back to kernel via Netlink ─────────────────────────────
-    # Safely truncate string first to avoid cutting multi-byte UTF-8 chars in half
-    truncated_resp = final_response[:2000]
-    resp_bytes = truncated_resp.encode("utf-8", errors="replace")[:2047]
-    payload    = struct.pack(RESP_FORMAT, query_id, 0, resp_bytes)
-    total_len  = NLMSG_HDR_SIZE + len(payload)
-    hdr        = struct.pack(NLMSG_HDR_FORMAT, total_len, AI_MSG_SYSCALL_RESP,
-                             0, 0, os.getpid())
-    try:
-        sock.sendto(hdr + payload, (0, 0))
-        print(f"  [REPLY] Sent response for query #{query_id}")
+    except Exception as e:
+        import traceback
+        print(f"  [ERROR] handle_syscall_query unhandled exception: {e}")
+        traceback.print_exc()
         sys.stdout.flush()
-    except OSError as e:
-        print(f"  [ERROR] Netlink send failed: {e}")
+        if query_id:
+            try:
+                err_resp = f"[ERROR] Daemon internal error: {e}".encode("utf-8")[:2047]
+                payload  = struct.pack(RESP_FORMAT, query_id, 0, err_resp)
+                hdr      = struct.pack(NLMSG_HDR_FORMAT, NLMSG_HDR_SIZE + len(payload),
+                                       AI_MSG_SYSCALL_RESP, 0, 0, os.getpid())
+                sock.sendto(hdr + payload, (0, 0))
+            except Exception:
+                pass
 
 
 def main():
@@ -384,8 +487,6 @@ def main():
 
     signal.signal(signal.SIGTERM, sig_handler)
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-
     try:
         while True:
             data, _ = sock.recvfrom(4096)
@@ -398,7 +499,7 @@ def main():
             payload = data[NLMSG_HDR_SIZE:]
 
             if nlmsg_type == AI_MSG_SYSCALL_QUERY and len(payload) >= QUERY_SIZE:
-                executor.submit(handle_syscall_query, sock, payload[:QUERY_SIZE])
+                _worker_pool.submit(handle_syscall_query, sock, payload[:QUERY_SIZE])
                 events_seen += 1
 
             elif nlmsg_type == AI_MSG_PROCESS_EVENT and len(payload) >= EVENT_SIZE:

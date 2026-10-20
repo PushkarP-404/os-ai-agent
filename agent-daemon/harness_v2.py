@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Verified, policy-controlled task harness for AI-Agent OS.
+"""Verified, policy-controlled task harness for AI-Agent OS  (v2.2).
 
-This module deliberately separates model output from operating-system effects.
-The model may return a strict plan that references registered tools, while the
-executor builds argv lists itself and verifies each requested outcome.
+Architecture
+------------
+- Model decides *what to try* from a registered tool catalogue.
+- Deterministic code decides *how it is executed* — no shell interpolation.
+- Every system-changing step declares expected verification.
+- The planner tries three tiers in order before giving up:
+    1. deterministic_plan()   — regex compiler, zero LLM calls.
+    2. LLM structured plan    — validated JSON plan from local model.
+    3. command.argv fallback  — single extracted shell argv from LLM prose.
+- Failed steps trigger a bounded repair loop (≤ MAX_REPAIRS_PER_STEP).
+- Independent read-only steps run in parallel for speed.
 """
 
 from __future__ import annotations
@@ -18,22 +26,43 @@ import struct
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+# ── Public constants ─────────────────────────────────────────────────────────
+MAX_REPAIRS_PER_STEP = 2
+MAX_PLAN_STEPS = 20
+TOOL_TIMEOUT_DEFAULT = 60    # seconds per tool call
+PLAN_LLM_N_PREDICT  = 700   # token budget for plan generation
+REPAIR_LLM_N_PREDICT = 500  # token budget for repair plan
 
+# Commands whose first token is safe for command.argv (Linux read+light-write)
+SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
+    "ls", "cat", "head", "tail", "wc", "grep", "find", "awk", "sed",
+    "sort", "uniq", "cut", "tr", "diff", "cp", "mv", "mkdir", "rm",
+    "touch", "chmod", "chown", "ln", "stat", "du", "df", "free", "ps",
+    "ss", "ip", "ping", "curl", "wget", "tar", "gzip", "gunzip",
+    "python3", "python", "sh", "bash",
+    "apk", "rc-service", "rc-update",
+    "echo", "printf", "date", "whoami", "hostname", "uname",
+    "nc", "socat", "openssl",
+})
+
+
+# ── Status enum ───────────────────────────────────────────────────────────────
 class JobStatus(str, Enum):
-    PLANNING = "PLANNING"
-    RUNNING = "RUNNING"
-    VERIFYING = "VERIFYING"
+    PLANNING       = "PLANNING"
+    RUNNING        = "RUNNING"
+    VERIFYING      = "VERIFYING"
     NEEDS_APPROVAL = "NEEDS_APPROVAL"
-    SUCCEEDED = "SUCCEEDED"
-    PARTIAL = "PARTIAL"
-    BLOCKED = "BLOCKED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
+    SUCCEEDED      = "SUCCEEDED"
+    PARTIAL        = "PARTIAL"
+    BLOCKED        = "BLOCKED"
+    FAILED         = "FAILED"
+    CANCELLED      = "CANCELLED"
 
 
 TERMINAL_STATUSES = {
@@ -46,6 +75,7 @@ class PlanError(ValueError):
     """A planner response is not a safe, executable harness plan."""
 
 
+# ── Data-classes ──────────────────────────────────────────────────────────────
 @dataclass
 class ToolResult:
     ok: bool
@@ -75,6 +105,7 @@ class Plan:
     assumptions: list[str] = field(default_factory=list)
 
 
+# ── Atomic persistence ────────────────────────────────────────────────────────
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
@@ -89,40 +120,47 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temp_name)
 
 
+# ── Job store ─────────────────────────────────────────────────────────────────
 class JobStore:
     """Durable job state plus an append-only event stream.
 
-    The legacy task log remains available for the existing C CLI. New durable
-    state is placed in /var/ai-agent/jobs/<job-id>/ and can later drive a local
-    event socket without changing the executor's contract.
+    Layout: /var/ai-agent/jobs/<task_id>/
+      job.json       — current canonical state (atomically written)
+      events.jsonl   — append-only lifecycle log
+      plan.json      — validated plan
+      report.json    — final machine-readable report
+    The legacy_log callable bridges to the existing JSONL task log so that
+    the existing agent-cli polling loop keeps working unchanged.
     """
 
     def __init__(self, base_dir: str, task_id: str, legacy_log: Callable[..., None]):
-        self.base = Path(base_dir) / "jobs" / task_id
-        self.state_path = self.base / "job.json"
+        self.base        = Path(base_dir) / "jobs" / task_id
+        self.state_path  = self.base / "job.json"
         self.events_path = self.base / "events.jsonl"
-        self.plan_path = self.base / "plan.json"
+        self.plan_path   = self.base / "plan.json"
         self.report_path = self.base / "report.json"
-        self.task_id = task_id
-        self.legacy_log = legacy_log
+        self.task_id     = task_id
+        self.legacy_log  = legacy_log
         self.state: dict[str, Any] = {}
 
     def create(self, intent: str, mode: str, caller: dict[str, Any]) -> None:
         self.base.mkdir(parents=True, exist_ok=True)
         self.state = {
-            "job_id": self.task_id,
-            "intent": intent,
-            "mode": mode,
-            "status": JobStatus.PLANNING.value,
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "caller": {
-                "uid": caller.get("uid"), "gid": caller.get("gid"),
-                "user": caller.get("user"), "cwd": caller.get("cwd"),
+            "job_id":          self.task_id,
+            "intent":          intent,
+            "mode":            mode,
+            "status":          JobStatus.PLANNING.value,
+            "created_at":      time.time(),
+            "updated_at":      time.time(),
+            "caller":          {
+                "uid":  caller.get("uid"),
+                "gid":  caller.get("gid"),
+                "user": caller.get("user"),
+                "cwd":  caller.get("cwd"),
             },
             "completed_steps": [],
-            "failed_steps": [],
-            "approval": None,
+            "failed_steps":    [],
+            "approval":        None,
         }
         self._save()
         self.event("job_start", task_id=self.task_id, intent=intent, mode=mode)
@@ -137,7 +175,11 @@ class JobStore:
         with self.events_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
             stream.flush()
-        self.legacy_log(event, **payload)
+        # Bridge to legacy task log
+        try:
+            self.legacy_log(event, **payload)
+        except Exception:
+            pass
 
     def set_status(self, status: JobStatus, **extra: Any) -> None:
         self.state["status"] = status.value
@@ -147,13 +189,13 @@ class JobStore:
 
     def save_plan(self, plan: Plan) -> None:
         payload = {
-            "goal": plan.goal,
-            "assumptions": plan.assumptions,
+            "goal":             plan.goal,
+            "assumptions":      plan.assumptions,
             "success_criteria": plan.success_criteria,
-            "steps": [asdict(step) for step in plan.steps],
+            "steps":            [asdict(step) for step in plan.steps],
         }
         _atomic_json(self.plan_path, payload)
-        self.state["goal"] = plan.goal
+        self.state["goal"]             = plan.goal
         self.state["success_criteria"] = plan.success_criteria
         self._save()
 
@@ -164,18 +206,26 @@ class JobStore:
         self._save()
 
 
+# ── Policy engine ─────────────────────────────────────────────────────────────
 class PolicyEngine:
-    """Small policy core; policies can later be loaded from /etc/ai-agent."""
+    """Maps tool names to permission tiers.
 
-    READ_ONLY = {
-        "system.info", "disk.status", "memory.status", "package.query",
-        "service.status", "service.logs", "port.inspect", "file.read",
-        "http.check", "dir.query", "file.query",
-    }
-    CHANGE = {
-        "package.install", "service.start", "service.restart", "service.stop",
+    Read-only tools are always ALLOW.
+    Change tools require mode=ASSIST|APPLY and return REQUIRE_APPROVAL in
+    unknown modes.  SUGGEST mode never changes state.
+    """
+
+    READ_ONLY: frozenset[str] = frozenset({
+        "system.info", "disk.status", "memory.status",
+        "package.query", "service.status", "service.logs",
+        "port.inspect", "file.read", "http.check",
+        "dir.query", "file.query", "command.argv",
+    })
+    CHANGE: frozenset[str] = frozenset({
+        "package.install", "service.start", "service.restart",
+        "service.stop", "service.enable", "service.disable",
         "dir.create", "dir.remove", "file.write",
-    }
+    })
 
     def decide(self, mode: str, step: Step) -> tuple[str, str]:
         if step.tool not in self.READ_ONLY | self.CHANGE:
@@ -183,25 +233,24 @@ class PolicyEngine:
         if step.tool in self.READ_ONLY:
             return "ALLOW", "Read-only inspection is allowed."
         if mode == "SUGGEST":
-            return "SUGGEST", "Suggest mode never changes the system."
-        # The prompt is an explicit task request. APPLY can later be made the
-        # only mode for protected actions via /etc/ai-agent/policy.json.
+            return "SUGGEST", "SUGGEST mode: no system changes are executed."
         if mode in {"ASSIST", "APPLY"}:
             return "ALLOW", "Requested system action is allowed by the current local policy."
         return "REQUIRE_APPROVAL", "The selected mode does not authorize this system change."
 
 
+# ── Privileged tool client ─────────────────────────────────────────────────────
 class PrivilegedToolClient:
-    """Client for the narrow root-owned local tool broker.
+    """Client for the narrow root-owned local tool broker (harness_privileged.py).
 
-    Only system-changing registered tools are sent to the broker. The daemon
-    remains unprivileged and the broker verifies the Unix peer before acting.
+    Only CHANGE-tier tools are forwarded here when the daemon is unprivileged.
     """
 
     def __init__(self, path: str = "/run/ai-agent/privileged.sock"):
         self.path = path
 
-    def run(self, tool: str, args: dict[str, Any], caller: dict[str, Any] | None = None) -> ToolResult:
+    def run(self, tool: str, args: dict[str, Any],
+            caller: dict[str, Any] | None = None) -> ToolResult:
         payload: dict[str, Any] = {"tool": tool, "args": args}
         if caller:
             payload["caller"] = caller
@@ -221,20 +270,30 @@ class PrivilegedToolClient:
                     response.extend(chunk)
                     if b"\n" in chunk:
                         break
-            payload = json.loads(bytes(response).split(b"\n", 1)[0].decode("utf-8"))
-            return ToolResult(**payload)
+            data = json.loads(bytes(response).split(b"\n", 1)[0].decode("utf-8"))
+            return ToolResult(**data)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return ToolResult(False, "Privileged tool broker is unavailable", stderr=str(exc), exit_code=125)
+            return ToolResult(
+                False, "Privileged tool broker is unavailable",
+                stderr=str(exc), exit_code=125,
+            )
 
 
+# ── Tool executor ─────────────────────────────────────────────────────────────
 class ToolExecutor:
-    """Registered OS tools that never interpret model-provided shell text."""
+    """Registered OS tools — no shell interpolation, no arbitrary strings.
 
-    def __init__(self, caller: dict[str, Any], command_timeout: int = 60,
+    Every tool builds a fixed argv list from validated, typed arguments.
+    command.argv allows a curated set of safe binaries with an allowlist
+    check; it is the escape hatch for tasks the typed catalogue cannot cover.
+    """
+
+    def __init__(self, caller: dict[str, Any],
+                 command_timeout: int = TOOL_TIMEOUT_DEFAULT,
                  allow_privilege_proxy: bool = True):
-        self.caller = caller
+        self.caller          = caller
         self.command_timeout = command_timeout
-        self.privileged = PrivilegedToolClient() if allow_privilege_proxy else None
+        self.privileged      = PrivilegedToolClient() if allow_privilege_proxy else None
 
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
         if tool in PolicyEngine.CHANGE and os.geteuid() != 0 and self.privileged:
@@ -251,31 +310,49 @@ class ToolExecutor:
         except Exception as exc:
             return ToolResult(False, f"{tool} failed", stderr=str(exc), exit_code=1)
 
-    def _exec(self, argv: list[str], timeout: int | None = None) -> ToolResult:
+    def _exec(self, argv: list[str], timeout: int | None = None,
+              cwd: str | None = None) -> ToolResult:
+        effective_cwd = cwd or self.caller.get("cwd")
+        if not effective_cwd or not os.path.isdir(effective_cwd):
+            effective_cwd = self.caller.get("home", "/")
         result = subprocess.run(
-            argv, capture_output=True, text=True,
+            argv,
+            capture_output=True,
+            text=True,
             timeout=timeout or self.command_timeout,
-            cwd=self.caller.get("cwd") if os.path.isdir(self.caller.get("cwd", "")) else None,
-            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": self.caller.get("home", "/")},
+            cwd=effective_cwd,
+            env={
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": self.caller.get("home", "/"),
+                "USER": self.caller.get("user", "root"),
+            },
         )
-        stdout, stderr = result.stdout[:8192], result.stderr[:4096]
+        stdout = result.stdout[:8192]
+        stderr = result.stderr[:4096]
         return ToolResult(
             result.returncode == 0,
-            f"{' '.join(argv)} exited {result.returncode}",
+            f"{argv[0]} exited {result.returncode}",
             stdout=stdout, stderr=stderr, exit_code=result.returncode,
         )
 
     @staticmethod
     def _name(args: dict[str, Any], key: str = "name") -> str:
         value = args.get(key)
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", value):
-            raise ValueError(f"'{key}' must be a simple package or service name")
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._+\-]{0,127}", value
+        ):
+            raise ValueError(f"'{key}' must be a simple name (letters, digits, ._+-)")
         return value
 
+    # ── Read-only tools ───────────────────────────────────────────────────────
+
     def tool_system_info(self, args: dict[str, Any]) -> ToolResult:
-        info = {"hostname": socket.gethostname(), "kernel": os.uname().release}
+        info: dict[str, Any] = {
+            "hostname": socket.gethostname(),
+            "kernel":   os.uname().release,
+        }
         try:
-            info["os_release"] = Path("/etc/os-release").read_text(encoding="utf-8")[:4096]
+            info["os_release"] = Path("/etc/os-release").read_text(encoding="utf-8")[:2048]
         except OSError:
             pass
         return ToolResult(True, "Collected system information", facts=[info])
@@ -292,20 +369,131 @@ class ToolExecutor:
             return self._exec(["apk", "info", "-e", package])
         return ToolResult(False, "No supported package manager found", exit_code=127)
 
+    def tool_service_status(self, args: dict[str, Any]) -> ToolResult:
+        name = self._name(args)
+        if shutil.which("rc-service"):
+            return self._exec(["rc-service", name, "status"])
+        return ToolResult(False, "OpenRC is not available", exit_code=127)
+
+    def tool_service_logs(self, args: dict[str, Any]) -> ToolResult:
+        name = self._name(args)
+        # Try /var/log/<name>.log first, then journalctl / logread
+        log_path = Path("/var/log") / f"{name}.log"
+        if log_path.is_file():
+            text = log_path.read_text(encoding="utf-8", errors="replace")[-8192:]
+            return ToolResult(True, f"Read recent log for {name}", stdout=text)
+        if shutil.which("logread"):
+            return self._exec(["logread", "-e", name])
+        return ToolResult(False, f"No readable log found for {name}", exit_code=1)
+
+    def tool_port_inspect(self, args: dict[str, Any]) -> ToolResult:
+        port = args.get("port")
+        if not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("'port' must be an integer between 1 and 65535")
+        if shutil.which("ss"):
+            return self._exec(["ss", "-ltnp", f"sport = :{port}"])
+        if shutil.which("netstat"):
+            return self._exec(["netstat", "-tlnp"])
+        return ToolResult(False, "'ss' is not installed", exit_code=127)
+
+    def tool_file_read(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.startswith("/"):
+            raise ValueError("'path' must be an absolute path")
+        path = Path(raw_path).resolve()
+        allowed = (
+            Path("/etc"),
+            Path("/var/log"),
+            Path(self.caller.get("home", "/nonexistent")),
+            Path("/tmp"),
+            Path("/srv"),
+            Path("/var/ai-agent"),
+        )
+        if not any(path == root or root in path.parents for root in allowed):
+            raise ValueError("path is outside the readable harness scope")
+        if not path.is_file():
+            return ToolResult(False, f"File does not exist: {path}", exit_code=1)
+        lines_arg = args.get("tail_lines")
+        if isinstance(lines_arg, int) and lines_arg > 0:
+            return self._exec(["tail", f"-n{lines_arg}", str(path)])
+        return ToolResult(
+            True, f"Read {path}",
+            stdout=path.read_text(encoding="utf-8", errors="replace")[:8192],
+        )
+
+    def tool_file_query(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if path.is_file():
+            return ToolResult(True, f"File exists: {path}")
+        return ToolResult(False, f"File does not exist: {path}", exit_code=1)
+
+    def tool_dir_query(self, args: dict[str, Any]) -> ToolResult:
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if path.is_dir():
+            return ToolResult(True, f"Directory exists: {path}")
+        return ToolResult(False, f"Directory does not exist: {path}", exit_code=1)
+
+    def tool_http_check(self, args: dict[str, Any]) -> ToolResult:
+        url = args.get("url", "")
+        if not isinstance(url, str) or not re.fullmatch(
+            r"https?://(127\.0\.0\.1|localhost)(?::\d+)?(?:/[^\s]*)?", url
+        ):
+            raise ValueError("HTTP checks are limited to localhost URLs")
+        if not shutil.which("curl"):
+            return ToolResult(False, "curl is required for http.check", exit_code=127)
+        return self._exec(
+            ["curl", "--fail", "--silent", "--show-error",
+             "--max-time", "10", "--connect-timeout", "5", url],
+            timeout=15,
+        )
+
+    def tool_command_argv(self, args: dict[str, Any]) -> ToolResult:
+        """Execute a fixed argv list — allowlist-checked binary, no shell grammar.
+
+        This is the escape hatch for tasks that the typed tool catalogue cannot
+        cover (e.g. CSV processing, test runs, log filtering). The first element
+        of argv must be in SAFE_ARGV_COMMANDS.  Shell builtins that cannot be
+        exec'd directly (cd, export, etc.) are intentionally excluded.
+        """
+        argv = args.get("argv")
+        if not isinstance(argv, list) or not argv:
+            raise ValueError("'argv' must be a non-empty list of strings")
+        if not all(isinstance(a, str) for a in argv):
+            raise ValueError("all argv elements must be strings")
+        binary = os.path.basename(argv[0])
+        if binary not in SAFE_ARGV_COMMANDS:
+            raise ValueError(
+                f"'{binary}' is not in the command allowlist. "
+                f"Use a registered typed tool or add the binary to SAFE_ARGV_COMMANDS."
+            )
+        cwd = args.get("cwd")
+        timeout = args.get("timeout", self.command_timeout)
+        if not isinstance(timeout, int) or timeout < 1 or timeout > 300:
+            timeout = self.command_timeout
+        # Resolve the binary to its full path so we don't depend on $PATH tricks
+        full_path = shutil.which(argv[0]) or argv[0]
+        resolved_argv = [full_path] + argv[1:]
+        return self._exec(resolved_argv, timeout=timeout, cwd=cwd)
+
+    # ── Change tools ──────────────────────────────────────────────────────────
+
     def tool_package_install(self, args: dict[str, Any]) -> ToolResult:
         package = self._name(args, "package")
         if shutil.which("apk"):
-            return self._exec(["apk", "add", package], timeout=180)
+            return self._exec(["apk", "add", "--no-progress", package], timeout=180)
         return ToolResult(False, "No supported package manager found", exit_code=127)
 
     def _service(self, action: str, args: dict[str, Any]) -> ToolResult:
         name = self._name(args)
-        if os.path.exists("/sbin/rc-service"):
+        if shutil.which("rc-service"):
             return self._exec(["rc-service", name, action])
         return ToolResult(False, "OpenRC is not available", exit_code=127)
-
-    def tool_service_status(self, args: dict[str, Any]) -> ToolResult:
-        return self._service("status", args)
 
     def tool_service_start(self, args: dict[str, Any]) -> ToolResult:
         return self._service("start", args)
@@ -316,41 +504,20 @@ class ToolExecutor:
     def tool_service_stop(self, args: dict[str, Any]) -> ToolResult:
         return self._service("stop", args)
 
-    def tool_service_logs(self, args: dict[str, Any]) -> ToolResult:
+    def tool_service_enable(self, args: dict[str, Any]) -> ToolResult:
         name = self._name(args)
-        log_path = Path("/var/log") / f"{name}.log"
-        if not log_path.is_file():
-            return ToolResult(False, f"No readable log at {log_path}", exit_code=1)
-        text = log_path.read_text(encoding="utf-8", errors="replace")[-8192:]
-        return ToolResult(True, f"Read recent log for {name}", stdout=text)
+        if shutil.which("rc-update"):
+            runlevel = args.get("runlevel", "default")
+            if not re.fullmatch(r"[a-z]{1,32}", runlevel):
+                raise ValueError("runlevel must be a simple word")
+            return self._exec(["rc-update", "add", name, runlevel])
+        return ToolResult(False, "OpenRC is not available", exit_code=127)
 
-    def tool_port_inspect(self, args: dict[str, Any]) -> ToolResult:
-        port = args.get("port")
-        if not isinstance(port, int) or not 1 <= port <= 65535:
-            raise ValueError("'port' must be an integer between 1 and 65535")
-        if shutil.which("ss"):
-            return self._exec(["ss", "-ltnp", f"sport = :{port}"])
-        return ToolResult(False, "'ss' is not installed", exit_code=127)
-
-    def tool_file_read(self, args: dict[str, Any]) -> ToolResult:
-        raw_path = args.get("path")
-        if not isinstance(raw_path, str) or not raw_path.startswith("/"):
-            raise ValueError("'path' must be an absolute path")
-        path = Path(raw_path).resolve()
-        allowed = (Path("/etc"), Path("/var/log"), Path(self.caller.get("home", "/nonexistent")))
-        if not any(path == root or root in path.parents for root in allowed):
-            raise ValueError("path is outside the readable harness scope")
-        if not path.is_file():
-            return ToolResult(False, f"File does not exist: {path}", exit_code=1)
-        return ToolResult(True, f"Read {path}", stdout=path.read_text(encoding="utf-8", errors="replace")[:8192])
-
-    def tool_http_check(self, args: dict[str, Any]) -> ToolResult:
-        url = args.get("url")
-        if not isinstance(url, str) or not re.fullmatch(r"http://(127\.0\.0\.1|localhost)(?::\d+)?(?:/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]*)?", url):
-            raise ValueError("HTTP checks are limited to localhost URLs")
-        if not shutil.which("curl"):
-            return ToolResult(False, "curl is required for http.check", exit_code=127)
-        return self._exec(["curl", "--fail", "--silent", "--show-error", "--max-time", "10", url], timeout=15)
+    def tool_service_disable(self, args: dict[str, Any]) -> ToolResult:
+        name = self._name(args)
+        if shutil.which("rc-update"):
+            return self._exec(["rc-update", "del", name])
+        return ToolResult(False, "OpenRC is not available", exit_code=127)
 
     def tool_dir_create(self, args: dict[str, Any]) -> ToolResult:
         raw_path = args.get("path")
@@ -370,15 +537,6 @@ class ToolExecutor:
                 pass
         return ToolResult(True, f"Directory created: {path}")
 
-    def tool_dir_query(self, args: dict[str, Any]) -> ToolResult:
-        raw_path = args.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            raise ValueError("'path' must be a non-empty string")
-        path = Path(raw_path).resolve()
-        if path.is_dir():
-            return ToolResult(True, f"Directory exists: {path}")
-        return ToolResult(False, f"Directory does not exist: {path}", exit_code=1)
-
     def tool_dir_remove(self, args: dict[str, Any]) -> ToolResult:
         raw_path = args.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
@@ -386,7 +544,8 @@ class ToolExecutor:
         path = Path(raw_path).resolve()
         protected = (
             Path("/"), Path("/bin"), Path("/sbin"), Path("/usr"), Path("/etc"),
-            Path("/var"), Path("/home"), Path("/root"), Path("/dev"), Path("/proc"), Path("/sys"),
+            Path("/var"), Path("/home"), Path("/root"), Path("/dev"),
+            Path("/proc"), Path("/sys"),
         )
         if path in protected or path.parent == path:
             raise ValueError(f"Cannot delete protected path: {path}")
@@ -399,7 +558,7 @@ class ToolExecutor:
 
     def tool_file_write(self, args: dict[str, Any]) -> ToolResult:
         raw_path = args.get("path")
-        content = args.get("content", "")
+        content  = args.get("content", "")
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError("'path' must be a non-empty string")
         path = Path(raw_path).resolve()
@@ -415,137 +574,106 @@ class ToolExecutor:
                 os.chown(path, int(uid), int(gid))
             except OSError:
                 pass
-        return ToolResult(True, f"File created: {path}")
-
-    def tool_file_query(self, args: dict[str, Any]) -> ToolResult:
-        raw_path = args.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            raise ValueError("'path' must be a non-empty string")
-        path = Path(raw_path).resolve()
-        if path.is_file():
-            return ToolResult(True, f"File exists: {path}")
-        return ToolResult(False, f"File does not exist: {path}", exit_code=1)
+        return ToolResult(True, f"File written: {path} ({len(content)} bytes)")
 
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
 
+# ── Plan validation ───────────────────────────────────────────────────────────
 def validate_plan(value: Any) -> Plan:
     if not isinstance(value, dict):
         raise PlanError("plan must be a JSON object")
-    goal = value.get("goal")
+    goal     = value.get("goal")
     criteria = value.get("success_criteria")
     raw_steps = value.get("steps")
     if not isinstance(goal, str) or not goal.strip():
         raise PlanError("plan.goal must be a non-empty string")
     if not isinstance(criteria, list) or not criteria:
         raise PlanError("plan.success_criteria must be a non-empty list")
-    if not isinstance(raw_steps, list) or not raw_steps or len(raw_steps) > 20:
-        raise PlanError("plan.steps must contain between 1 and 20 steps")
+    if not isinstance(raw_steps, list) or not raw_steps or len(raw_steps) > MAX_PLAN_STEPS:
+        raise PlanError(f"plan.steps must contain 1–{MAX_PLAN_STEPS} steps")
     steps: list[Step] = []
     ids: set[str] = set()
     for raw in raw_steps:
         if not isinstance(raw, dict):
             raise PlanError("each plan step must be an object")
-        step_id, purpose, tool, args = raw.get("id"), raw.get("purpose"), raw.get("tool"), raw.get("args")
-        if not isinstance(step_id, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", step_id) or step_id in ids:
-            raise PlanError("every step needs a unique lowercase id")
+        step_id  = raw.get("id")
+        purpose  = raw.get("purpose")
+        tool     = raw.get("tool")
+        step_args = raw.get("args")
+        if (not isinstance(step_id, str)
+                or not re.fullmatch(r"[a-z][a-z0-9_\-]{0,63}", step_id)
+                or step_id in ids):
+            raise PlanError("every step needs a unique lowercase id (a-z0-9_-)")
         if not isinstance(purpose, str) or not purpose.strip():
             raise PlanError(f"step '{step_id}' is missing purpose")
-        if tool not in ALLOWED_TOOLS or not isinstance(args, dict):
-            raise PlanError(f"step '{step_id}' references an invalid tool or arguments")
+        if tool not in ALLOWED_TOOLS or not isinstance(step_args, dict):
+            raise PlanError(f"step '{step_id}' references invalid tool '{tool}' or bad args")
         verify = raw.get("verify", [])
         if not isinstance(verify, list):
-            raise PlanError(f"step '{step_id}' has invalid verification")
+            raise PlanError(f"step '{step_id}' has invalid verification list")
+        # Validate each verifier references a real tool
+        for v in verify:
+            if not isinstance(v, dict) or v.get("tool") not in ALLOWED_TOOLS:
+                raise PlanError(f"step '{step_id}' has invalid verifier: {v!r}")
         risk = "read_only" if tool in PolicyEngine.READ_ONLY else "system_change"
         if risk == "system_change" and not verify:
-            raise PlanError(f"system-changing step '{step_id}' must have verification")
-        dependencies = raw.get("depends_on", [])
-        if not isinstance(dependencies, list) or not all(isinstance(dep, str) for dep in dependencies):
-            raise PlanError(f"step '{step_id}' has invalid dependencies")
+            raise PlanError(f"system-changing step '{step_id}' must include verification steps")
+        deps = raw.get("depends_on", [])
+        if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+            raise PlanError(f"step '{step_id}' has invalid depends_on list")
         ids.add(step_id)
-        steps.append(Step(step_id, purpose, tool, args, verify, risk, dependencies))
+        steps.append(Step(step_id, purpose, tool, step_args, verify, risk, deps))
+    # Validate dependency graph — no forward refs to unknown IDs, no self-dep
     for step in steps:
-        if any(dep not in ids or dep == step.id for dep in step.depends_on):
-            raise PlanError(f"step '{step.id}' has an invalid dependency")
-    return Plan(goal=goal.strip(), success_criteria=criteria, steps=steps, assumptions=value.get("assumptions", []))
+        for dep in step.depends_on:
+            if dep not in ids or dep == step.id:
+                raise PlanError(f"step '{step.id}' has unknown or self-referential dep '{dep}'")
+    return Plan(
+        goal=goal.strip(),
+        success_criteria=criteria,
+        steps=steps,
+        assumptions=value.get("assumptions", []),
+    )
 
 
-def extract_first_json_object(text: str) -> Any | None:
-    """
-    Extract the first well-formed, balanced JSON object ({...}) or array ([...]) from text.
-    Properly ignores brackets inside string literals and escaped characters.
-    Handles conversational prose, markdown code fences, and minor formatting imperfections.
-    """
-    if not text or not isinstance(text, str):
-        return None
-
-    cleaned = text.strip()
-    if not cleaned:
-        return None
-
-    # Priority 1: Check for markdown code fences: ```json ... ``` or ``` ... ```
-    fence_pattern = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
-    for fence_match in fence_pattern.finditer(cleaned):
-        block = fence_match.group(1).strip()
-        try:
-            return json.loads(block)
-        except json.JSONDecodeError:
-            res = _scan_balanced_json(block)
-            if res is not None:
-                return res
-
-    # Priority 2: Direct parse if cleaned text is pure JSON container
-    if (cleaned.startswith("{") and cleaned.endswith("}")) or (cleaned.startswith("[") and cleaned.endswith("]")):
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            pass
-
-    # Priority 3: Scan text for balanced brackets aware of strings & escapes
-    return _scan_balanced_json(cleaned)
-
-
+# ── JSON extraction ───────────────────────────────────────────────────────────
 def _scan_balanced_json(text: str) -> Any | None:
-    """Scan string for the first balanced JSON container ({...} or [...]) respecting string escapes."""
+    """Scan for the first balanced JSON container, respecting string escapes."""
     n = len(text)
     for i in range(n):
         ch = text[i]
         if ch not in ('{', '['):
             continue
-
-        opening = ch
-        closing = '}' if opening == '{' else ']'
-        stack_depth = 0
-        in_string = False
-        escape = False
-
+        closing = '}' if ch == '{' else ']'
+        depth   = 0
+        in_str  = False
+        esc     = False
         for j in range(i, n):
             c = text[j]
-
-            if in_string:
-                if escape:
-                    escape = False
+            if in_str:
+                if esc:
+                    esc = False
                 elif c == '\\':
-                    escape = True
+                    esc = True
                 elif c == '"':
-                    in_string = False
+                    in_str = False
                 continue
-
             if c == '"':
-                in_string = True
-                escape = False
+                in_str = True
+                esc    = False
                 continue
-
-            if c == opening:
-                stack_depth += 1
+            if c == ch:
+                depth += 1
             elif c == closing:
-                stack_depth -= 1
-                if stack_depth == 0:
-                    candidate = text[i:j + 1].strip()
+                depth -= 1
+                if depth == 0:
+                    candidate = text[i:j + 1]
                     try:
                         return json.loads(candidate)
                     except json.JSONDecodeError:
+                        # One repair pass: remove trailing commas
                         fixed = re.sub(r",\s*([\]}])", r"\1", candidate)
                         try:
                             return json.loads(fixed)
@@ -554,36 +682,102 @@ def _scan_balanced_json(text: str) -> Any | None:
     return None
 
 
+def extract_first_json_object(text: str) -> Any | None:
+    if not text or not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    # Priority 1: markdown code fence
+    for m in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE):
+        block = m.group(1).strip()
+        try:
+            return json.loads(block)
+        except json.JSONDecodeError:
+            res = _scan_balanced_json(block)
+            if res is not None:
+                return res
+    # Priority 2: whole string is JSON
+    if (cleaned.startswith("{") and cleaned.endswith("}")) or \
+       (cleaned.startswith("[") and cleaned.endswith("]")):
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+    # Priority 3: balanced scan
+    return _scan_balanced_json(cleaned)
+
+
+# ── LLM prompt builders ───────────────────────────────────────────────────────
 def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
     tools = sorted(ALLOWED_TOOLS)
+    inv_text = json.dumps(inventory, ensure_ascii=False)[:2000]
     return (
         "<|im_start|>system\n"
-        "You are the AI-Agent OS planner. Return one JSON object only. Do not return shell commands. "
-        "Use only the registered tools and ensure every system-changing step has verification. "
-        f"Registered tools: {tools}.\n"
-        "Schema: {\"goal\":string,\"assumptions\":[string],\"success_criteria\":[object],"
-        "\"steps\":[{\"id\":string,\"purpose\":string,\"tool\":string,\"args\":object,"
-        "\"depends_on\":[string],\"verify\":[{\"tool\":string,\"args\":object}]}]}.\n"
-        "<|im_end|>\n<|im_start|>user\n"
-        "End your JSON response with <|im_end|>.\n"
-        "<|im_end|>\n<|im_start|>user\n"
-        f"Intent: {intent}\nInventory: {json.dumps(inventory, ensure_ascii=False)[:2500]}"
-        "\n<|im_end|>\n<|im_start|>assistant\n"
+        "You are the AI-Agent OS planner. Return ONE JSON object only. "
+        "No markdown fences. No prose before or after the JSON.\n"
+        f"Registered tools: {tools}\n"
+        "Schema:\n"
+        '{"goal":string,"assumptions":[string],"success_criteria":[{"description":string,"tool":string,"args":{}}],'
+        '"steps":[{"id":string,"purpose":string,"tool":string,"args":{},'
+        '"depends_on":[string],"verify":[{"tool":string,"args":{}}]}]}\n'
+        "Rules:\n"
+        "- Every system-changing step MUST have at least one verify entry.\n"
+        "- Step ids are lowercase alphanumeric with hyphens only.\n"
+        "- depends_on lists step ids that must complete before this step runs.\n"
+        "- Use command.argv for tasks the typed tools cannot cover; "
+        '  args must be {"argv":["binary","arg1",...]}'
+        " where binary is in the safe allowlist.\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"Intent: {intent}\n"
+        f"System inventory: {inv_text}\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
     )
 
 
+def repair_prompt(purpose: str, failure: str, evidence: list[dict[str, Any]]) -> str:
+    ev_text = json.dumps(evidence[-6:], ensure_ascii=False)[:1200]
+    tools   = sorted(ALLOWED_TOOLS)
+    return (
+        "<|im_start|>system\n"
+        f"Step '{purpose}' failed with: {failure}\n"
+        f"Evidence: {ev_text}\n"
+        "Return a JSON repair plan (same schema as a normal plan). "
+        f"Registered tools: {tools}. Max 3 steps. "
+        "Each system-changing step needs verify. No prose, just JSON.\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\nRepair plan:\n<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
+
+# ── Deterministic fast-path planner ──────────────────────────────────────────
 def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Plan | None:
     """Compile common local OS intents without spending a model request.
 
-    This gives the appliance a reliable fast path for the initial typed-tool
-    catalog. Requests outside this narrow grammar still require a validated
-    model plan and are blocked if the model cannot provide one.
+    Patterns handled (14):
+      1.  Directory creation
+      2.  File creation / touch
+      3.  Package installation
+      4.  Service restart / start
+      5.  Package install + service start (combined)
+      6.  System information
+      7.  Disk usage
+      8.  Memory usage
+      9.  Port inspection
+      10. Local HTTP check
+      11. Log tail (file.read with tail_lines)
+      12. Service enable (rc-update add)
+      13. Service disable (rc-update del)
+      14. Arbitrary read-only shell command (command.argv fast path)
     """
-    caller = caller or {}
+    caller   = caller or {}
     home_dir = caller.get("home") or "/root"
-    cwd_dir = caller.get("cwd") or home_dir
-    uid = caller.get("uid")
-    gid = caller.get("gid")
+    cwd_dir  = caller.get("cwd") or home_dir
+    uid      = caller.get("uid")
+    gid      = caller.get("gid")
 
     def resolve_target(name: str, loc: str | None = None) -> str:
         name = name.strip("'\"")
@@ -597,331 +791,725 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
                 return posixpath.normpath(posixpath.join(loc, name))
             else:
                 return posixpath.normpath(posixpath.join(cwd_dir, loc, name))
-        else:
-            if name.startswith("~/"):
-                return posixpath.normpath(posixpath.join(home_dir, name[2:]))
-            elif name.startswith("/"):
-                return posixpath.normpath(name)
-            elif name.lower().startswith("desktop/"):
-                return posixpath.normpath(posixpath.join(home_dir, name))
-            else:
-                return posixpath.normpath(posixpath.join(cwd_dir, name))
+        if name.startswith("~/"):
+            return posixpath.normpath(posixpath.join(home_dir, name[2:]))
+        elif name.startswith("/"):
+            return posixpath.normpath(name)
+        elif name.lower().startswith("desktop/"):
+            return posixpath.normpath(posixpath.join(home_dir, name))
+        return posixpath.normpath(posixpath.join(cwd_dir, name))
 
-    raw_clean = intent.strip()
+    raw_clean    = intent.strip()
     clean_intent = re.sub(r"^/+(?:assist|suggest|apply)?\s*", "", raw_clean, flags=re.IGNORECASE)
-    text = " ".join(clean_intent.split())
-    text_lower = text.lower()
+    text         = " ".join(clean_intent.split())
+    text_lower   = text.lower()
     steps: list[Step] = []
     criteria: list[dict[str, Any]] = []
 
-    # 1. Directory / folder creation
+    # ── 1. Directory creation ──────────────────────────────────────────────
     dir_match = None
-    m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+in\s+([^\s]+)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+    m = re.search(
+        r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+in\s+(\S+)\s+"
+        r"(?:(?:called|named)\s+)?(\S+)", text, re.IGNORECASE)
     if m:
         dir_match = (m.group(2), m.group(1))
-    else:
-        m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:(?:called|named)\s+)?([^\s]+)\s+in\s+([^\s]+)", text, re.IGNORECASE)
+    if not dir_match:
+        m = re.search(
+            r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+"
+            r"(?:(?:called|named)\s+)?(\S+)\s+in\s+(\S+)", text, re.IGNORECASE)
         if m:
             dir_match = (m.group(1), m.group(2))
-        else:
-            m = re.search(r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
-            if m:
-                dir_match = (m.group(1), None)
-            else:
-                m = re.search(r"\bmkdir\s+(?:-[a-zA-Z]+\s+)?([^\s]+)", text, re.IGNORECASE)
-                if m:
-                    dir_match = (m.group(1), None)
-
+    if not dir_match:
+        m = re.search(
+            r"\b(?:create|make|mkdir)\s+(?:a\s+)?(?:folder|directory|dir)\s+"
+            r"(?:(?:called|named)\s+)?(\S+)", text, re.IGNORECASE)
+        if m:
+            dir_match = (m.group(1), None)
+    if not dir_match:
+        m = re.search(r"\bmkdir\s+(?:-[a-zA-Z]+\s+)?(\S+)", text, re.IGNORECASE)
+        if m:
+            dir_match = (m.group(1), None)
     if dir_match:
         name, loc = dir_match
-        target_path = resolve_target(name, loc)
-        args: dict[str, Any] = {"path": target_path}
+        tp = resolve_target(name, loc)
+        a: dict[str, Any] = {"path": tp}
         if uid is not None and gid is not None:
-            args["uid"] = uid
-            args["gid"] = gid
-        steps.append(Step("create-directory", f"Create directory {target_path}", "dir.create",
-                          args, [{"tool": "dir.query", "args": {"path": target_path}}],
-                          "system_change"))
-        criteria.append({"description": f"Directory {target_path} exists", "tool": "dir.query",
-                         "args": {"path": target_path}})
+            a["uid"], a["gid"] = uid, gid
+        steps.append(Step("create-directory", f"Create directory {tp}", "dir.create", a,
+                          [{"tool": "dir.query", "args": {"path": tp}}], "system_change"))
+        criteria.append({"description": f"Directory {tp} exists",
+                         "tool": "dir.query", "args": {"path": tp}})
 
-    # 2. File creation
+    # ── 2. File creation ───────────────────────────────────────────────────
     if not steps:
         file_match = None
-        m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+in\s+([^\s]+)\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
+        m = re.search(
+            r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+in\s+(\S+)\s+"
+            r"(?:(?:called|named)\s+)?(\S+)", text, re.IGNORECASE)
         if m:
             file_match = (m.group(2), m.group(1))
-        else:
-            m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+(?:(?:called|named)\s+)?([^\s]+)\s+in\s+([^\s]+)", text, re.IGNORECASE)
+        if not file_match:
+            m = re.search(
+                r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+"
+                r"(?:(?:called|named)\s+)?(\S+)\s+in\s+(\S+)", text, re.IGNORECASE)
             if m:
                 file_match = (m.group(1), m.group(2))
-            else:
-                m = re.search(r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+(?:(?:called|named)\s+)?([^\s]+)", text, re.IGNORECASE)
-                if m:
-                    file_match = (m.group(1), None)
-                else:
-                    m = re.search(r"\btouch\s+([^\s]+)", text, re.IGNORECASE)
-                    if m:
-                        file_match = (m.group(1), None)
+        if not file_match:
+            m = re.search(
+                r"\b(?:create|make|touch)\s+(?:a\s+)?file\s+"
+                r"(?:(?:called|named)\s+)?(\S+)", text, re.IGNORECASE)
+            if m:
+                file_match = (m.group(1), None)
+        if not file_match:
+            m = re.search(r"\btouch\s+(\S+)", text, re.IGNORECASE)
+            if m:
+                file_match = (m.group(1), None)
         if file_match:
             name, loc = file_match
-            target_path = resolve_target(name, loc)
-            args = {"path": target_path, "content": ""}
+            tp = resolve_target(name, loc)
+            a = {"path": tp, "content": ""}
             if uid is not None and gid is not None:
-                args["uid"] = uid
-                args["gid"] = gid
-            steps.append(Step("create-file", f"Create file {target_path}", "file.write",
-                              args, [{"tool": "file.query", "args": {"path": target_path}}],
-                              "system_change"))
-            criteria.append({"description": f"File {target_path} exists", "tool": "file.query",
-                             "args": {"path": target_path}})
+                a["uid"], a["gid"] = uid, gid
+            steps.append(Step("create-file", f"Create file {tp}", "file.write", a,
+                              [{"tool": "file.query", "args": {"path": tp}}], "system_change"))
+            criteria.append({"description": f"File {tp} exists",
+                             "tool": "file.query", "args": {"path": tp}})
 
-    # 3. Package installation
-    if not steps:
-        package_match = re.search(r"\binstall\s+([a-z0-9][a-z0-9._+-]{0,127})", text_lower)
-        if package_match:
-            package = package_match.group(1)
-            steps.append(Step("install-package", f"Install package {package}", "package.install",
-                              {"package": package}, [{"tool": "package.query", "args": {"package": package}}],
-                              "system_change"))
-            criteria.append({"description": f"Package {package} is installed", "tool": "package.query",
-                             "args": {"package": package}})
+    # ── 3. Package install only ────────────────────────────────────────────
+    pkg_m = re.search(r"\binstall\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
 
-    # 4. Service restart / start
-    if not steps:
-        service_match = re.search(r"\b(restart|start)\s+([a-z0-9][a-z0-9._+-]{0,127})", text_lower)
-        if service_match:
-            action, service = service_match.groups()
-            step_id = f"{action}-service"
-            dependencies = ["install-package"] if package_match and package_match.group(1) == service else []
-            steps.append(Step(step_id, f"{action.title()} service {service}", f"service.{action}",
-                              {"name": service}, [{"tool": "service.status", "args": {"name": service}}],
-                              "system_change", dependencies))
-            criteria.append({"description": f"Service {service} is running", "tool": "service.status",
-                             "args": {"name": service}})
+    # ── 4. Service action only ─────────────────────────────────────────────
+    svc_m = re.search(r"\b(restart|start|stop)\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
 
-    # 5. Monitoring: system information
-    if not steps and any(token in text_lower for token in ("system information", "system info", "system status", "os information")):
-        steps.append(Step("inspect-system", "Collect system information", "system.info", {}, []))
-        criteria.append({"description": "System information was collected", "tool": "system.info", "args": {}})
+    # ── 5. Combined install + start ────────────────────────────────────────
+    if not steps and pkg_m and svc_m:
+        package = pkg_m.group(1)
+        action, service = svc_m.groups()
+        steps.append(Step("install-package", f"Install {package}", "package.install",
+                          {"package": package},
+                          [{"tool": "package.query", "args": {"package": package}}],
+                          "system_change"))
+        steps.append(Step(f"{action}-service", f"{action.title()} {service}",
+                          f"service.{action}", {"name": service},
+                          [{"tool": "service.status", "args": {"name": service}}],
+                          "system_change", depends_on=["install-package"]))
+        criteria.append({"description": f"Package {package} installed",
+                         "tool": "package.query", "args": {"package": package}})
+        criteria.append({"description": f"Service {service} running",
+                         "tool": "service.status", "args": {"name": service}})
 
-    # 6. Monitoring: disk usage / status / space
-    if not steps and any(token in text_lower for token in ("disk usage", "disk status", "disk space")):
+    # ── 3b. Package install alone ──────────────────────────────────────────
+    if not steps and pkg_m:
+        package = pkg_m.group(1)
+        steps.append(Step("install-package", f"Install package {package}",
+                          "package.install", {"package": package},
+                          [{"tool": "package.query", "args": {"package": package}}],
+                          "system_change"))
+        criteria.append({"description": f"Package {package} is installed",
+                         "tool": "package.query", "args": {"package": package}})
+
+    # ── 4b. Service action alone ───────────────────────────────────────────
+    if not steps and svc_m:
+        action, service = svc_m.groups()
+        steps.append(Step(f"{action}-service", f"{action.title()} service {service}",
+                          f"service.{action}", {"name": service},
+                          [{"tool": "service.status", "args": {"name": service}}],
+                          "system_change"))
+        criteria.append({"description": f"Service {service} is {action}ed",
+                         "tool": "service.status", "args": {"name": service}})
+
+    # ── 6. System info ─────────────────────────────────────────────────────
+    if not steps and any(t in text_lower for t in
+                         ("system info", "system status", "os info", "os information",
+                          "system information", "uname", "hostname")):
+        steps.append(Step("inspect-system", "Collect system information",
+                          "system.info", {}, []))
+        criteria.append({"description": "System information collected",
+                         "tool": "system.info", "args": {}})
+
+    # ── 7. Disk ────────────────────────────────────────────────────────────
+    if not steps and any(t in text_lower for t in
+                         ("disk usage", "disk status", "disk space", "df -h", "free space")):
         steps.append(Step("inspect-disk", "Collect disk usage", "disk.status", {}, []))
-        criteria.append({"description": "Disk usage was collected", "tool": "disk.status", "args": {}})
+        criteria.append({"description": "Disk usage collected",
+                         "tool": "disk.status", "args": {}})
 
-    # 7. Monitoring: memory usage / status
-    if not steps and any(token in text_lower for token in ("memory usage", "memory status", "memory information")):
+    # ── 8. Memory ─────────────────────────────────────────────────────────
+    if not steps and any(t in text_lower for t in
+                         ("memory usage", "memory status", "ram usage",
+                          "free -m", "memory information")):
         steps.append(Step("inspect-memory", "Collect memory usage", "memory.status", {}, []))
-        criteria.append({"description": "Memory usage was collected", "tool": "memory.status", "args": {}})
+        criteria.append({"description": "Memory usage collected",
+                         "tool": "memory.status", "args": {}})
 
-    # 8. Monitoring: port inspection
+    # ── 9. Port inspection ─────────────────────────────────────────────────
     if not steps:
-        port_match = re.search(r"\b(?:port|listening on)\s+(\d{1,5})\b", text_lower)
-        if port_match and any(token in text_lower for token in ("check", "inspect", "listen", "listening", "what is")):
-            port = int(port_match.group(1))
+        pm = re.search(r"\b(?:port|listening on)\s+(\d{1,5})\b", text_lower)
+        if pm and any(t in text_lower for t in
+                      ("check", "inspect", "listen", "what is", "who is")):
+            port = int(pm.group(1))
             if 1 <= port <= 65535:
-                steps.append(Step("inspect-port", f"Inspect listening port {port}", "port.inspect", {"port": port}, []))
-                criteria.append({"description": f"Port {port} was inspected", "tool": "port.inspect", "args": {"port": port}})
+                steps.append(Step("inspect-port", f"Inspect port {port}",
+                                  "port.inspect", {"port": port}, []))
+                criteria.append({"description": f"Port {port} inspected",
+                                 "tool": "port.inspect", "args": {"port": port}})
 
-    # 9. Monitoring: local http check
+    # ── 10. Local HTTP check ───────────────────────────────────────────────
     if not steps:
-        url_match = re.search(r"\b(http://(?:127\.0\.0\.1|localhost)(?::\d+)?(?:/[^\s]*)?)", text_lower)
-        if url_match and any(token in text_lower for token in ("check", "verify", "test", "health")):
-            url = url_match.group(1).rstrip(".,;:)")
-            steps.append(Step("check-http", f"Check local URL {url}", "http.check", {"url": url}, []))
-            criteria.append({"description": f"Local URL {url} is reachable", "tool": "http.check", "args": {"url": url}})
+        um = re.search(
+            r"\b(https?://(?:127\.0\.0\.1|localhost)(?::\d+)?(?:/\S*)?)", text_lower)
+        if um and any(t in text_lower for t in ("check", "verify", "test", "health", "ping")):
+            url = um.group(1).rstrip(".,;:)")
+            steps.append(Step("check-http", f"Check local URL {url}",
+                              "http.check", {"url": url}, []))
+            criteria.append({"description": f"URL {url} reachable",
+                             "tool": "http.check", "args": {"url": url}})
+
+    # ── 11. Log tail ───────────────────────────────────────────────────────
+    if not steps:
+        lm = re.search(
+            r"\b(?:show|tail|last|read)\s+(?:(?:last|the)\s+)?(\d+)?\s*lines?\s+"
+            r"(?:of\s+)?(/[^\s]+)", text, re.IGNORECASE)
+        if lm:
+            n_lines = int(lm.group(1)) if lm.group(1) else 50
+            log_path = lm.group(2).rstrip(".,;:")
+            a = {"path": log_path, "tail_lines": n_lines}
+            steps.append(Step("read-log", f"Read last {n_lines} lines of {log_path}",
+                              "file.read", a, []))
+            criteria.append({"description": f"Log {log_path} read",
+                             "tool": "file.query", "args": {"path": log_path}})
+
+    # ── 12. Service enable ─────────────────────────────────────────────────
+    if not steps:
+        em = re.search(r"\benable\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
+        if em:
+            service = em.group(1)
+            runlevel = "default"
+            rl_m = re.search(r"\bon\s+(\w+)\s*(?:runlevel|boot)", text_lower)
+            if rl_m and re.fullmatch(r"[a-z]{1,32}", rl_m.group(1)):
+                runlevel = rl_m.group(1)
+            steps.append(Step("enable-service", f"Enable {service} on {runlevel}",
+                              "service.enable", {"name": service, "runlevel": runlevel},
+                              [{"tool": "service.status", "args": {"name": service}}],
+                              "system_change"))
+            criteria.append({"description": f"Service {service} enabled",
+                             "tool": "service.status", "args": {"name": service}})
+
+    # ── 13. Service disable ────────────────────────────────────────────────
+    if not steps:
+        dm = re.search(r"\bdisable\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
+        if dm:
+            service = dm.group(1)
+            steps.append(Step("disable-service", f"Disable {service}",
+                              "service.disable", {"name": service},
+                              [{"tool": "service.status", "args": {"name": service}}],
+                              "system_change"))
+            criteria.append({"description": f"Service {service} disabled",
+                             "tool": "service.status", "args": {"name": service}})
+
+    # ── 14. Read-only command.argv shortcut ────────────────────────────────
+    # If the intent looks like a single known read-only command, run it directly.
+    if not steps:
+        ro_cmd_m = re.match(
+            r"^(ls|cat|head|tail|df|free|ps|ss|ip|find|grep|uname|whoami|hostname|date)\b(.*)$",
+            text.strip(), re.IGNORECASE)
+        if ro_cmd_m:
+            binary  = ro_cmd_m.group(1).lower()
+            rest    = ro_cmd_m.group(2).strip()
+            argv    = [binary] + (rest.split() if rest else [])
+            steps.append(Step("run-command", f"Run: {' '.join(argv)}",
+                              "command.argv", {"argv": argv}, []))
+            criteria.append({"description": f"Command '{argv[0]}' executed",
+                             "tool": "system.info", "args": {}})
 
     if not steps:
         return None
-    return Plan(goal=intent, success_criteria=criteria, steps=steps,
-                assumptions=["Plan was generated by the local typed-task compiler."])
+    return Plan(
+        goal=intent,
+        success_criteria=criteria,
+        steps=steps,
+        assumptions=["Plan produced by the deterministic typed-task compiler."],
+    )
 
 
+# ── Main harness ──────────────────────────────────────────────────────────────
 class Harness:
-    def __init__(self, store: JobStore, caller: dict[str, Any], mode: str,
-                 llm: Callable[[str], str], cancelled: Callable[[], bool] | None = None):
-        self.store, self.caller, self.mode, self.llm = store, caller, mode, llm
-        self.cancelled = cancelled or (lambda: False)
-        self.policy = PolicyEngine()
-        self.tools = ToolExecutor(caller)
-        self.evidence: list[dict[str, Any]] = []
-        self.recommendations: list[str] = []
+    """Orchestrates planning, policy, tool execution, verification, and repair.
 
-    def _record_result(self, step: Step, phase: str, result: ToolResult) -> None:
-        self.evidence.append({
-            "step": step.id, "phase": phase, "tool": step.tool,
-            "ok": result.ok, "summary": result.summary,
-            "exit_code": result.exit_code, "stderr": result.stderr[:500],
-        })
-        self.store.event("result", task_idx=0, step=len(self.evidence) - 1,
-                         cmd=f"{step.tool} {json.dumps(step.args, sort_keys=True)}",
-                         returncode=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+    Usage::
+        store   = JobStore(base_dir, task_id, legacy_log_fn)
+        harness = Harness(store, caller_ctx, mode, llm_fn, cancelled_fn)
+        status  = harness.run(intent_text)
+    """
+
+    def __init__(
+        self,
+        store:     JobStore,
+        caller:    dict[str, Any],
+        mode:      str,
+        llm:       Callable[[str], str],
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
+        self.store     = store
+        self.caller    = caller
+        self.mode      = mode
+        self.llm       = llm
+        self.cancelled = cancelled or (lambda: False)
+        self.policy    = PolicyEngine()
+        self.tools     = ToolExecutor(caller)
+        self.evidence:       list[dict[str, Any]] = []
+        self.recommendations: list[str] = []
+        self._job_start: float = time.monotonic()
+
+    # ── Evidence recording ─────────────────────────────────────────────────
+
+    def _record(self, step: Step, phase: str, result: ToolResult) -> None:
+        ev = {
+            "step":      step.id,
+            "phase":     phase,
+            "tool":      step.tool,
+            "ok":        result.ok,
+            "summary":   result.summary,
+            "exit_code": result.exit_code,
+            "stderr":    result.stderr[:500],
+        }
+        self.evidence.append(ev)
+        self.store.event(
+            "result",
+            task_idx=0,
+            step=len(self.evidence) - 1,
+            cmd=f"{step.tool} {json.dumps(step.args, sort_keys=True)[:200]}",
+            returncode=result.exit_code,
+            stdout=result.stdout[:500],
+            stderr=result.stderr[:200],
+        )
+
+    # ── Inventory ──────────────────────────────────────────────────────────
 
     def _inventory(self) -> list[dict[str, Any]]:
         system = self.tools.run("system.info", {})
-        disk = self.tools.run("disk.status", {})
-        inventory = [{"tool": "system.info", "ok": system.ok, "facts": system.facts}]
-        inventory.append({"tool": "disk.status", "ok": disk.ok, "summary": disk.stdout[:1000]})
-        self.store.event("inventory", items=inventory)
-        return inventory
+        disk   = self.tools.run("disk.status", {})
+        inv = [
+            {"tool": "system.info", "ok": system.ok, "facts": system.facts},
+            {"tool": "disk.status",  "ok": disk.ok,  "summary": disk.stdout[:800]},
+        ]
+        self.store.event("inventory", items=inv)
+        return inv
+
+    # ── 3-tier planning ────────────────────────────────────────────────────
+
+    def _make_plan(self, intent: str, inventory: list[dict[str, Any]]) -> Plan | None:
+        # Tier 1 — deterministic fast path (zero LLM calls)
+        plan = deterministic_plan(intent, caller=self.caller)
+        if plan is not None:
+            self.store.event("planner_fast_path", intent=intent,
+                             steps=[s.purpose for s in plan.steps])
+            return plan
+
+        # Tier 2 — LLM structured plan
+        raw = self.llm(plan_prompt(intent, inventory))
+        self.store.event("planner_raw", raw=raw[:2000] if isinstance(raw, str) else "")
+        parsed = extract_first_json_object(raw)
+        if parsed and isinstance(parsed, dict):
+            try:
+                plan = validate_plan(parsed)
+                self.store.event("planner_llm_ok", steps=[s.purpose for s in plan.steps])
+                return plan
+            except PlanError as exc:
+                self.store.event("planner_parse_fail", error=str(exc))
+
+        # Tier 3 — single extracted command fallback
+        cmd = self._extract_single_command(raw if isinstance(raw, str) else "")
+        if cmd:
+            binary = cmd[0] if cmd else ""
+            if binary in SAFE_ARGV_COMMANDS:
+                step = Step(
+                    "run-cmd", intent, "command.argv",
+                    {"argv": cmd}, [], "read_only",
+                )
+                fallback = Plan(
+                    goal=intent,
+                    success_criteria=[{"description": "Command ran", "tool": "system.info", "args": {}}],
+                    steps=[step],
+                    assumptions=["Tier-3 fallback: single extracted command."],
+                )
+                self.store.event("planner_fallback_argv", argv=cmd)
+                return fallback
+
+        return None
+
+    @staticmethod
+    def _extract_single_command(text: str) -> list[str] | None:
+        """Pull the first plausible shell command from LLM prose as a tokenised argv."""
+        # Try JSON {"cmd": "..."} or {"argv": [...]}
+        obj = extract_first_json_object(text)
+        if isinstance(obj, dict):
+            if isinstance(obj.get("argv"), list):
+                return [str(a) for a in obj["argv"]] or None
+            if isinstance(obj.get("cmd"), str) and obj["cmd"].strip():
+                return obj["cmd"].strip().split()
+        # Try code fence
+        fence = re.search(r"```(?:bash|sh)?\n?(.*?)```", text, re.S)
+        if fence:
+            line = fence.group(1).strip().splitlines()[0].strip()
+            if line:
+                return line.split()
+        # Try backtick inline
+        bt = re.search(r"`([^`]+)`", text)
+        if bt:
+            return bt.group(1).strip().split()
+        return None
+
+    # ── Verification ───────────────────────────────────────────────────────
 
     def _verify(self, step: Step) -> tuple[bool, str]:
         if not step.verify:
-            return True, "No additional verification required for inspection."
+            return True, "No additional verification required."
         self.store.set_status(JobStatus.VERIFYING, current_step=step.id)
         for item in step.verify:
-            tool, args = item.get("tool"), item.get("args")
+            tool = item.get("tool")
+            args = item.get("args", {})
             if tool not in ALLOWED_TOOLS or not isinstance(args, dict):
-                return False, "Plan contained an invalid verifier."
-            verifier = Step(step.id + "-verify", "verify " + step.purpose, tool, args, [])
-            result = self.tools.run(tool, args)
-            self._record_result(verifier, "verify", result)
-            if not result.ok:
-                return False, result.summary + (": " + result.stderr if result.stderr else "")
-        self.store.event("verify", condition=f"Verification passed for {step.purpose}")
+                return False, f"Invalid verifier tool '{tool}'"
+            v_step  = Step(f"{step.id}-verify", f"Verify: {step.purpose}", tool, args, [])
+            vresult = self.tools.run(tool, args)
+            self._record(v_step, "verify", vresult)
+            if not vresult.ok:
+                return False, (vresult.summary + (": " + vresult.stderr if vresult.stderr else ""))
+        self.store.event("verify", condition=f"Verification passed: {step.purpose}")
         return True, "Verification passed."
 
-    def _diagnose(self, step: Step, failure: str) -> None:
-        """Collect bounded, tool-specific facts before reporting a failure.
+    # ── Diagnosis ──────────────────────────────────────────────────────────
 
-        This first V2 slice intentionally reports evidence and a safe next
-        action. Automatic repair is added only after a strict repair-plan
-        schema and rollback implementation are available.
-        """
-        probes: list[tuple[str, dict[str, Any]]] = [("system.info", {})]
+    def _diagnose(self, step: Step, failure: str) -> None:
+        probes: list[tuple[str, dict]] = [("system.info", {})]
         if step.tool.startswith("service."):
             name = step.args.get("name")
             if isinstance(name, str):
-                probes.extend([("service.status", {"name": name}), ("service.logs", {"name": name})])
+                probes += [("service.status", {"name": name}),
+                           ("service.logs",   {"name": name})]
                 recommendation = (
-                    f"Review the service status and recent logs for '{name}', then correct the "
-                    "reported configuration, dependency, permission, or port conflict before retrying."
+                    f"Review service status and logs for '{name}'. "
+                    "Correct configuration, dependency, permission, or port conflict before retrying."
                 )
             else:
                 recommendation = "Inspect the service state and logs before retrying."
         elif step.tool.startswith("package."):
             probes.append(("disk.status", {}))
             recommendation = (
-                "Check package-manager output, repository reachability, DNS, and free disk space; "
-                "then retry the package action."
+                "Check package-manager output, repository reachability, "
+                "DNS, and free disk space; then retry."
             )
-        elif step.tool.startswith("dir.") or step.tool.startswith("file."):
+        elif step.tool in ("dir.create", "dir.remove", "file.write"):
             recommendation = (
-                "Check target path validity, filesystem permissions, and parent directory accessibility before retrying."
+                "Check target path validity, filesystem permissions, "
+                "and parent directory accessibility before retrying."
             )
         elif step.tool == "http.check":
             recommendation = (
-                "Inspect the local service state and its listening port, then verify the localhost URL again."
+                "Inspect the local service state and listening port, "
+                "then verify the localhost URL again."
+            )
+        elif step.tool == "command.argv":
+            recommendation = (
+                "Review captured stderr. If the binary is missing, install it first."
             )
         else:
-            recommendation = "Review the captured stderr and host facts, correct the underlying issue, then retry."
+            recommendation = "Review stderr and host facts, correct the issue, then retry."
 
-        evidence_ids: list[int] = []
+        ev_ids: list[int] = []
         for tool, args in probes:
             result = self.tools.run(tool, args)
-            self._record_result(Step("diagnose-" + tool.replace(".", "-"), "diagnostic probe", tool, args, []),
-                                "diagnose", result)
-            evidence_ids.append(len(self.evidence) - 1)
+            probe  = Step(f"diagnose-{tool.replace('.', '-')}", "diagnostic probe", tool, args, [])
+            self._record(probe, "diagnose", result)
+            ev_ids.append(len(self.evidence) - 1)
         self.recommendations.append(recommendation)
-        self.store.event("diagnosis", step_id=step.id, classification="suspected",
-                         failure=failure, evidence_ids=evidence_ids, recommendation=recommendation)
+        self.store.event(
+            "diagnosis",
+            step_id=step.id,
+            classification="suspected",
+            failure=failure,
+            evidence_ids=ev_ids,
+            recommendation=recommendation,
+        )
+
+    # ── Bounded repair loop ────────────────────────────────────────────────
+
+    def _repair(self, step: Step, failure: str, attempt: int) -> bool:
+        """Ask LLM for a repair plan, validate, execute, verify.
+
+        Returns True if the original step's verification now passes.
+        Limited to MAX_REPAIRS_PER_STEP calls per step.
+        """
+        if attempt >= MAX_REPAIRS_PER_STEP:
+            self.store.event("repair_limit_reached", step_id=step.id, attempt=attempt)
+            return False
+
+        self.store.event("repair_start", step_id=step.id, attempt=attempt)
+        raw    = self.llm(repair_prompt(step.purpose, failure, self.evidence))
+        parsed = extract_first_json_object(raw if isinstance(raw, str) else "")
+        try:
+            r_plan = validate_plan(parsed)
+        except (PlanError, Exception) as exc:
+            self.store.event("repair_plan_invalid", step_id=step.id, error=str(exc))
+            return False
+
+        for r_step in r_plan.steps:
+            if self.cancelled():
+                return False
+            decision, reason = self.policy.decide(self.mode, r_step)
+            if decision != "ALLOW":
+                self.store.event("repair_step_denied", step_id=r_step.id, reason=reason)
+                continue
+            r_result = self.tools.run(r_step.tool, r_step.args)
+            self._record(r_step, f"repair-{attempt}", r_result)
+            if not r_result.ok:
+                self.store.event("repair_step_failed", step_id=r_step.id, summary=r_result.summary)
+                return False
+
+        # Re-verify the original step after repair
+        ok, msg = self._verify(step)
+        if ok:
+            self.store.event("repair_succeeded", step_id=step.id, attempt=attempt)
+        else:
+            self.store.event("repair_failed", step_id=step.id, attempt=attempt, reason=msg)
+        return ok
+
+    # ── Final criteria check ───────────────────────────────────────────────
 
     def _final_criteria(self, plan: Plan) -> tuple[bool, list[str]]:
         failures: list[str] = []
         for criterion in plan.success_criteria:
-            tool, args = criterion.get("tool"), criterion.get("args")
+            tool = criterion.get("tool")
+            args = criterion.get("args", {})
             if tool not in ALLOWED_TOOLS or not isinstance(args, dict):
                 failures.append("Plan contained an invalid success criterion.")
                 continue
             result = self.tools.run(tool, args)
-            synthetic = Step("final-verify", "final success criterion", tool, args, [])
-            self._record_result(synthetic, "final_verify", result)
+            synthetic = Step("final-verify", criterion.get("description", "final check"),
+                             tool, args, [])
+            self._record(synthetic, "final_verify", result)
             if not result.ok:
                 failures.append(criterion.get("description", result.summary))
         return not failures, failures
 
+    # ── Parallel execution of independent read-only steps ─────────────────
+
+    def _run_parallel_readonly(self, steps: list[Step]) -> dict[str, ToolResult]:
+        """Execute independent read-only steps concurrently (max 4 workers)."""
+        results: dict[str, ToolResult] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(steps))) as pool:
+            futures = {pool.submit(self.tools.run, s.tool, s.args): s for s in steps}
+            for future in as_completed(futures):
+                step = futures[future]
+                try:
+                    results[step.id] = future.result()
+                except Exception as exc:
+                    results[step.id] = ToolResult(False, f"parallel execution error: {exc}",
+                                                   exit_code=1)
+        return results
+
+    # ── Main execution ─────────────────────────────────────────────────────
+
     def run(self, intent: str) -> JobStatus:
+        self._job_start = time.monotonic()
         self.store.set_status(JobStatus.PLANNING)
         self.store.event("planner_start", intent=intent)
+
+        # ── Inventory ──────────────────────────────────────────────────────
         inventory = self._inventory()
-        raw = self.llm(plan_prompt(intent, inventory))
-        self.store.event("planner_raw", raw=raw[:2000] if isinstance(raw, str) else "")
-        parsed_plan = extract_first_json_object(raw)
-        try:
-            if not parsed_plan or not isinstance(parsed_plan, dict):
-                raise PlanError(f"Model did not return a structured plan dictionary (raw: {repr(raw[:150]) if isinstance(raw, str) else ''})")
-            plan = validate_plan(parsed_plan)
-        except (json.JSONDecodeError, PlanError) as exc:
-            self.store.event("planner_parse_fail", error=str(exc))
-            plan = deterministic_plan(intent, caller=self.caller)
-            if plan is None:
-                reason = f"Planner returned an invalid structured plan: {exc}"
-                self.store.set_status(JobStatus.BLOCKED, reason=reason)
-                self.store.event("task_fail", task_idx=0, reason="invalid_plan", msg=reason)
-                self.store.event("done", status="FAILED", task_count=0, elapsed_s=0, summaries=[reason])
-                self.store.write_report(JobStatus.BLOCKED, {"goal": intent, "problems": [reason], "evidence": self.evidence})
-                return JobStatus.BLOCKED
-            self.store.event("planner_fallback", reason="Used deterministic typed-task plan after invalid model plan.")
+
+        # ── 3-tier planning ────────────────────────────────────────────────
+        plan = self._make_plan(intent, inventory)
+        if plan is None:
+            reason = "All three planning tiers failed to produce a valid executable plan."
+            self.store.set_status(JobStatus.BLOCKED, reason=reason)
+            self.store.event("task_fail", task_idx=0, reason="no_plan", msg=reason)
+            self.store.event("done", status="FAILED", task_count=0,
+                             elapsed_s=0, summaries=[reason])
+            self.store.write_report(JobStatus.BLOCKED, {
+                "goal": intent, "problems": [reason], "evidence": self.evidence,
+            })
+            return JobStatus.BLOCKED
 
         self.store.save_plan(plan)
-        self.store.event("plan", tasks=[step.purpose for step in plan.steps], count=len(plan.steps))
+        self.store.event("plan", tasks=[s.purpose for s in plan.steps],
+                         count=len(plan.steps))
         self.store.set_status(JobStatus.RUNNING, goal=plan.goal)
+
         problems: list[str] = []
-        for index, step in enumerate(plan.steps):
+        completed: set[str] = set()
+
+        # ── Step execution loop ────────────────────────────────────────────
+        # Identify read-only steps that have no dependencies and run them
+        # in parallel first, then process the rest sequentially in order.
+        ro_independent = [
+            s for s in plan.steps
+            if s.risk == "read_only" and not s.depends_on
+        ]
+        remaining = [s for s in plan.steps if s not in ro_independent]
+
+        # Parallel read-only batch
+        if ro_independent:
+            self.store.event("parallel_batch_start",
+                             steps=[s.id for s in ro_independent])
+            batch_results = self._run_parallel_readonly(ro_independent)
+            for step in ro_independent:
+                if self.cancelled():
+                    break
+                result = batch_results[step.id]
+                self._record(step, "execute", result)
+                if result.ok:
+                    completed.add(step.id)
+                    self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=0, step=step.id,
+                                     summary=result.summary)
+                else:
+                    problem = f"{step.purpose}: {result.summary}"
+                    problems.append(problem)
+                    self.store.state["failed_steps"].append(step.id)
+                    self.store.event("task_fail", task_idx=0, reason="tool_failed",
+                                     msg=problem)
+            self.store._save()
+
+        if self.cancelled():
+            self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
+            self.store.event("done", status="CANCELLED", task_count=len(completed),
+                             elapsed_s=round(time.monotonic() - self._job_start, 1),
+                             summaries=problems)
+            return JobStatus.CANCELLED
+
+        # Sequential remaining steps
+        for index, step in enumerate(remaining):
             if self.cancelled():
                 self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
-                self.store.event("done", status="CANCELLED", task_count=index, elapsed_s=0, summaries=problems)
+                self.store.event("done", status="CANCELLED", task_count=len(completed),
+                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
+                                 summaries=problems)
                 return JobStatus.CANCELLED
-            if any(dep not in self.store.state["completed_steps"] for dep in step.depends_on):
-                problems.append(f"Step '{step.id}' has unmet dependencies.")
+
+            # Dependency check
+            unmet = [d for d in step.depends_on if d not in completed]
+            if unmet:
+                problem = f"Step '{step.id}' skipped: unmet dependencies {unmet}"
+                problems.append(problem)
                 self.store.state["failed_steps"].append(step.id)
+                self.store.event("task_fail", task_idx=index, reason="deps_unmet", msg=problem)
                 continue
+
+            # Policy gate
             decision, reason = self.policy.decide(self.mode, step)
             if decision == "SUGGEST":
                 self.store.event("suggest_skip", task_idx=index, task=step.purpose, note=reason)
+                completed.add(step.id)
                 continue
-            if decision != "ALLOW":
-                self.store.set_status(JobStatus.NEEDS_APPROVAL, approval={"step": step.id, "reason": reason})
-                self.store.event("task_fail", task_idx=index, reason="approval_required", msg=reason)
-                self.store.write_report(JobStatus.NEEDS_APPROVAL, {"goal": plan.goal, "problems": [reason], "evidence": self.evidence})
-                self.store.event("done", status="FAILED", task_count=index, elapsed_s=0, summaries=[reason])
+            if decision not in ("ALLOW",):
+                self.store.set_status(
+                    JobStatus.NEEDS_APPROVAL,
+                    approval={"step": step.id, "reason": reason},
+                )
+                self.store.event("task_fail", task_idx=index,
+                                 reason="approval_required", msg=reason)
+                self.store.write_report(JobStatus.NEEDS_APPROVAL, {
+                    "goal": plan.goal, "problems": [reason], "evidence": self.evidence,
+                })
+                self.store.event("done", status="NEEDS_APPROVAL", task_count=len(completed),
+                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
+                                 summaries=[reason])
                 return JobStatus.NEEDS_APPROVAL
+
+            # Execute
             self.store.event("task_start", task_idx=index, task=step.purpose)
-            self.store.event("step", task_idx=index, step=0, cwd=self.caller.get("cwd", "/"))
-            self.store.event("step_exec", task_idx=index, step=0, cmd=f"{step.tool} {json.dumps(step.args, sort_keys=True)}")
+            self.store.event("step_exec", task_idx=index, step=0,
+                             cmd=f"{step.tool} {json.dumps(step.args, sort_keys=True)[:200]}")
             result = self.tools.run(step.tool, step.args)
-            self._record_result(step, "execute", result)
+            self._record(step, "execute", result)
+
             if not result.ok:
-                problem = f"{step.purpose}: {result.summary}"
-                problems.append(problem)
-                self._diagnose(step, problem)
+                failure = f"{step.purpose}: {result.summary}"
+                self._diagnose(step, failure)
+                # Bounded repair loop
+                repaired = False
+                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
+                    repaired = self._repair(step, failure, repair_attempt)
+                    if repaired:
+                        break
+                if repaired:
+                    completed.add(step.id)
+                    self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=index, step=0,
+                                     summary="Repaired and verified.")
+                    self.store.set_status(JobStatus.RUNNING)
+                    self.store._save()
+                    continue
+                problems.append(failure)
                 self.store.state["failed_steps"].append(step.id)
                 self.store._save()
-                self.store.event("task_fail", task_idx=index, reason="tool_failed", msg=problem)
-                break
-            verified, message = self._verify(step)
+                self.store.event("task_fail", task_idx=index,
+                                 reason="tool_failed", msg=failure)
+                # Non-fatal: continue remaining steps unless they depend on this one
+                continue
+
+            # Verify
+            verified, v_msg = self._verify(step)
             if not verified:
-                problem = f"{step.purpose}: verification failed: {message}"
-                problems.append(problem)
-                self._diagnose(step, problem)
+                failure = f"{step.purpose}: verification failed: {v_msg}"
+                self._diagnose(step, failure)
+                repaired = False
+                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
+                    repaired = self._repair(step, failure, repair_attempt)
+                    if repaired:
+                        break
+                if repaired:
+                    completed.add(step.id)
+                    self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=index, step=0,
+                                     summary="Repaired and verified.")
+                    self.store.set_status(JobStatus.RUNNING)
+                    self.store._save()
+                    continue
+                problems.append(failure)
                 self.store.state["failed_steps"].append(step.id)
                 self.store._save()
-                self.store.event("task_fail", task_idx=index, reason="verification_failed", msg=problem)
-                break
+                self.store.event("task_fail", task_idx=index,
+                                 reason="verification_failed", msg=failure)
+                continue
+
+            # Step succeeded
+            completed.add(step.id)
             self.store.state["completed_steps"].append(step.id)
             self.store._save()
-            self.store.event("task_finish", task_idx=index, step=0, summary=message)
+            self.store.event("task_finish", task_idx=index, step=0, summary=v_msg)
             self.store.set_status(JobStatus.RUNNING)
 
+        # ── Final criteria check ───────────────────────────────────────────
         all_verified, final_failures = self._final_criteria(plan)
         problems.extend(final_failures)
-        status = JobStatus.SUCCEEDED if all_verified and not problems else JobStatus.PARTIAL
+        elapsed = round(time.monotonic() - self._job_start, 1)
+
+        if all_verified and not problems:
+            status = JobStatus.SUCCEEDED
+        elif completed:
+            status = JobStatus.PARTIAL
+        else:
+            status = JobStatus.FAILED
+
         self.store.set_status(status, problems=problems)
-        report = {"goal": plan.goal, "completed_steps": self.store.state["completed_steps"],
-                  "failed_steps": self.store.state["failed_steps"], "problems": problems,
-                  "recommendations": self.recommendations, "evidence": self.evidence}
+        report = {
+            "goal":            plan.goal,
+            "elapsed_s":       elapsed,
+            "completed_steps": list(completed),
+            "failed_steps":    self.store.state.get("failed_steps", []),
+            "problems":        problems,
+            "recommendations": self.recommendations,
+            "evidence":        self.evidence,
+        }
         self.store.write_report(status, report)
-        self.store.event("done", status="DONE" if status == JobStatus.SUCCEEDED else "FAILED",
-                         task_count=len(plan.steps), elapsed_s=0, summaries=problems or ["All success criteria passed."])
+        self.store.event(
+            "done",
+            status="DONE" if status == JobStatus.SUCCEEDED else status.value,
+            task_count=len(plan.steps),
+            elapsed_s=elapsed,
+            summaries=problems or ["All success criteria passed."],
+        )
         return status

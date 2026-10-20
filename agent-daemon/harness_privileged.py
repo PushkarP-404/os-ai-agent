@@ -83,7 +83,10 @@ def serve(path: str = SOCKET_PATH) -> None:
                         continue
                     request = json.loads(bytes(data).split(b"\n", 1)[0].decode("utf-8"))
                     tool, args = request.get("tool"), request.get("args")
-                    if tool not in PolicyEngine.CHANGE or not isinstance(args, dict):
+                    # command.argv is READ_ONLY in PolicyEngine but may still be proxied
+                    # through the broker when the daemon is unprivileged and needs PATH
+                    all_allowed = PolicyEngine.CHANGE | PolicyEngine.READ_ONLY
+                    if tool not in all_allowed or not isinstance(args, dict):
                         conn.sendall(_error("Privileged request denied", "tool is not permitted", 126))
                         continue
                     caller = request.get("caller")
