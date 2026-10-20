@@ -31,7 +31,7 @@ import paramiko
 HOST = "127.0.0.1"
 PORT = 2222
 USER = "root"
-PASSWORD = os.environ.get("VM_PASSWORD", "password")
+PASSWORD = os.environ.get("VM_PASSWORD", "password_123")
 
 # ── Local paths (Windows) ─────────────────────────────────────────────────────
 LOCAL_BASE = r"C:\qemu-alpine\os-ai-agent"

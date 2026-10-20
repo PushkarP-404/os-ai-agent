@@ -22,7 +22,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 HOST = "127.0.0.1"
 PORT = 2222
 USER = "root"
-PASSWORD = os.environ.get("VM_PASSWORD", "password")
+PASSWORD = os.environ.get("VM_PASSWORD", "password_123")
 
 LOCAL_EXPORT_DIR = r"C:\qemu-alpine\ai-agent-apk-repo"
 REMOTE_REPO_DIR = "/srv/apk-repo/x86_64"
