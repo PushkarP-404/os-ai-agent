@@ -58,6 +58,7 @@ class JobStatus(str, Enum):
     RUNNING        = "RUNNING"
     VERIFYING      = "VERIFYING"
     NEEDS_APPROVAL = "NEEDS_APPROVAL"
+    INTERRUPTED    = "INTERRUPTED"
     SUCCEEDED      = "SUCCEEDED"
     PARTIAL        = "PARTIAL"
     BLOCKED        = "BLOCKED"
@@ -105,6 +106,11 @@ class Plan:
     steps: list[Step]
     assumptions: list[str] = field(default_factory=list)
 
+    def get_step(self, step_id: str) -> Step | None:
+        for s in self.steps:
+            if s.id == step_id:
+                return s
+        return None
 
 
 # ── Dynamic variable scratchpad interpolator ─────────────────────────────────
@@ -241,6 +247,7 @@ class JobStore:
             "completed_steps": [],
             "failed_steps":    [],
             "scratchpad":      {},
+            "checkpoint":      None,
             "approval":        None,
         }
         self._save()
@@ -256,6 +263,40 @@ class JobStore:
                 self.state = json.load(f)
         return self.state
 
+    def load_plan(self) -> Plan | None:
+        if not self.plan_path.exists():
+            return None
+        try:
+            with self.plan_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            steps = []
+            for s in data.get("steps", []):
+                steps.append(Step(
+                    id=s["id"],
+                    purpose=s["purpose"],
+                    tool=s["tool"],
+                    args=s.get("args", {}),
+                    verify=s.get("verify", []),
+                    risk=s.get("risk", "read_only"),
+                    depends_on=s.get("depends_on", []),
+                    captures=s.get("captures", {}),
+                ))
+            return Plan(
+                goal=data.get("goal", ""),
+                success_criteria=data.get("success_criteria", []),
+                steps=steps,
+                assumptions=data.get("assumptions", []),
+            )
+        except Exception:
+            return None
+
+    def set_checkpoint(self, step_id: str, stage: str) -> None:
+        self.state["checkpoint"] = {
+            "current_step": step_id,
+            "stage":        stage,
+            "updated_at":   time.time(),
+        }
+        self._save()
 
     def update_scratchpad(self, updates: dict[str, Any]) -> None:
         sp = self.state.setdefault("scratchpad", {})
@@ -1542,6 +1583,7 @@ class Harness:
                 continue
 
             # Checkpoint & Execute
+            self.store.set_checkpoint(step.id, "EXECUTE")
             self.store.event("task_start", task_idx=index, task=step.purpose)
             self.store.event("step_exec", task_idx=index, step=0,
                              cmd=f"{step.tool} {json.dumps(resolved_args, sort_keys=True)[:200]}")
@@ -1564,7 +1606,7 @@ class Harness:
                     self.store.event("task_finish", task_idx=index, step=0,
                                      summary="Repaired and verified.")
                     self.store.set_status(JobStatus.RUNNING)
-                    self.store._save()
+                    self.store.set_checkpoint(step.id, "COMPLETED")
                     continue
                 problems.append(failure)
                 if step.id not in self.store.state["failed_steps"]:
@@ -1576,6 +1618,7 @@ class Harness:
                 continue
 
             # Verify
+            self.store.set_checkpoint(step.id, "VERIFY")
             verified, v_msg = self._verify(step)
             if not verified:
                 failure = f"{step.purpose}: verification failed: {v_msg}"
@@ -1592,7 +1635,7 @@ class Harness:
                     self.store.event("task_finish", task_idx=index, step=0,
                                      summary="Repaired and verified.")
                     self.store.set_status(JobStatus.RUNNING)
-                    self.store._save()
+                    self.store.set_checkpoint(step.id, "COMPLETED")
                     continue
                 problems.append(failure)
                 if step.id not in self.store.state["failed_steps"]:
@@ -1606,11 +1649,12 @@ class Harness:
             completed.add(step.id)
             if step.id not in self.store.state["completed_steps"]:
                 self.store.state["completed_steps"].append(step.id)
-            self.store._save()
+            self.store.set_checkpoint(step.id, "COMPLETED")
             self.store.event("task_finish", task_idx=index, step=0, summary=v_msg)
             self.store.set_status(JobStatus.RUNNING)
 
         # ── Final criteria check ───────────────────────────────────────────
+        self.store.set_checkpoint("final_criteria", "VERIFY")
         all_verified, final_failures = self._final_criteria(plan)
         problems.extend(final_failures)
         elapsed = round(time.monotonic() - self._job_start, 1)
@@ -1623,6 +1667,7 @@ class Harness:
             status = JobStatus.FAILED
 
         self.store.set_status(status, problems=problems)
+        self.store.set_checkpoint("job", status.value)
         report = {
             "goal":            plan.goal,
             "elapsed_s":       elapsed,
@@ -1672,3 +1717,42 @@ class Harness:
         self.store.set_status(JobStatus.RUNNING, goal=plan.goal)
         return self._execute_plan(plan, completed=set(), problems=[])
 
+    # ── Mid-job crash resume ───────────────────────────────────────────────
+
+    def resume(self) -> JobStatus:
+        """Resume execution of an interrupted job from its persistent checkpoint."""
+        self._job_start = time.monotonic()
+        state = self.store.load_state()
+        plan  = self.store.load_plan()
+        if plan is None:
+            reason = f"Cannot resume job {self.store.task_id}: plan.json is missing or corrupted."
+            self.store.set_status(JobStatus.FAILED, reason=reason)
+            self.store.event("resume_failed", reason=reason)
+            return JobStatus.FAILED
+
+        self.scratchpad = state.get("scratchpad", {})
+        completed = set(state.get("completed_steps", []))
+        problems  = list(state.get("failed_steps", []))
+
+        self.store.set_status(JobStatus.RUNNING, resumed_at=time.time())
+        self.store.event(
+            "job_resumed",
+            task_id=self.store.task_id,
+            completed_count=len(completed),
+            scratchpad_keys=list(self.scratchpad.keys()),
+        )
+
+        # Sanity verification of previously completed system-changing steps
+        for step_id in list(completed):
+            step = plan.get_step(step_id)
+            if step and step.risk == "system_change" and step.verify:
+                ok, v_msg = self._verify(step)
+                if not ok:
+                    self.store.event("resume_sanity_failed", step_id=step_id, error=v_msg)
+                    # Prior state was lost during downtime; re-enqueue this step
+                    completed.remove(step_id)
+                    if step_id in self.store.state.get("completed_steps", []):
+                        self.store.state["completed_steps"].remove(step_id)
+                    self.store._save()
+
+        return self._execute_plan(plan, completed=completed, problems=problems)
