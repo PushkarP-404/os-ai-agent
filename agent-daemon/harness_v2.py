@@ -95,6 +95,7 @@ class Step:
     verify: list[dict[str, Any]]
     risk: str = "read_only"
     depends_on: list[str] = field(default_factory=list)
+    captures: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -105,11 +106,87 @@ class Plan:
     assumptions: list[str] = field(default_factory=list)
 
 
+
+# ── Dynamic variable scratchpad interpolator ─────────────────────────────────
+class VariableInterpolator:
+    """Resolves dynamic variables from the scratchpad and extracts step outputs."""
+
+    VAR_PATTERN = re.compile(
+        r"\$\{(?:scratchpad\.)?([a-zA-Z0-9_\-]+)\}|\{\{([a-zA-Z0-9_\-]+)\}\}"
+    )
+
+    @classmethod
+    def resolve_string(cls, template: str, scratchpad: dict[str, Any]) -> str:
+        def repl(match: re.Match) -> str:
+            key = match.group(1) or match.group(2)
+            if key not in scratchpad:
+                keys = list(scratchpad.keys())
+                raise KeyError(
+                    f"Variable '{key}' not found in scratchpad. Available: {keys}"
+                )
+            return str(scratchpad[key])
+        return cls.VAR_PATTERN.sub(repl, template)
+
+    @classmethod
+    def resolve_data(cls, data: Any, scratchpad: dict[str, Any]) -> Any:
+        if isinstance(data, str):
+            return cls.resolve_string(data, scratchpad)
+        elif isinstance(data, list):
+            return [cls.resolve_data(item, scratchpad) for item in data]
+        elif isinstance(data, dict):
+            return {k: cls.resolve_data(v, scratchpad) for k, v in data.items()}
+        return data
+
+    @classmethod
+    def extract_captures(cls, captures: dict[str, str], result: ToolResult) -> dict[str, Any]:
+        extracted: dict[str, Any] = {}
+        for var_name, rule in captures.items():
+            if rule == "stdout:strip":
+                extracted[var_name] = result.stdout.strip()
+            elif rule == "stdout:first_line":
+                lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+                extracted[var_name] = lines[0] if lines else ""
+            elif rule == "exit_code":
+                extracted[var_name] = result.exit_code
+            elif rule.startswith("regex:"):
+                pattern = rule[len("regex:"):]
+                m = re.search(pattern, result.stdout)
+                if m:
+                    extracted[var_name] = m.group(1) if m.groups() else m.group(0)
+                else:
+                    raise ValueError(
+                        f"Capture regex '{pattern}' did not match stdout: {result.stdout[:200]}"
+                    )
+            elif rule.startswith("json:"):
+                path = rule[len("json:"):].split(".")
+                curr = None
+                try:
+                    curr = json.loads(result.stdout.strip())
+                except Exception:
+                    m = re.search(r"(\{[\s\S]*\})", result.stdout)
+                    if m:
+                        curr = json.loads(m.group(1))
+                    else:
+                        raise ValueError(f"No JSON found in stdout: {result.stdout[:200]}")
+                for p in path:
+                    curr = curr[p]
+                extracted[var_name] = curr
+            else:
+                extracted[var_name] = result.stdout.strip()
+        return extracted
+
+
 # ── Atomic persistence ────────────────────────────────────────────────────────
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
     try:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod:
+            try:
+                fchmod(fd, 0o644)
+            except OSError:
+                pass
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.flush()
@@ -117,7 +194,10 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
         os.replace(temp_name, path)
     finally:
         if os.path.exists(temp_name):
-            os.unlink(temp_name)
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 # ── Job store ─────────────────────────────────────────────────────────────────
@@ -160,6 +240,7 @@ class JobStore:
             },
             "completed_steps": [],
             "failed_steps":    [],
+            "scratchpad":      {},
             "approval":        None,
         }
         self._save()
@@ -168,6 +249,18 @@ class JobStore:
     def _save(self) -> None:
         self.state["updated_at"] = time.time()
         _atomic_json(self.state_path, self.state)
+
+    def load_state(self) -> dict[str, Any]:
+        if self.state_path.exists():
+            with self.state_path.open("r", encoding="utf-8") as f:
+                self.state = json.load(f)
+        return self.state
+
+
+    def update_scratchpad(self, updates: dict[str, Any]) -> None:
+        sp = self.state.setdefault("scratchpad", {})
+        sp.update(updates)
+        self._save()
 
     def event(self, event: str, **payload: Any) -> None:
         record = {"event": event, "ts": time.time(), "job_id": self.task_id, **payload}
@@ -296,7 +389,8 @@ class ToolExecutor:
         self.privileged      = PrivilegedToolClient() if allow_privilege_proxy else None
 
     def run(self, tool: str, args: dict[str, Any]) -> ToolResult:
-        if tool in PolicyEngine.CHANGE and os.geteuid() != 0 and self.privileged:
+        is_root = getattr(os, "geteuid", lambda: 0)() == 0
+        if tool in PolicyEngine.CHANGE and not is_root and self.privileged:
             return self.privileged.run(tool, args, caller=self.caller)
         handler = getattr(self, "tool_" + tool.replace(".", "_"), None)
         if not handler:
@@ -315,17 +409,23 @@ class ToolExecutor:
         effective_cwd = cwd or self.caller.get("cwd")
         if not effective_cwd or not os.path.isdir(effective_cwd):
             effective_cwd = self.caller.get("home", "/")
+        exec_env = {
+            "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+            "HOME": self.caller.get("home", "/"),
+            "USER": self.caller.get("user", "root"),
+        }
+        if "SYSTEMROOT" in os.environ:
+            exec_env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+        if "WINDIR" in os.environ:
+            exec_env["WINDIR"] = os.environ["WINDIR"]
+
         result = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             timeout=timeout or self.command_timeout,
             cwd=effective_cwd,
-            env={
-                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "HOME": self.caller.get("home", "/"),
-                "USER": self.caller.get("user", "root"),
-            },
+            env=exec_env,
         )
         stdout = result.stdout[:8192]
         stderr = result.stderr[:4096]
@@ -530,7 +630,7 @@ class ToolExecutor:
         path.mkdir(parents=True, exist_ok=True)
         uid = args.get("uid", self.caller.get("uid"))
         gid = args.get("gid", self.caller.get("gid"))
-        if uid is not None and gid is not None and os.geteuid() == 0:
+        if uid is not None and gid is not None and getattr(os, "geteuid", lambda: 0)() == 0 and hasattr(os, "chown"):
             try:
                 os.chown(path, int(uid), int(gid))
             except OSError:
@@ -569,7 +669,7 @@ class ToolExecutor:
         path.write_text(content, encoding="utf-8")
         uid = args.get("uid", self.caller.get("uid"))
         gid = args.get("gid", self.caller.get("gid"))
-        if uid is not None and gid is not None and os.geteuid() == 0:
+        if uid is not None and gid is not None and getattr(os, "geteuid", lambda: 0)() == 0 and hasattr(os, "chown"):
             try:
                 os.chown(path, int(uid), int(gid))
             except OSError:
@@ -623,8 +723,14 @@ def validate_plan(value: Any) -> Plan:
         deps = raw.get("depends_on", [])
         if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
             raise PlanError(f"step '{step_id}' has invalid depends_on list")
+        captures = raw.get("captures", {})
+        if not isinstance(captures, dict):
+            raise PlanError(f"step '{step_id}' has invalid captures dict")
+        for cap_k, cap_v in captures.items():
+            if not isinstance(cap_k, str) or not isinstance(cap_v, str):
+                raise PlanError(f"step '{step_id}' captures must map strings to strings")
         ids.add(step_id)
-        steps.append(Step(step_id, purpose, tool, step_args, verify, risk, deps))
+        steps.append(Step(step_id, purpose, tool, step_args, verify, risk, deps, captures))
     # Validate dependency graph — no forward refs to unknown IDs, no self-dep
     for step in steps:
         for dep in step.depends_on:
@@ -1059,6 +1165,7 @@ class Harness:
         self.tools     = ToolExecutor(caller)
         self.evidence:       list[dict[str, Any]] = []
         self.recommendations: list[str] = []
+        self.scratchpad:     dict[str, Any] = {}
         self._job_start: float = time.monotonic()
 
     # ── Evidence recording ─────────────────────────────────────────────────
@@ -1083,6 +1190,20 @@ class Harness:
             stdout=result.stdout[:500],
             stderr=result.stderr[:200],
         )
+        # Dynamic variable capture into scratchpad
+        if phase == "execute" and result.ok and step.captures:
+            try:
+                extracted = VariableInterpolator.extract_captures(step.captures, result)
+                self.scratchpad.update(extracted)
+                self.store.update_scratchpad(extracted)
+                self.store.event(
+                    "scratchpad_set",
+                    step=step.id,
+                    captured=list(extracted.keys()),
+                    values={k: str(v)[:200] for k, v in extracted.items()},
+                )
+            except Exception as cap_err:
+                self.store.event("scratchpad_error", step=step.id, error=str(cap_err))
 
     # ── Inventory ──────────────────────────────────────────────────────────
 
@@ -1168,9 +1289,13 @@ class Harness:
         self.store.set_status(JobStatus.VERIFYING, current_step=step.id)
         for item in step.verify:
             tool = item.get("tool")
-            args = item.get("args", {})
-            if tool not in ALLOWED_TOOLS or not isinstance(args, dict):
+            raw_args = item.get("args", {})
+            if tool not in ALLOWED_TOOLS or not isinstance(raw_args, dict):
                 return False, f"Invalid verifier tool '{tool}'"
+            try:
+                args = VariableInterpolator.resolve_data(raw_args, self.scratchpad)
+            except KeyError as ke:
+                return False, f"Verifier variable resolution error: {ke}"
             v_step  = Step(f"{step.id}-verify", f"Verify: {step.purpose}", tool, args, [])
             vresult = self.tools.run(tool, args)
             self._record(v_step, "verify", vresult)
@@ -1281,9 +1406,14 @@ class Harness:
         failures: list[str] = []
         for criterion in plan.success_criteria:
             tool = criterion.get("tool")
-            args = criterion.get("args", {})
-            if tool not in ALLOWED_TOOLS or not isinstance(args, dict):
+            raw_args = criterion.get("args", {})
+            if tool not in ALLOWED_TOOLS or not isinstance(raw_args, dict):
                 failures.append("Plan contained an invalid success criterion.")
+                continue
+            try:
+                args = VariableInterpolator.resolve_data(raw_args, self.scratchpad)
+            except KeyError as ke:
+                failures.append(f"Criterion variable resolution error: {ke}")
                 continue
             result = self.tools.run(tool, args)
             synthetic = Step("final-verify", criterion.get("description", "final check"),
@@ -1298,8 +1428,15 @@ class Harness:
     def _run_parallel_readonly(self, steps: list[Step]) -> dict[str, ToolResult]:
         """Execute independent read-only steps concurrently (max 4 workers)."""
         results: dict[str, ToolResult] = {}
+        resolved_step_args = {}
+        for s in steps:
+            try:
+                resolved_step_args[s.id] = VariableInterpolator.resolve_data(s.args, self.scratchpad)
+            except KeyError:
+                resolved_step_args[s.id] = s.args
+
         with ThreadPoolExecutor(max_workers=min(4, len(steps))) as pool:
-            futures = {pool.submit(self.tools.run, s.tool, s.args): s for s in steps}
+            futures = {pool.submit(self.tools.run, s.tool, resolved_step_args[s.id]): s for s in steps}
             for future in as_completed(futures):
                 step = futures[future]
                 try:
@@ -1308,6 +1445,203 @@ class Harness:
                     results[step.id] = ToolResult(False, f"parallel execution error: {exc}",
                                                    exit_code=1)
         return results
+
+    # ── Shared Plan Execution Engine ──────────────────────────────────────
+
+    def _execute_plan(self, plan: Plan, completed: set[str], problems: list[str]) -> JobStatus:
+        """Executes plan steps, tracking checkpoint, scratchpad, and verification."""
+        # Filter read-only independent steps that haven't completed
+        ro_independent = [
+            s for s in plan.steps
+            if s.risk == "read_only" and not s.depends_on and s.id not in completed
+        ]
+        remaining = [s for s in plan.steps if s not in ro_independent and s.id not in completed]
+
+        # Parallel read-only batch
+        if ro_independent:
+            self.store.event("parallel_batch_start",
+                             steps=[s.id for s in ro_independent])
+            batch_results = self._run_parallel_readonly(ro_independent)
+            for step in ro_independent:
+                if self.cancelled():
+                    break
+                result = batch_results[step.id]
+                self._record(step, "execute", result)
+                if result.ok:
+                    completed.add(step.id)
+                    if step.id not in self.store.state["completed_steps"]:
+                        self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=0, step=step.id,
+                                     summary=result.summary)
+                else:
+                    problem = f"{step.purpose}: {result.summary}"
+                    problems.append(problem)
+                    if step.id not in self.store.state["failed_steps"]:
+                        self.store.state["failed_steps"].append(step.id)
+                    self.store.event("task_fail", task_idx=0, reason="tool_failed",
+                                     msg=problem)
+            self.store._save()
+
+        if self.cancelled():
+            self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
+            self.store.event("done", status="CANCELLED", task_count=len(completed),
+                             elapsed_s=round(time.monotonic() - self._job_start, 1),
+                             summaries=problems)
+            return JobStatus.CANCELLED
+
+        # Sequential remaining steps
+        for index, step in enumerate(remaining):
+            if self.cancelled():
+                self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
+                self.store.event("done", status="CANCELLED", task_count=len(completed),
+                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
+                                 summaries=problems)
+                return JobStatus.CANCELLED
+
+            # Dependency check
+            unmet = [d for d in step.depends_on if d not in completed]
+            if unmet:
+                problem = f"Step '{step.id}' skipped: unmet dependencies {unmet}"
+                problems.append(problem)
+                if step.id not in self.store.state["failed_steps"]:
+                    self.store.state["failed_steps"].append(step.id)
+                self.store.event("task_fail", task_idx=index, reason="deps_unmet", msg=problem)
+                continue
+
+            # Policy gate
+            decision, reason = self.policy.decide(self.mode, step)
+            if decision == "SUGGEST":
+                self.store.event("suggest_skip", task_idx=index, task=step.purpose, note=reason)
+                completed.add(step.id)
+                continue
+            if decision not in ("ALLOW",):
+                self.store.set_status(
+                    JobStatus.NEEDS_APPROVAL,
+                    approval={"step": step.id, "reason": reason},
+                )
+                self.store.event("task_fail", task_idx=index,
+                                 reason="approval_required", msg=reason)
+                self.store.write_report(JobStatus.NEEDS_APPROVAL, {
+                    "goal": plan.goal, "problems": [reason], "evidence": self.evidence,
+                })
+                self.store.event("done", status="NEEDS_APPROVAL", task_count=len(completed),
+                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
+                                 summaries=[reason])
+                return JobStatus.NEEDS_APPROVAL
+
+            # Dynamic variable resolution
+            try:
+                resolved_args = VariableInterpolator.resolve_data(step.args, self.scratchpad)
+            except KeyError as ke:
+                failure = f"{step.purpose}: variable resolution failed: {ke}"
+                problems.append(failure)
+                if step.id not in self.store.state["failed_steps"]:
+                    self.store.state["failed_steps"].append(step.id)
+                self.store._save()
+                self.store.event("task_fail", task_idx=index, reason="variable_resolution_error", msg=failure)
+                continue
+
+            # Checkpoint & Execute
+            self.store.event("task_start", task_idx=index, task=step.purpose)
+            self.store.event("step_exec", task_idx=index, step=0,
+                             cmd=f"{step.tool} {json.dumps(resolved_args, sort_keys=True)[:200]}")
+            result = self.tools.run(step.tool, resolved_args)
+            self._record(step, "execute", result)
+
+            if not result.ok:
+                failure = f"{step.purpose}: {result.summary}"
+                self._diagnose(step, failure)
+                # Bounded repair loop
+                repaired = False
+                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
+                    repaired = self._repair(step, failure, repair_attempt)
+                    if repaired:
+                        break
+                if repaired:
+                    completed.add(step.id)
+                    if step.id not in self.store.state["completed_steps"]:
+                        self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=index, step=0,
+                                     summary="Repaired and verified.")
+                    self.store.set_status(JobStatus.RUNNING)
+                    self.store._save()
+                    continue
+                problems.append(failure)
+                if step.id not in self.store.state["failed_steps"]:
+                    self.store.state["failed_steps"].append(step.id)
+                self.store._save()
+                self.store.event("task_fail", task_idx=index,
+                                 reason="tool_failed", msg=failure)
+                # Non-fatal: continue remaining steps unless they depend on this one
+                continue
+
+            # Verify
+            verified, v_msg = self._verify(step)
+            if not verified:
+                failure = f"{step.purpose}: verification failed: {v_msg}"
+                self._diagnose(step, failure)
+                repaired = False
+                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
+                    repaired = self._repair(step, failure, repair_attempt)
+                    if repaired:
+                        break
+                if repaired:
+                    completed.add(step.id)
+                    if step.id not in self.store.state["completed_steps"]:
+                        self.store.state["completed_steps"].append(step.id)
+                    self.store.event("task_finish", task_idx=index, step=0,
+                                     summary="Repaired and verified.")
+                    self.store.set_status(JobStatus.RUNNING)
+                    self.store._save()
+                    continue
+                problems.append(failure)
+                if step.id not in self.store.state["failed_steps"]:
+                    self.store.state["failed_steps"].append(step.id)
+                self.store._save()
+                self.store.event("task_fail", task_idx=index,
+                                 reason="verification_failed", msg=failure)
+                continue
+
+            # Step succeeded
+            completed.add(step.id)
+            if step.id not in self.store.state["completed_steps"]:
+                self.store.state["completed_steps"].append(step.id)
+            self.store._save()
+            self.store.event("task_finish", task_idx=index, step=0, summary=v_msg)
+            self.store.set_status(JobStatus.RUNNING)
+
+        # ── Final criteria check ───────────────────────────────────────────
+        all_verified, final_failures = self._final_criteria(plan)
+        problems.extend(final_failures)
+        elapsed = round(time.monotonic() - self._job_start, 1)
+
+        if all_verified and not problems:
+            status = JobStatus.SUCCEEDED
+        elif completed:
+            status = JobStatus.PARTIAL
+        else:
+            status = JobStatus.FAILED
+
+        self.store.set_status(status, problems=problems)
+        report = {
+            "goal":            plan.goal,
+            "elapsed_s":       elapsed,
+            "completed_steps": list(completed),
+            "failed_steps":    self.store.state.get("failed_steps", []),
+            "scratchpad":      self.scratchpad,
+            "problems":        problems,
+            "recommendations": self.recommendations,
+            "evidence":        self.evidence,
+        }
+        self.store.write_report(status, report)
+        self.store.event(
+            "done",
+            status="DONE" if status == JobStatus.SUCCEEDED else status.value,
+            task_count=len(plan.steps),
+            elapsed_s=elapsed,
+            summaries=problems or ["All success criteria passed."],
+        )
+        return status
 
     # ── Main execution ─────────────────────────────────────────────────────
 
@@ -1336,180 +1670,5 @@ class Harness:
         self.store.event("plan", tasks=[s.purpose for s in plan.steps],
                          count=len(plan.steps))
         self.store.set_status(JobStatus.RUNNING, goal=plan.goal)
+        return self._execute_plan(plan, completed=set(), problems=[])
 
-        problems: list[str] = []
-        completed: set[str] = set()
-
-        # ── Step execution loop ────────────────────────────────────────────
-        # Identify read-only steps that have no dependencies and run them
-        # in parallel first, then process the rest sequentially in order.
-        ro_independent = [
-            s for s in plan.steps
-            if s.risk == "read_only" and not s.depends_on
-        ]
-        remaining = [s for s in plan.steps if s not in ro_independent]
-
-        # Parallel read-only batch
-        if ro_independent:
-            self.store.event("parallel_batch_start",
-                             steps=[s.id for s in ro_independent])
-            batch_results = self._run_parallel_readonly(ro_independent)
-            for step in ro_independent:
-                if self.cancelled():
-                    break
-                result = batch_results[step.id]
-                self._record(step, "execute", result)
-                if result.ok:
-                    completed.add(step.id)
-                    self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=0, step=step.id,
-                                     summary=result.summary)
-                else:
-                    problem = f"{step.purpose}: {result.summary}"
-                    problems.append(problem)
-                    self.store.state["failed_steps"].append(step.id)
-                    self.store.event("task_fail", task_idx=0, reason="tool_failed",
-                                     msg=problem)
-            self.store._save()
-
-        if self.cancelled():
-            self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
-            self.store.event("done", status="CANCELLED", task_count=len(completed),
-                             elapsed_s=round(time.monotonic() - self._job_start, 1),
-                             summaries=problems)
-            return JobStatus.CANCELLED
-
-        # Sequential remaining steps
-        for index, step in enumerate(remaining):
-            if self.cancelled():
-                self.store.set_status(JobStatus.CANCELLED, reason="Cancellation requested")
-                self.store.event("done", status="CANCELLED", task_count=len(completed),
-                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
-                                 summaries=problems)
-                return JobStatus.CANCELLED
-
-            # Dependency check
-            unmet = [d for d in step.depends_on if d not in completed]
-            if unmet:
-                problem = f"Step '{step.id}' skipped: unmet dependencies {unmet}"
-                problems.append(problem)
-                self.store.state["failed_steps"].append(step.id)
-                self.store.event("task_fail", task_idx=index, reason="deps_unmet", msg=problem)
-                continue
-
-            # Policy gate
-            decision, reason = self.policy.decide(self.mode, step)
-            if decision == "SUGGEST":
-                self.store.event("suggest_skip", task_idx=index, task=step.purpose, note=reason)
-                completed.add(step.id)
-                continue
-            if decision not in ("ALLOW",):
-                self.store.set_status(
-                    JobStatus.NEEDS_APPROVAL,
-                    approval={"step": step.id, "reason": reason},
-                )
-                self.store.event("task_fail", task_idx=index,
-                                 reason="approval_required", msg=reason)
-                self.store.write_report(JobStatus.NEEDS_APPROVAL, {
-                    "goal": plan.goal, "problems": [reason], "evidence": self.evidence,
-                })
-                self.store.event("done", status="NEEDS_APPROVAL", task_count=len(completed),
-                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
-                                 summaries=[reason])
-                return JobStatus.NEEDS_APPROVAL
-
-            # Execute
-            self.store.event("task_start", task_idx=index, task=step.purpose)
-            self.store.event("step_exec", task_idx=index, step=0,
-                             cmd=f"{step.tool} {json.dumps(step.args, sort_keys=True)[:200]}")
-            result = self.tools.run(step.tool, step.args)
-            self._record(step, "execute", result)
-
-            if not result.ok:
-                failure = f"{step.purpose}: {result.summary}"
-                self._diagnose(step, failure)
-                # Bounded repair loop
-                repaired = False
-                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
-                    repaired = self._repair(step, failure, repair_attempt)
-                    if repaired:
-                        break
-                if repaired:
-                    completed.add(step.id)
-                    self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=index, step=0,
-                                     summary="Repaired and verified.")
-                    self.store.set_status(JobStatus.RUNNING)
-                    self.store._save()
-                    continue
-                problems.append(failure)
-                self.store.state["failed_steps"].append(step.id)
-                self.store._save()
-                self.store.event("task_fail", task_idx=index,
-                                 reason="tool_failed", msg=failure)
-                # Non-fatal: continue remaining steps unless they depend on this one
-                continue
-
-            # Verify
-            verified, v_msg = self._verify(step)
-            if not verified:
-                failure = f"{step.purpose}: verification failed: {v_msg}"
-                self._diagnose(step, failure)
-                repaired = False
-                for repair_attempt in range(MAX_REPAIRS_PER_STEP):
-                    repaired = self._repair(step, failure, repair_attempt)
-                    if repaired:
-                        break
-                if repaired:
-                    completed.add(step.id)
-                    self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=index, step=0,
-                                     summary="Repaired and verified.")
-                    self.store.set_status(JobStatus.RUNNING)
-                    self.store._save()
-                    continue
-                problems.append(failure)
-                self.store.state["failed_steps"].append(step.id)
-                self.store._save()
-                self.store.event("task_fail", task_idx=index,
-                                 reason="verification_failed", msg=failure)
-                continue
-
-            # Step succeeded
-            completed.add(step.id)
-            self.store.state["completed_steps"].append(step.id)
-            self.store._save()
-            self.store.event("task_finish", task_idx=index, step=0, summary=v_msg)
-            self.store.set_status(JobStatus.RUNNING)
-
-        # ── Final criteria check ───────────────────────────────────────────
-        all_verified, final_failures = self._final_criteria(plan)
-        problems.extend(final_failures)
-        elapsed = round(time.monotonic() - self._job_start, 1)
-
-        if all_verified and not problems:
-            status = JobStatus.SUCCEEDED
-        elif completed:
-            status = JobStatus.PARTIAL
-        else:
-            status = JobStatus.FAILED
-
-        self.store.set_status(status, problems=problems)
-        report = {
-            "goal":            plan.goal,
-            "elapsed_s":       elapsed,
-            "completed_steps": list(completed),
-            "failed_steps":    self.store.state.get("failed_steps", []),
-            "problems":        problems,
-            "recommendations": self.recommendations,
-            "evidence":        self.evidence,
-        }
-        self.store.write_report(status, report)
-        self.store.event(
-            "done",
-            status="DONE" if status == JobStatus.SUCCEEDED else status.value,
-            task_count=len(plan.steps),
-            elapsed_s=elapsed,
-            summaries=problems or ["All success criteria passed."],
-        )
-        return status
