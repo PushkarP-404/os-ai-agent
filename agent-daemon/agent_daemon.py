@@ -245,18 +245,34 @@ def handle_syscall_query(sock, query_payload):
 
         if comm == "agent-cli":
             mode = AGENT_MODE
+            is_resume = False
+            resume_task_id = None
+
             if query.startswith("/suggest "):
                 mode = "SUGGEST"
-                query = query[9:]
+                query = query[9:].strip()
             elif query.startswith("/assist "):
                 mode = "ASSIST"
-                query = query[8:]
+                query = query[8:].strip()
             elif query.startswith("/apply "):
                 mode = "APPLY"
-                query = query[7:]
+                query = query[7:].strip()
+
+            if query.startswith("/resume "):
+                is_resume = True
+                resume_task_id = query[8:].strip()
+            elif query.startswith("resume "):
+                parts = query.split(None, 1)
+                if len(parts) > 1:
+                    is_resume = True
+                    resume_task_id = parts[1].strip()
 
             # ── Dispatch to harness_v2 (in-process) or task_runner subprocess ───────
-            task_id   = str(uuid.uuid4())[:8]
+            if is_resume and resume_task_id:
+                task_id = resume_task_id
+            else:
+                task_id = str(uuid.uuid4())[:8]
+
             task_file = os.path.join(TASKS_DIR, f"{task_id}.jsonl")
             os.makedirs(TASKS_DIR, exist_ok=True)
 
@@ -282,11 +298,21 @@ def handle_syscall_query(sock, query_payload):
 
                 base_dir = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
                 store    = _harness_mod.JobStore(base_dir, task_id, _log.write)
-                try:
-                    store.create(query, mode, _caller)
-                    _log.write("start", task_id=task_id, query=query, mode=mode)
-                except Exception as _ce:
-                    print(f"  [WARN] Failed to write initial job start: {_ce}")
+
+                if is_resume:
+                    store.load_state()
+                    if mode == AGENT_MODE and "mode" in store.state:
+                        mode = store.state["mode"]
+                    if "caller" in store.state and store.state["caller"]:
+                        _caller = store.state["caller"]
+                    _log.write("resume", task_id=task_id)
+                    print(f"  [DISPATCH-V2] Resuming job {task_id}, mode={mode}")
+                else:
+                    try:
+                        store.create(query, mode, _caller)
+                        _log.write("start", task_id=task_id, query=query, mode=mode)
+                    except Exception as _ce:
+                        print(f"  [WARN] Failed to write initial job start: {_ce}")
 
                 def _run_v2_job():
                     """Run the verified harness in a thread-pool worker."""
@@ -296,8 +322,12 @@ def handle_syscall_query(sock, query_payload):
                         cancelled=cancel_event.is_set,
                     )
                     try:
-                        status = harness.run(query)
-                        print(f"  [V2] Job {task_id} finished: {status}")
+                        if is_resume:
+                            status = harness.resume()
+                            print(f"  [V2-RESUME] Job {task_id} finished: {status}")
+                        else:
+                            status = harness.run(query)
+                            print(f"  [V2] Job {task_id} finished: {status}")
                         sys.stdout.flush()
                     except Exception as exc:
                         import traceback
@@ -316,12 +346,13 @@ def handle_syscall_query(sock, query_payload):
 
                 _worker_pool.submit(_run_v2_job)
                 latency_ms    = (time.monotonic() - t_start) * 1000.0
+                action_str    = "Resuming" if is_resume else "Running"
                 final_response = (
-                    f"[TASK:{task_id}] Running in background (harness_v2).\n"
+                    f"[TASK:{task_id}] {action_str} in background (harness_v2).\n"
                     f"Log: {task_file}\n"
                     f"Mode: {mode}"
                 )
-                print(f"  [DISPATCH-V2] Submitted job {task_id}, mode={mode}")
+                print(f"  [DISPATCH-V2] Submitted job {task_id}, mode={mode}, resume={is_resume}")
                 sys.stdout.flush()
 
             elif os.path.exists(TASK_RUNNER_PATH):
@@ -414,6 +445,31 @@ def handle_syscall_query(sock, query_payload):
                 pass
 
 
+def reconcile_orphaned_jobs():
+    """Scan /var/ai-agent/jobs/ on daemon boot and mark interrupted jobs."""
+    base_dir = os.environ.get("AI_AGENT_LOG_DIR", "/var/ai-agent")
+    jobs_dir = pathlib.Path(base_dir) / "jobs"
+    if not jobs_dir.exists():
+        return
+    reconciled = 0
+    for job_file in jobs_dir.glob("*/job.json"):
+        try:
+            with open(job_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            if state.get("status") in ("RUNNING", "VERIFYING", "PLANNING"):
+                task_id = state.get("job_id")
+                state["status"] = "INTERRUPTED"
+                state["interrupted_at"] = time.time()
+                with open(job_file, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=2, sort_keys=True)
+                reconciled += 1
+                print(f"[RECOVERY] Interrupted job {task_id} marked as INTERRUPTED")
+        except Exception as err:
+            print(f"[RECOVERY] Error inspecting {job_file}: {err}")
+    if reconciled > 0:
+        print(f"[RECOVERY] Reconciled {reconciled} orphaned job(s) from previous daemon run.")
+
+
 def main():
     print("==================================================")
     print("       AI-Agent OS: Unified Agent Daemon          ")
@@ -426,6 +482,7 @@ def main():
 
     # ── Phase 11: build live OS capability context ───────────────────────────
     build_live_capabilities()
+    reconcile_orphaned_jobs()
     os.makedirs(TASKS_DIR, exist_ok=True)
 
     # ── Open Netlink socket ──────────────────────────────────────────────────
