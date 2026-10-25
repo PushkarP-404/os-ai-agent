@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import urllib.request
 import json
+import base64
 import websocket
 import sys
 import argparse
@@ -139,12 +140,23 @@ def cmd_goto(ws, url):
     call_cdp(ws, "Page.navigate", {"url": url})
     print(f"Navigated to {url}")
 
+def cmd_screenshot(ws, output_path):
+    result = call_cdp(ws, "Page.captureScreenshot", {"format": "png"})
+    data_b64 = result.get("data", "")
+    if not data_b64:
+        print("Failed to capture screenshot: empty data")
+        sys.exit(1)
+    with open(output_path, "wb") as f:
+        f.write(base64.b64decode(data_b64))
+    print(f"Screenshot saved to {output_path}")
+
 def main():
     parser = argparse.ArgumentParser(description="CDP Controller for AI Agent")
-    parser.add_argument('action', choices=['dump', 'click', 'type', 'goto'])
+    parser.add_argument('action', choices=['dump', 'click', 'type', 'goto', 'screenshot'])
     parser.add_argument('--id', type=int, help="Backend Node ID")
     parser.add_argument('--text', type=str, help="Text to type")
     parser.add_argument('--url', type=str, help="URL to navigate to")
+    parser.add_argument('--path', type=str, help="Output path for screenshot")
     
     args = parser.parse_args()
     
@@ -167,6 +179,11 @@ def main():
             print("--url is required for goto")
             sys.exit(1)
         cmd_goto(ws, args.url)
+    elif args.action == 'screenshot':
+        if not args.path:
+            print("--path is required for screenshot")
+            sys.exit(1)
+        cmd_screenshot(ws, args.path)
         
     ws.close()
 

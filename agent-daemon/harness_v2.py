@@ -16,16 +16,26 @@ Architecture
 
 from __future__ import annotations
 
+import base64
+import csv
+import email.message
+import email.utils
 import json
 import os
 import posixpath
 import re
 import shutil
+import smtplib
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import time
+import urllib.request
+import urllib.error
+import xml.etree.ElementTree as ET
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -48,7 +58,7 @@ SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
     "ss", "ip", "ping", "curl", "wget", "tar", "gzip", "gunzip",
     "python3", "python", "sh", "bash",
     "apk", "rc-service", "rc-update",
-    "echo", "printf", "date", "whoami", "hostname", "uname",
+    "echo", "printf", "date", "whoami", "hostname", "uname", "uptime",
     "nc", "socat", "openssl",
     # Archive / data tools
     "zip", "unzip", "bzip2", "xz", "zcat", "jq",
@@ -370,12 +380,19 @@ class PolicyEngine:
         "http.check", "http.get",
         "dir.query", "command.argv",
         "llm.prompt",
+        "data.csv_read", "document.read",
+        "email.read",
+        "browser.navigate", "browser.dump", "browser.screenshot",
     })
     CHANGE: frozenset[str] = frozenset({
         "package.install", "service.start", "service.restart",
         "service.stop", "service.enable", "service.disable",
         "dir.create", "dir.remove",
-        "file.write", "file.move", "file.delete",
+        "file.write", "file.append", "file.move", "file.delete",
+        "shell.script",
+        "data.csv_write",
+        "email.send",
+        "browser.click", "browser.type",
     })
 
     def decide(self, mode: str, step: Step) -> tuple[str, str]:
@@ -466,7 +483,9 @@ class ToolExecutor:
               cwd: str | None = None) -> ToolResult:
         effective_cwd = cwd or self.caller.get("cwd")
         if not effective_cwd or not os.path.isdir(effective_cwd):
-            effective_cwd = self.caller.get("home", "/")
+            effective_cwd = self.caller.get("home")
+        if not effective_cwd or not os.path.isdir(effective_cwd):
+            effective_cwd = os.getcwd()
         exec_env = {
             "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
             "HOME": self.caller.get("home", "/"),
@@ -477,8 +496,15 @@ class ToolExecutor:
         if "WINDIR" in os.environ:
             exec_env["WINDIR"] = os.environ["WINDIR"]
 
+        full_bin = shutil.which(argv[0])
+        if argv[0] in ("python3", "python") and (not full_bin or "WindowsApps" in full_bin or os.name == "nt"):
+            full_bin = sys.executable
+        elif not full_bin:
+            full_bin = argv[0]
+        exec_argv = [full_bin] + argv[1:]
+
         result = subprocess.run(
-            argv,
+            exec_argv,
             capture_output=True,
             text=True,
             timeout=timeout or self.command_timeout,
@@ -556,16 +582,17 @@ class ToolExecutor:
 
     def tool_file_read(self, args: dict[str, Any]) -> ToolResult:
         raw_path = args.get("path")
-        if not isinstance(raw_path, str) or not raw_path.startswith("/"):
-            raise ValueError("'path' must be an absolute path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
         path = Path(raw_path).resolve()
         allowed = (
-            Path("/etc"),
-            Path("/var/log"),
-            Path(self.caller.get("home", "/nonexistent")),
-            Path("/tmp"),
-            Path("/srv"),
-            Path("/var/ai-agent"),
+            Path("/etc").resolve(),
+            Path("/var/log").resolve(),
+            Path(self.caller.get("home", "/nonexistent")).resolve(),
+            Path("/tmp").resolve(),
+            Path("/srv").resolve(),
+            Path("/var/ai-agent").resolve(),
+            Path(tempfile.gettempdir()).resolve(),
         )
         if not any(path == root or root in path.parents for root in allowed):
             raise ValueError("path is outside the readable harness scope")
@@ -721,7 +748,7 @@ class ToolExecutor:
             raise ValueError("'path' must be a non-empty string")
         path = Path(raw_path).resolve()
         blocked_roots = (Path("/proc"), Path("/sys"), Path("/dev"))
-        if any(path == root or root in path.parents for root in blocked_roots):
+        if any(path == root or root in path.parents for root in blocked_roots) or any(raw_path.strip().startswith(p) for p in ("/proc", "/sys", "/dev")):
             raise ValueError("Target file path is inside a protected system filesystem")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -934,6 +961,500 @@ class ToolExecutor:
                 pass  # fall through and return raw stdout
         return result
 
+    def tool_file_append(self, args: dict[str, Any]) -> ToolResult:
+        """Append text content to a file (creating it if absent).
+
+        args:
+            path    – absolute target file path
+            content – text content to append
+        """
+        raw_path = args.get("path")
+        content  = args.get("content", "")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        if not isinstance(content, str):
+            content = str(content)
+        path = Path(raw_path).resolve()
+        blocked_roots = (Path("/proc"), Path("/sys"), Path("/dev"))
+        if any(path == root or root in path.parents for root in blocked_roots) or any(raw_path.strip().startswith(p) for p in ("/proc", "/sys", "/dev")):
+            raise ValueError("Target file path is inside a protected system filesystem")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(content)
+        uid = args.get("uid", self.caller.get("uid"))
+        gid = args.get("gid", self.caller.get("gid"))
+        if uid is not None and gid is not None and getattr(os, "geteuid", lambda: 0)() == 0 and hasattr(os, "chown"):
+            try:
+                os.chown(path, int(uid), int(gid))
+            except OSError:
+                pass
+        return ToolResult(True, f"File appended: {path} (+{len(content)} bytes)")
+
+    def tool_shell_script(self, args: dict[str, Any]) -> ToolResult:
+        """Write code to a secure temporary script and execute with a safe interpreter.
+
+        This eliminates messy multi-line shell escaping and argv limits.
+        args:
+            code        – script code to execute
+            interpreter – 'sh' (default), 'bash', 'python3', or 'python'
+            timeout     – max execution time in seconds (default 60, max 300)
+            cwd         – working directory (optional)
+            args        – optional list of string arguments passed to the script
+        """
+        code = args.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("'code' must be a non-empty string")
+        # Security deny checks for known dangerous patterns
+        _script_deny = [
+            r"rm\s+-[rRf]*f[rR]?\s+/(?!\w)",
+            r"rm\s+-[rRf]*r[fF]?\s+/(?!\w)",
+            r"\bdd\b.*\bof=/dev/[sh]d",
+            r"mkfs\.",
+            r":\(\)\{.*\};",
+            r"chmod\s+[0-7]*7[0-7]*\s+/\s*$",
+        ]
+        for pat in _script_deny:
+            if re.search(pat, code, re.IGNORECASE):
+                raise ValueError(f"Script content blocked by security policy: pattern {pat}")
+        interp = args.get("interpreter", "sh")
+        if interp not in {"sh", "bash", "python3", "python"}:
+            raise ValueError("'interpreter' must be one of: 'sh', 'bash', 'python3', 'python'")
+        if interp in ("python3", "python"):
+            interp_bin = sys.executable
+        else:
+            interp_bin = shutil.which(interp) or interp
+        timeout = args.get("timeout", self.command_timeout)
+        if not isinstance(timeout, int) or timeout < 1 or timeout > 300:
+            timeout = self.command_timeout
+        cwd = args.get("cwd")
+        script_args = args.get("args", [])
+        if not isinstance(script_args, list) or not all(isinstance(a, str) for a in script_args):
+            script_args = []
+        suffix = ".py" if "python" in interp else ".sh"
+        fd, tmp_path = tempfile.mkstemp(prefix="agent_script_", suffix=suffix)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(code)
+            if hasattr(os, "chmod"):
+                try:
+                    os.chmod(tmp_path, 0o700)
+                except OSError:
+                    pass
+            argv = [interp_bin, tmp_path] + script_args
+            return self._exec(argv, timeout=timeout, cwd=cwd)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def tool_data_csv_read(self, args: dict[str, Any]) -> ToolResult:
+        """Read and parse a CSV file, returning structured JSON rows and summary.
+
+        args:
+            path      – absolute path to the CSV file
+            delimiter – delimiter character (default ',')
+            max_rows  – maximum rows to parse (default 200, max 1000)
+        """
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if not path.is_file():
+            return ToolResult(False, f"CSV file does not exist: {path}", exit_code=1)
+        delimiter = str(args.get("delimiter", ","))
+        if len(delimiter) != 1:
+            delimiter = ","
+        max_rows = min(int(args.get("max_rows", 200)), 1000)
+        headers: list[str] = []
+        rows: list[dict[str, str]] = []
+        total_count = 0
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                reader = csv.reader(f, delimiter=delimiter)
+                try:
+                    headers = next(reader)
+                except StopIteration:
+                    headers = []
+                for row in reader:
+                    total_count += 1
+                    if len(rows) < max_rows:
+                        if headers:
+                            row_dict = {headers[i]: row[i] if i < len(row) else "" for i in range(len(headers))}
+                        else:
+                            row_dict = {f"col_{i}": val for i, val in enumerate(row)}
+                        rows.append(row_dict)
+            output_data = {
+                "path": str(path),
+                "headers": headers,
+                "total_rows": total_count,
+                "sample_rows": rows,
+            }
+            stdout = json.dumps(output_data, ensure_ascii=False, indent=2)
+            return ToolResult(
+                True,
+                f"Read CSV {path}: {total_count} rows, {len(headers)} columns",
+                stdout=stdout[:8192],
+                facts=[{"path": str(path), "total_rows": total_count, "columns": headers}],
+            )
+        except Exception as e:
+            return ToolResult(False, f"Failed to parse CSV {path}: {e}", stderr=str(e), exit_code=1)
+
+    def tool_data_csv_write(self, args: dict[str, Any]) -> ToolResult:
+        """Write or append rows to a CSV file.
+
+        args:
+            path    – absolute target file path
+            headers – optional list of column header names
+            rows    – list of rows (either list of lists or list of dicts)
+            mode    – 'w' for overwrite (default) or 'a' for append
+        """
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        blocked_roots = (Path("/proc"), Path("/sys"), Path("/dev"))
+        if any(path == root or root in path.parents for root in blocked_roots):
+            raise ValueError("Target file path is inside a protected system filesystem")
+        rows = args.get("rows", [])
+        if not isinstance(rows, list):
+            raise ValueError("'rows' must be a list")
+        headers = args.get("headers")
+        mode = "a" if args.get("mode") == "a" else "w"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            write_header = (mode == "w") or not path.exists() or path.stat().st_size == 0
+            with open(path, mode, newline="", encoding="utf-8") as f:
+                if rows and isinstance(rows[0], dict):
+                    if not headers:
+                        headers = list(rows[0].keys())
+                    writer = csv.DictWriter(f, fieldnames=headers)
+                    if write_header and headers:
+                        writer.writeheader()
+                    for r in rows:
+                        if isinstance(r, dict):
+                            writer.writerow(r)
+                else:
+                    writer = csv.writer(f)
+                    if write_header and headers and isinstance(headers, list):
+                        writer.writerow(headers)
+                    for r in rows:
+                        if isinstance(r, list):
+                            writer.writerow(r)
+            return ToolResult(True, f"Wrote {len(rows)} rows to CSV {path}")
+        except Exception as e:
+            return ToolResult(False, f"Failed to write CSV: {e}", stderr=str(e), exit_code=1)
+
+    def tool_document_read(self, args: dict[str, Any]) -> ToolResult:
+        """Extract text from documents (.txt, .md, .pdf, .docx, .json, .csv).
+
+        Zero external dependencies for DOCX (standard library XML+ZIP extraction).
+        Uses pdftotext when available for PDFs.
+        args:
+            path      – absolute path to document
+            max_bytes – maximum bytes to return (default 16384)
+        """
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if not path.is_file():
+            return ToolResult(False, f"Document does not exist: {path}", exit_code=1)
+        max_bytes = int(args.get("max_bytes", 16384))
+        ext = path.suffix.lower()
+        text = ""
+
+        if ext == ".docx":
+            try:
+                with zipfile.ZipFile(path) as z:
+                    xml_content = z.read("word/document.xml")
+                    root = ET.fromstring(xml_content)
+                    paragraphs = []
+                    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                    for p in root.iterfind(".//w:p", ns):
+                        p_texts = [node.text for node in p.iterfind(".//w:t", ns) if node.text]
+                        if p_texts:
+                            paragraphs.append("".join(p_texts))
+                    text = "\n\n".join(paragraphs)
+            except Exception as e:
+                return ToolResult(False, f"Failed to parse DOCX {path}: {e}", stderr=str(e), exit_code=1)
+
+        elif ext == ".pdf":
+            if shutil.which("pdftotext"):
+                res = self._exec(["pdftotext", "-layout", str(path), "-"])
+                if res.ok:
+                    text = res.stdout
+                else:
+                    return res
+            else:
+                raw_bytes = path.read_bytes()
+                streams = re.findall(rb"stream[\r\n]+([\s\S]*?)[\r\n]+endstream", raw_bytes)
+                extracted_chunks = []
+                for s in streams:
+                    try:
+                        import zlib
+                        decompressed = zlib.decompress(s)
+                        bt = re.findall(rb"\((.*?)\)\s*Tj", decompressed)
+                        if bt:
+                            extracted_chunks.append(b" ".join(bt).decode("utf-8", "replace"))
+                    except Exception:
+                        pass
+                text = "\n".join(extracted_chunks)
+                if not text:
+                    text = f"PDF file {path} detected ({len(raw_bytes)} bytes). Install 'poppler-utils' for full layout extraction."
+
+        else:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except Exception as e:
+                return ToolResult(False, f"Failed to read file {path}: {e}", stderr=str(e), exit_code=1)
+
+        truncated = text[:max_bytes]
+        return ToolResult(
+            True,
+            f"Extracted document text from {path} ({len(text)} chars)",
+            stdout=truncated,
+            facts=[{"path": str(path), "total_chars": len(text), "format": ext or "plain"}],
+        )
+
+    def tool_email_send(self, args: dict[str, Any]) -> ToolResult:
+        """Compose and send or spool an email message.
+
+        args:
+            to          – recipient email address or list of addresses
+            subject     – email subject line
+            body        – plain text email body
+            attachments – optional list of file paths to attach
+            smtp_server – optional SMTP server hostname (or SMTP_SERVER env var)
+            smtp_port   – optional SMTP server port (default 25 or 587)
+        """
+        to_arg  = args.get("to")
+        subject = args.get("subject", "")
+        body    = args.get("body", "")
+        if not to_arg:
+            raise ValueError("'to' is required")
+        recipients = [to_arg] if isinstance(to_arg, str) else list(to_arg)
+        if not all(isinstance(r, str) and "@" in r for r in recipients):
+            raise ValueError("'to' must be valid email address(es)")
+        from_addr = args.get("from") or os.environ.get("EMAIL_FROM") or "agent@localhost"
+
+        msg = email.message.EmailMessage()
+        msg["Subject"] = str(subject)
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(recipients)
+        msg.set_content(str(body))
+
+        attachments = args.get("attachments", [])
+        if isinstance(attachments, list):
+            for att_path in attachments:
+                if isinstance(att_path, str) and os.path.isfile(att_path):
+                    p = Path(att_path)
+                    try:
+                        content = p.read_bytes()
+                        msg.add_attachment(content, maintype="application", subtype="octet-stream", filename=p.name)
+                    except OSError:
+                        pass
+
+        smtp_server = args.get("smtp_server") or os.environ.get("SMTP_SERVER")
+        smtp_port   = int(args.get("smtp_port") or os.environ.get("SMTP_PORT") or 25)
+
+        sent_live = False
+        if smtp_server:
+            try:
+                with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as s:
+                    smtp_user = os.environ.get("SMTP_USER")
+                    smtp_pass = os.environ.get("SMTP_PASS")
+                    if smtp_user and smtp_pass:
+                        s.starttls()
+                        s.login(smtp_user, smtp_pass)
+                    s.send_message(msg)
+                sent_live = True
+            except Exception:
+                pass
+
+        spool_dir = Path("/var/ai-agent")
+        spool_dir.mkdir(parents=True, exist_ok=True)
+        spool_path = spool_dir / "mail_outbox.jsonl"
+        spool_record = {
+            "timestamp": time.time(),
+            "from": from_addr,
+            "to": recipients,
+            "subject": subject,
+            "body": body,
+            "attachments": [str(a) for a in attachments if isinstance(a, str)],
+            "sent_live": sent_live,
+        }
+        with open(spool_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(spool_record, ensure_ascii=False) + "\n")
+
+        status_msg = "Sent live via SMTP" if sent_live else f"Spooled to {spool_path}"
+        return ToolResult(
+            True,
+            f"Email '{subject}' to {recipients} processed ({status_msg})",
+            stdout=f"To: {', '.join(recipients)}\nSubject: {subject}\nStatus: {status_msg}\n\n{body[:1000]}",
+            facts=[{"to": recipients, "subject": subject, "sent_live": sent_live}],
+        )
+
+    def tool_email_read(self, args: dict[str, Any]) -> ToolResult:
+        """Read received or spooled emails from IMAP or local mail store.
+
+        args:
+            folder      – mailbox folder name (default 'INBOX')
+            max_emails  – maximum number of messages to fetch (default 10)
+            search      – optional keyword filter for subject/body
+            unseen_only – if true, fetch only unread messages (default false)
+        """
+        folder     = args.get("folder", "INBOX")
+        max_emails = min(int(args.get("max_emails", 10)), 50)
+        search_kw  = args.get("search", "").lower()
+        unseen_only = bool(args.get("unseen_only", False))
+
+        messages = []
+        imap_server = args.get("imap_server") or os.environ.get("IMAP_SERVER")
+        if imap_server:
+            try:
+                import imaplib
+                acc  = os.environ.get("EMAIL_ACCOUNT", "")
+                pwd  = os.environ.get("EMAIL_PASSWORD", "")
+                mail = imaplib.IMAP4_SSL(imap_server)
+                mail.login(acc, pwd)
+                mail.select(folder)
+                criterion = '(UNSEEN)' if unseen_only else 'ALL'
+                status, data = mail.search(None, criterion)
+                if status == "OK" and data[0]:
+                    mail_ids = data[0].split()[-max_emails:]
+                    for mid in reversed(mail_ids):
+                        s, mdata = mail.fetch(mid, "(RFC822)")
+                        for part in mdata:
+                            if isinstance(part, tuple):
+                                parsed = email.message_from_bytes(part[1])
+                                b_text = ""
+                                if parsed.is_multipart():
+                                    for sub in parsed.walk():
+                                        if sub.get_content_type() == "text/plain":
+                                            b_text = sub.get_payload(decode=True).decode("utf-8", "ignore")
+                                            break
+                                else:
+                                    b_text = parsed.get_payload(decode=True).decode("utf-8", "ignore")
+                                messages.append({
+                                    "id": mid.decode(),
+                                    "from": parsed.get("From", ""),
+                                    "to": parsed.get("To", ""),
+                                    "subject": parsed.get("Subject", ""),
+                                    "date": parsed.get("Date", ""),
+                                    "body": b_text[:500],
+                                })
+                mail.close()
+                mail.logout()
+            except Exception:
+                pass
+
+        spool_path = Path("/var/ai-agent/mail_outbox.jsonl")
+        if spool_path.is_file():
+            try:
+                for line in spool_path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        r = json.loads(line)
+                        if search_kw:
+                            subj = str(r.get("subject", "")).lower()
+                            bdy  = str(r.get("body", "")).lower()
+                            if search_kw not in subj and search_kw not in bdy:
+                                continue
+                        messages.append({
+                            "id": f"spool-{r.get('timestamp')}",
+                            "from": r.get("from", "local"),
+                            "to": r.get("to", []),
+                            "subject": r.get("subject", ""),
+                            "date": time.ctime(r.get("timestamp", 0)),
+                            "body": str(r.get("body", ""))[:500],
+                        })
+            except Exception:
+                pass
+
+        messages = messages[:max_emails]
+        stdout = json.dumps(messages, ensure_ascii=False, indent=2)
+        return ToolResult(
+            True,
+            f"Retrieved {len(messages)} email messages",
+            stdout=stdout[:8192],
+            facts=[{"count": len(messages), "folder": folder}],
+        )
+
+    def _run_cdp(self, action: str, **kwargs: Any) -> ToolResult:
+        """Helper to invoke CDP controller via subprocess."""
+        cdp_script = Path(__file__).parent / "cdp_controller.py"
+        if not cdp_script.is_file():
+            cdp_script = Path("/usr/local/lib/ai-agent/cdp_controller.py")
+        if not cdp_script.is_file():
+            return ToolResult(False, "cdp_controller.py not found", exit_code=127)
+        argv = [sys.executable, str(cdp_script), action]
+        for k, v in kwargs.items():
+            if v is not None:
+                argv.extend([f"--{k}", str(v)])
+        return self._exec(argv, timeout=25)
+
+    def tool_browser_navigate(self, args: dict[str, Any]) -> ToolResult:
+        """Navigate the browser to a URL.
+
+        args:
+            url – HTTP/HTTPS URL
+        """
+        url = args.get("url", "")
+        if not isinstance(url, str) or not re.fullmatch(r"https?://[^\s]+", url):
+            raise ValueError("'url' must be a valid http:// or https:// URL")
+        return self._run_cdp("goto", url=url)
+
+    def tool_browser_dump(self, args: dict[str, Any]) -> ToolResult:
+        """Extract interactive elements and accessibility tree from active browser tab.
+
+        args: none required
+        """
+        return self._run_cdp("dump")
+
+    def tool_browser_click(self, args: dict[str, Any]) -> ToolResult:
+        """Click an element in the active browser tab by backendNodeId.
+
+        args:
+            id – backendNodeId (integer) from browser.dump
+        """
+        node_id = args.get("id") if args.get("id") is not None else args.get("node_id")
+        if node_id is None:
+            raise ValueError("'id' is required for browser.click")
+        return self._run_cdp("click", id=int(node_id))
+
+    def tool_browser_type(self, args: dict[str, Any]) -> ToolResult:
+        """Type text into an element in the active browser tab.
+
+        args:
+            id   – backendNodeId (integer)
+            text – string to type
+        """
+        node_id = args.get("id") if args.get("id") is not None else args.get("node_id")
+        text    = args.get("text", "")
+        if node_id is None:
+            raise ValueError("'id' is required for browser.type")
+        return self._run_cdp("type", id=int(node_id), text=str(text))
+
+    def tool_browser_screenshot(self, args: dict[str, Any]) -> ToolResult:
+        """Capture a screenshot of the active browser tab and save to a file.
+
+        args:
+            path – target output path (default /tmp/browser_screenshot.png)
+        """
+        raw_path = args.get("path", "/tmp/browser_screenshot.png")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raw_path = "/tmp/browser_screenshot.png"
+        path = Path(raw_path).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        res = self._run_cdp("screenshot", path=str(path))
+        if res.ok and path.is_file():
+            return ToolResult(True, f"Browser screenshot saved to {path}", stdout=str(path))
+        if shutil.which("import"):
+            fb = self._exec(["import", "-window", "root", str(path)])
+            if fb.ok:
+                return ToolResult(True, f"Root window screenshot saved to {path}", stdout=str(path))
+        return res
+
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
@@ -1096,8 +1617,20 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
         "  file.list  {path, pattern?, recursive?, max_items?} – list directory contents\n"
         "  file.move  {src, dst} – move or rename a file\n"
         "  file.delete {path} – delete a single file\n"
+        "  file.append {path, content} – append text to a file\n"
+        "  shell.script {code, interpreter?, timeout?, cwd?, args?} – execute multi-line script\n"
+        "  data.csv_read {path, delimiter?, max_rows?} – read CSV file into structured JSON\n"
+        "  data.csv_write {path, headers?, rows, mode?} – write/append rows to CSV\n"
+        "  document.read {path, max_bytes?} – extract text from .pdf, .docx, .txt, .md\n"
+        "  email.send {to, subject, body, attachments?} – send or spool an email\n"
+        "  email.read {folder?, max_emails?, search?, unseen_only?} – read emails from inbox/spool\n"
         "  http.get   {url, headers?, timeout?, max_bytes?} – external HTTP GET (captures stdout)\n"
         "  llm.prompt {prompt, model?, max_tokens?, endpoint?} – query local Ollama (captures stdout)\n"
+        "  browser.navigate {url} – open/navigate browser to URL\n"
+        "  browser.dump {} – dump accessibility elements of active browser tab\n"
+        "  browser.click {id} – click browser element by ID\n"
+        "  browser.type {id, text} – type text into browser element\n"
+        "  browser.screenshot {path?} – save browser screenshot to PNG\n"
         "<|im_end|>\n"
         "<|im_start|>user\n"
         f"Intent: {intent}\n"
@@ -1127,7 +1660,7 @@ def repair_prompt(purpose: str, failure: str, evidence: list[dict[str, Any]]) ->
 def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Plan | None:
     """Compile common local OS intents without spending a model request.
 
-    Patterns handled (17):
+    Patterns handled (28):
       1.  Directory creation
       2.  File creation / touch
       3.  Package installation
@@ -1145,6 +1678,17 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
       15. File list / directory listing
       16. File move / rename
       17. File delete
+      18. File append
+      19. CSV read / inspect
+      20. Document text extraction / read (.docx, .pdf, .txt, .md)
+      21. Email send
+      22. Email read / inbox check
+      23. Browser open / navigate
+      24. Browser dump / inspect page
+      25. Browser click
+      26. Browser type / fill
+      27. Browser screenshot
+      28. Shell script execution
     """
     caller   = caller or {}
     home_dir = caller.get("home") or "/root"
@@ -1341,10 +1885,12 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     # ── 11. Log tail ───────────────────────────────────────────────────────
     if not steps:
         lm = re.search(
-            r"\b(?:show|tail|last|read)\s+(?:(?:last|the)\s+)?(\d+)?\s*lines?\s+"
-            r"(?:of\s+)?(/[^\s]+)", text, re.IGNORECASE)
+            r"\b(?:show|tail|last|read)\s+(?:(?:last|the)\s+)?(?:(\d+)\s*lines?\s+(?:of\s+)?|(?:logs?\s+(?:of\s+)?))(/[^\s]+)", text, re.IGNORECASE)
+        if not lm:
+            lm = re.search(
+                r"\b(?:show|tail|last|read)\s+(?:(?:last|the)\s+)?(\d+)?\s*lines?\s+(?:of\s+)?(/[^\s]+)", text, re.IGNORECASE)
         if lm:
-            n_lines = int(lm.group(1)) if lm.group(1) else 50
+            n_lines = int(lm.group(1)) if lm.group(1) and lm.group(1).isdigit() else 50
             log_path = lm.group(2).rstrip(".,;:")
             a = {"path": log_path, "tail_lines": n_lines}
             steps.append(Step("read-log", f"Read last {n_lines} lines of {log_path}",
@@ -1384,7 +1930,7 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     # If the intent looks like a single known read-only command, run it directly.
     if not steps:
         ro_cmd_m = re.match(
-            r"^(ls|cat|head|tail|df|free|ps|ss|ip|find|grep|uname|whoami|hostname|date)\b(.*)$",
+            r"^(?:run|exec|execute)?\s*(ls|cat|head|tail|df|free|ps|ss|ip|find|grep|uname|uptime|whoami|hostname|date)\b(.*)$",
             text.strip(), re.IGNORECASE)
         if ro_cmd_m:
             binary  = ro_cmd_m.group(1).lower()
@@ -1442,6 +1988,150 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
                               "system_change"))
             criteria.append({"description": f"File {del_path} deleted",
                              "tool": "file.query", "args": {"path": del_path}})
+
+    # ── 18. File append ────────────────────────────────────────────────────
+    if not steps:
+        app_m = re.search(
+            r"\bappend\s+(?:line|text|content)?\s*[\"']?([^\"'\n]+?)[\"']?\s+to\s+(/[^\s]+)", text, re.IGNORECASE)
+        if not app_m:
+            app_m_rev = re.search(
+                r"\bappend\s+(/[^\s]+)\s+with\s+[\"']?([^\"'\n]+?)[\"']?", text, re.IGNORECASE)
+            if app_m_rev:
+                app_m = (app_m_rev.group(2), app_m_rev.group(1))  # (content, path)
+        else:
+            app_m = (app_m.group(1), app_m.group(2))
+        if app_m:
+            content, path = app_m
+            path = path.rstrip(".,;:")
+            steps.append(Step("append-file", f"Append to {path}",
+                              "file.append", {"path": path, "content": content if content.endswith("\n") else content + "\n"},
+                              [{"tool": "file.query", "args": {"path": path}}],
+                              "system_change"))
+            criteria.append({"description": f"File {path} updated",
+                             "tool": "file.query", "args": {"path": path}})
+
+    # ── 19. CSV read ───────────────────────────────────────────────────────
+    if not steps:
+        csv_m = re.search(
+            r"\b(?:read|parse|inspect|view|show|load)\s+(?:the\s+)?csv\s+(?:file\s+)?(?:at|in|from)?\s*(/[^\s]+\.csv)", text, re.IGNORECASE)
+        if not csv_m:
+            csv_m = re.search(r"\bread\s+(/[^\s]+\.csv)", text, re.IGNORECASE)
+        if csv_m:
+            csv_path = csv_m.group(1).rstrip(".,;:")
+            steps.append(Step("read-csv", f"Read CSV {csv_path}",
+                              "data.csv_read", {"path": csv_path}, []))
+            criteria.append({"description": f"CSV {csv_path} read",
+                             "tool": "file.query", "args": {"path": csv_path}})
+
+    # ── 20. Document read ──────────────────────────────────────────────────
+    if not steps:
+        doc_m = re.search(
+            r"\b(?:read|extract\s+text\s+from|view|open|summarize)\s+(?:the\s+)?(?:document|doc|pdf|docx|file)\s+(?:at|in|from)?\s*(/[^\s]+\.(?:pdf|docx|txt|md|doc|log|csv|json))", text, re.IGNORECASE)
+        if doc_m:
+            doc_path = doc_m.group(1).rstrip(".,;:")
+            steps.append(Step("read-doc", f"Read document {doc_path}",
+                              "document.read", {"path": doc_path}, []))
+            criteria.append({"description": f"Document {doc_path} read",
+                             "tool": "file.query", "args": {"path": doc_path}})
+
+    # ── 21. Email send ─────────────────────────────────────────────────────
+    if not steps:
+        em_m = re.search(
+            r"\bsend\s+(?:an?\s+)?email\s+to\s+([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)"
+            r"(?:\s+(?:with\s+)?subject\s+[\"']?([^\"'\n]+?)[\"']?)?"
+            r"(?:\s+(?:and\s+)?body\s+[\"']?([^\"'\n]+?)[\"']?)?", text, re.IGNORECASE)
+        if em_m:
+            to_addr = em_m.group(1)
+            subject = em_m.group(2) or "Agent Notification"
+            body    = em_m.group(3) or "Automated message from OS AI Agent."
+            steps.append(Step("send-email", f"Send email to {to_addr}",
+                              "email.send", {"to": to_addr, "subject": subject, "body": body},
+                              [{"tool": "system.info", "args": {}}],
+                              "system_change"))
+            criteria.append({"description": f"Email sent to {to_addr}",
+                             "tool": "system.info", "args": {}})
+
+    # ── 22. Email read ─────────────────────────────────────────────────────
+    if not steps:
+        if re.search(r"\b(?:check|read|fetch|get|list|show)\s+(?:my\s+)?(?:emails?|inbox|messages|mail)\b", text_lower):
+            steps.append(Step("read-emails", "Check inbox for emails",
+                              "email.read", {"max_emails": 10}, []))
+            criteria.append({"description": "Inbox checked",
+                             "tool": "system.info", "args": {}})
+
+    # ── 23. Browser navigate ───────────────────────────────────────────────
+    if not steps:
+        b_nav_m = re.search(
+            r"\b(?:open|navigate\s+to|browse|visit|go\s+to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
+        if not b_nav_m:
+            b_nav_m = re.search(
+                r"\bopen\s+(?:the\s+)?browser\s+(?:and\s+go\s+to|to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
+        if b_nav_m:
+            url = b_nav_m.group(1).rstrip(".,;:")
+            steps.append(Step("browser-nav", f"Navigate browser to {url}",
+                              "browser.navigate", {"url": url}, []))
+            criteria.append({"description": f"Navigated to {url}",
+                             "tool": "system.info", "args": {}})
+
+    # ── 24. Browser dump ───────────────────────────────────────────────────
+    if not steps:
+        if re.search(r"\b(?:dump|inspect|extract|show|read)\s+(?:the\s+)?(?:active\s+)?(?:browser|page|dom|webpage|tab)(?:\s+(?:elements?|contents?|tab))?\b", text_lower):
+            steps.append(Step("browser-dump", "Inspect active browser tab elements",
+                              "browser.dump", {}, []))
+            criteria.append({"description": "Browser page dumped",
+                             "tool": "system.info", "args": {}})
+
+    # ── 25. Browser click ──────────────────────────────────────────────────
+    if not steps:
+        b_clk_m = re.search(
+            r"\b(?:browser\s+)?click\s+(?:on\s+)?(?:node|element|button)?\s*(?:#|id\s+)?(\d+)(?:\s+(?:in|on)\s+browser)?\b", text, re.IGNORECASE)
+        if b_clk_m:
+            node_id = int(b_clk_m.group(1))
+            steps.append(Step("browser-click", f"Click browser element {node_id}",
+                              "browser.click", {"id": node_id},
+                              [{"tool": "system.info", "args": {}}],
+                              "system_change"))
+            criteria.append({"description": f"Clicked browser node {node_id}",
+                             "tool": "system.info", "args": {}})
+
+    # ── 26. Browser type ───────────────────────────────────────────────────
+    if not steps:
+        b_typ_m = re.search(
+            r"\b(?:browser\s+)?type\s+[\"']?([^\"'\n]+?)[\"']?\s+(?:in|into)\s+(?:node|element)?\s*(\d+)(?:\s+(?:in|on)\s+browser)?\b", text, re.IGNORECASE)
+        if b_typ_m:
+            text_to_type = b_typ_m.group(1)
+            node_id      = int(b_typ_m.group(2))
+            steps.append(Step("browser-type", f"Type into browser element {node_id}",
+                              "browser.type", {"id": node_id, "text": text_to_type},
+                              [{"tool": "system.info", "args": {}}],
+                              "system_change"))
+            criteria.append({"description": f"Typed text into browser node {node_id}",
+                             "tool": "system.info", "args": {}})
+
+    # ── 27. Browser screenshot ─────────────────────────────────────────────
+    if not steps:
+        b_ss_m = re.search(
+            r"\b(?:take\s+(?:a\s+)?)?screenshot\s+(?:of\s+(?:the\s+)?browser\s+)?(?:to\s+|save\s+(?:as|to)\s+)?(/[^\s]+\.png)", text, re.IGNORECASE)
+        if b_ss_m:
+            ss_path = b_ss_m.group(1).rstrip(".,;:")
+            steps.append(Step("browser-screenshot", f"Capture browser screenshot to {ss_path}",
+                              "browser.screenshot", {"path": ss_path}, []))
+            criteria.append({"description": f"Screenshot saved to {ss_path}",
+                             "tool": "file.query", "args": {"path": ss_path}})
+
+    # ── 28. Shell script execution ─────────────────────────────────────────
+    if not steps:
+        sh_m = re.search(
+            r"\b(?:run|execute)\s+(?:python|sh|bash|shell)?\s*script\s*:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+        if sh_m:
+            code = sh_m.group(1).strip()
+            interp = "python3" if "python" in text_lower else "sh"
+            steps.append(Step("run-script", "Execute script",
+                              "shell.script", {"code": code, "interpreter": interp},
+                              [{"tool": "system.info", "args": {}}],
+                              "system_change"))
+            criteria.append({"description": "Script executed",
+                             "tool": "system.info", "args": {}})
 
     if not steps:
         return None
