@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Sentinel Control Center — AI-Agent OS Flagship GUI & Interactive Assistant
-Modern Glassmorphic Dark Layout, Live CPU/RAM Progress Meters, Compute Telemetry,
+Sentinel Control Center -- AI-Agent OS Flagship GUI and Interactive Assistant
+Clean Dark Layout, Live CPU and RAM Progress Meters, Compute Telemetry,
 and Real-Time Interactive AI Execution Console.
 """
 import gi
@@ -107,16 +107,16 @@ class SentinelDashboard(Gtk.Window):
         self.stack.set_transition_duration(200)
         main_hbox.pack_start(self.stack, True, True, 0)
 
-        # Navigation Buttons list with icons
+        # Navigation Buttons list (clean text labels without icons or emojis)
         self.nav_buttons = {}
         pages = [
-            ("overview", "📊  Overview", self.setup_overview_page),
-            ("prompt", "💬  AI Assistant", self.setup_interactive_prompt_page),
-            ("llm", "🧠  LLM Engine", self.setup_llm_page),
-            ("caps", "⚡  Capabilities", self.setup_capabilities_page),
-            ("remote", "🌐  Remote Bridges", self.setup_remote_page),
-            ("live_log", "📜  Live Syscall Log", self.setup_live_log_page),
-            ("stats", "📈  Process Analytics", self.setup_stats_page),
+            ("overview", "Overview", self.setup_overview_page),
+            ("prompt", "AI Assistant", self.setup_interactive_prompt_page),
+            ("llm", "LLM Engine", self.setup_llm_page),
+            ("caps", "Capabilities", self.setup_capabilities_page),
+            ("remote", "Remote Bridges", self.setup_remote_page),
+            ("live_log", "Live Syscall Log", self.setup_live_log_page),
+            ("stats", "Process Analytics", self.setup_stats_page),
         ]
 
         for page_id, label, setup_func in pages:
@@ -137,12 +137,12 @@ class SentinelDashboard(Gtk.Window):
         self.update_daemon_status()
         self.update_system_stats()
 
-    # ── HeaderBar ────────────────────────────────────────────────────────────
+    # -- HeaderBar -------------------------------------------------------------
     def setup_headerbar(self):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.set_title("AI-Agent OS")
-        header.set_subtitle("Sentinel Control Center · Flagship AI Operating System")
+        header.set_subtitle("Sentinel Control Center - Flagship AI Operating System")
         header.get_style_context().add_class("header-bar")
         self.set_titlebar(header)
 
@@ -168,7 +168,7 @@ class SentinelDashboard(Gtk.Window):
             else:
                 ctx.remove_class("active")
 
-    # ── Page 1: Overview Page ────────────────────────────────────────────────
+    # -- Page 1: Overview Page -------------------------------------------------
     def setup_overview_page(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         vbox.set_margin_start(20)
@@ -182,7 +182,7 @@ class SentinelDashboard(Gtk.Window):
         cards_hbox.set_homogeneous(True)
         vbox.pack_start(cards_hbox, False, False, 0)
 
-        # Card 1: Daemon State & Controls
+        # Card 1: Daemon State and Controls
         card1 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card1.get_style_context().add_class("card")
         cards_hbox.pack_start(card1, True, True, 0)
@@ -192,7 +192,7 @@ class SentinelDashboard(Gtk.Window):
         lbl1.set_halign(Gtk.Align.START)
         card1.pack_start(lbl1, False, False, 0)
 
-        self.overview_status_lbl = Gtk.Label(label="● RUNNING")
+        self.overview_status_lbl = Gtk.Label(label="RUNNING")
         self.overview_status_lbl.get_style_context().add_class("metric-value")
         self.overview_status_lbl.set_halign(Gtk.Align.START)
         card1.pack_start(self.overview_status_lbl, False, False, 0)
@@ -215,12 +215,12 @@ class SentinelDashboard(Gtk.Window):
         self.btn_stop.connect("clicked", lambda w: self.run_svc("stop"))
         btn_row.pack_start(self.btn_stop, True, True, 0)
 
-        # Card 2: Memory & CPU Visual Telemetry
+        # Card 2: Memory and CPU Visual Telemetry
         card2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         card2.get_style_context().add_class("card")
         cards_hbox.pack_start(card2, True, True, 0)
 
-        lbl2 = Gtk.Label(label="System Compute & RAM")
+        lbl2 = Gtk.Label(label="System Compute and RAM")
         lbl2.get_style_context().add_class("card-title")
         lbl2.set_halign(Gtk.Align.START)
         card2.pack_start(lbl2, False, False, 0)
@@ -234,7 +234,7 @@ class SentinelDashboard(Gtk.Window):
         self.ram_progress.get_style_context().add_class("ram-bar")
         card2.pack_start(self.ram_progress, False, False, 2)
 
-        self.cpu_sub_lbl = Gtk.Label(label="CPU Load: 0% · Threads: 4")
+        self.cpu_sub_lbl = Gtk.Label(label="CPU Load: 0% | Threads: 4")
         self.cpu_sub_lbl.get_style_context().add_class("metric-sub")
         self.cpu_sub_lbl.set_halign(Gtk.Align.START)
         card2.pack_start(self.cpu_sub_lbl, False, False, 0)
@@ -243,7 +243,7 @@ class SentinelDashboard(Gtk.Window):
         self.cpu_progress.get_style_context().add_class("cpu-bar")
         card2.pack_start(self.cpu_progress, False, False, 2)
 
-        # Card 3: Model Engine & Compute Hardware
+        # Card 3: Model Engine and Compute Hardware
         card3 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         card3.get_style_context().add_class("card")
         cards_hbox.pack_start(card3, True, True, 0)
@@ -263,12 +263,12 @@ class SentinelDashboard(Gtk.Window):
         self.compute_backend_lbl.set_halign(Gtk.Align.START)
         card3.pack_start(self.compute_backend_lbl, False, False, 0)
 
-        self.context_sub_lbl = Gtk.Label(label="Ctx: 512 · Native musl llama.cpp")
+        self.context_sub_lbl = Gtk.Label(label="Ctx: 512 | Native musl llama.cpp")
         self.context_sub_lbl.get_style_context().add_class("metric-sub")
         self.context_sub_lbl.set_halign(Gtk.Align.START)
         card3.pack_start(self.context_sub_lbl, False, False, 0)
 
-        # Middle section: Live Syscall & Activity Preview
+        # Middle section: Live Syscall and Activity Preview
         preview_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         preview_card.get_style_context().add_class("card")
         vbox.pack_start(preview_card, True, True, 0)
@@ -276,7 +276,7 @@ class SentinelDashboard(Gtk.Window):
         prev_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         preview_card.pack_start(prev_header, False, False, 0)
 
-        lbl_log_head = Gtk.Label(label="Real-Time AI Syscall & Execution Telemetry")
+        lbl_log_head = Gtk.Label(label="Real-Time AI Syscall and Execution Telemetry")
         lbl_log_head.get_style_context().add_class("card-title")
         lbl_log_head.set_halign(Gtk.Align.START)
         prev_header.pack_start(lbl_log_head, True, True, 0)
@@ -307,7 +307,7 @@ class SentinelDashboard(Gtk.Window):
         self.quick_prompt_entry.connect("activate", self.on_quick_prompt_submit)
         prompt_box.pack_start(self.quick_prompt_entry, True, True, 0)
 
-        btn_execute = Gtk.Button(label="⚡ Execute")
+        btn_execute = Gtk.Button(label="Execute")
         btn_execute.get_style_context().add_class("btn-primary")
         btn_execute.connect("clicked", self.on_quick_prompt_submit)
         prompt_box.pack_end(btn_execute, False, False, 0)
@@ -341,7 +341,7 @@ class SentinelDashboard(Gtk.Window):
             cpu_usage = self.cpu_sampler.sample()
             cpu_pct = int(cpu_usage * 100)
             cores = os.cpu_count() or 4
-            self.cpu_sub_lbl.set_text(f"CPU Load: {cpu_pct}% · {cores} Cores Active")
+            self.cpu_sub_lbl.set_text(f"CPU Load: {cpu_pct}% | {cores} Cores Active")
             self.cpu_progress.set_fraction(cpu_usage)
 
             # Hardware acceleration telemetry
@@ -356,10 +356,10 @@ class SentinelDashboard(Gtk.Window):
             has_gpu = caps.get("has_gpu", False)
             gpu_backend = caps.get("gpu_backend", "none")
             if has_gpu:
-                backend_str = f"⚡ GPU Offloaded ({gpu_backend})"
+                backend_str = f"GPU Offloaded ({gpu_backend})"
                 self.header_compute_badge.set_text("GPU Active")
             else:
-                backend_str = f"⚡ CPU Multi-threaded ({cores} threads)"
+                backend_str = f"CPU Multi-threaded ({cores} threads)"
                 self.header_compute_badge.set_text(f"CPU ({cores}T)")
 
             self.compute_backend_lbl.set_text(f"Compute: {backend_str}")
@@ -381,18 +381,18 @@ class SentinelDashboard(Gtk.Window):
             ctx.remove_class("pill-info")
 
             if running:
-                self.header_status_badge.set_text("● DAEMON: ONLINE")
+                self.header_status_badge.set_text("DAEMON: ONLINE")
                 ctx.add_class("pill-online")
                 if hasattr(self, "overview_status_lbl"):
-                    self.overview_status_lbl.set_markup("<span foreground='#10b981'>● ACTIVE</span>")
+                    self.overview_status_lbl.set_markup("<span foreground='#10b981'>ACTIVE</span>")
                 if hasattr(self, "btn_start"):
                     self.btn_start.set_sensitive(False)
                     self.btn_stop.set_sensitive(True)
             else:
-                self.header_status_badge.set_text("○ DAEMON: STOPPED")
+                self.header_status_badge.set_text("DAEMON: STOPPED")
                 ctx.add_class("pill-offline")
                 if hasattr(self, "overview_status_lbl"):
-                    self.overview_status_lbl.set_markup("<span foreground='#ef4444'>○ STOPPED</span>")
+                    self.overview_status_lbl.set_markup("<span foreground='#ef4444'>STOPPED</span>")
                 if hasattr(self, "btn_start"):
                     self.btn_start.set_sensitive(True)
                     self.btn_stop.set_sensitive(False)
@@ -400,7 +400,7 @@ class SentinelDashboard(Gtk.Window):
             self.header_status_badge.set_text("Error")
         return True
 
-    # ── Page 2: Interactive AI Assistant ─────────────────────────────────────
+    # -- Page 2: Interactive AI Assistant --------------------------------------
     def setup_interactive_prompt_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_start(20)
@@ -409,7 +409,7 @@ class SentinelDashboard(Gtk.Window):
         box.set_margin_bottom(16)
         self.stack.add_titled(box, "prompt", "AI Assistant")
 
-        # Top title & clear button
+        # Top title and clear button
         top_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         box.pack_start(top_hbox, False, False, 0)
 
@@ -439,10 +439,10 @@ class SentinelDashboard(Gtk.Window):
         chat_card.pack_start(scroll, True, True, 0)
 
         welcome_msg = (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "------------------------------------------------------------\n"
             "  AI-AGENT OS: INTERACTIVE SENTINEL COCKPIT\n"
-            "  Local Musl In-Guest Inference & Kernel Syscall 548 Controller\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "  Local Musl In-Guest Inference and Kernel Syscall 548 Controller\n"
+            "------------------------------------------------------------\n"
             "  Type a system task, command, or query below and hit Enter.\n\n"
         )
         self.chat_textbuffer.set_text(welcome_msg)
@@ -458,7 +458,7 @@ class SentinelDashboard(Gtk.Window):
         self.chat_entry.connect("activate", self.on_chat_submit)
         prompt_box.pack_start(self.chat_entry, True, True, 0)
 
-        self.btn_chat_send = Gtk.Button(label="⚡ Send Intent")
+        self.btn_chat_send = Gtk.Button(label="Send Intent")
         self.btn_chat_send.get_style_context().add_class("btn-primary")
         self.btn_chat_send.connect("clicked", self.on_chat_submit)
         prompt_box.pack_end(self.btn_chat_send, False, False, 0)
@@ -509,20 +509,20 @@ class SentinelDashboard(Gtk.Window):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── Page 3: LLM Engine Page ──────────────────────────────────────────────
+    # -- Page 3: LLM Engine Page -----------------------------------------------
     def setup_llm_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_start(20)
         box.set_margin_end(20)
         box.set_margin_top(16)
         box.set_margin_bottom(16)
-        self.stack.add_titled(box, "llm", "Local LLM Engine")
+        self.stack.add_titled(box, "llm", "LLM Engine")
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         card.get_style_context().add_class("card")
         box.pack_start(card, False, False, 0)
 
-        title = Gtk.Label(label="Local LLM Inference Engine & Compute Tuning")
+        title = Gtk.Label(label="Local LLM Inference Engine and Compute Tuning")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 0)
@@ -564,12 +564,12 @@ class SentinelDashboard(Gtk.Window):
         btn_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         card.pack_start(btn_hbox, False, False, 4)
 
-        btn_apply = Gtk.Button(label="Apply Configuration & Restart Engine")
+        btn_apply = Gtk.Button(label="Apply Configuration and Restart Engine")
         btn_apply.get_style_context().add_class("btn-primary")
         btn_apply.connect("clicked", self.on_apply_model)
         btn_hbox.pack_start(btn_apply, False, False, 0)
 
-        btn_bench = Gtk.Button(label="⚡ Benchmark Inference Latency")
+        btn_bench = Gtk.Button(label="Benchmark Inference Latency")
         btn_bench.connect("clicked", self.on_benchmark_clicked)
         btn_hbox.pack_start(btn_bench, False, False, 0)
 
@@ -610,7 +610,7 @@ class SentinelDashboard(Gtk.Window):
             if hasattr(self, "model_val_lbl"):
                 self.model_val_lbl.set_text(model.replace(".gguf", ""))
             if hasattr(self, "context_sub_lbl"):
-                self.context_sub_lbl.set_text(f"Ctx: {ctx} · Threads: {threads}")
+                self.context_sub_lbl.set_text(f"Ctx: {ctx} | Threads: {threads}")
         except Exception as e:
             print(f"[ERROR] Failed to apply model: {e}")
 
@@ -633,20 +633,20 @@ class SentinelDashboard(Gtk.Window):
 
         threading.Thread(target=bench, daemon=True).start()
 
-    # ── Page 4: Capabilities Page ────────────────────────────────────────────
+    # -- Page 4: Capabilities Page ---------------------------------------------
     def setup_capabilities_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_start(20)
         box.set_margin_end(20)
         box.set_margin_top(16)
         box.set_margin_bottom(16)
-        self.stack.add_titled(box, "caps", "Capabilities Registry")
+        self.stack.add_titled(box, "caps", "Capabilities")
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         card.get_style_context().add_class("card")
         box.pack_start(card, True, True, 0)
 
-        title = Gtk.Label(label="Categorized OS Capabilities & Hardware Accelerators")
+        title = Gtk.Label(label="Categorized OS Capabilities and Hardware Accelerators")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 0)
@@ -693,10 +693,10 @@ class SentinelDashboard(Gtk.Window):
             hbox.set_margin_bottom(4)
             row.add(hbox)
 
-            icon = "● " if v is True else ("○ " if v is False else "◆ ")
+            tag = "[YES]" if v is True else ("[NO]" if v is False else "[INFO]")
             color = "#10b981" if v is True else ("#64748b" if v is False else "#38bdf8")
             lbl_key = Gtk.Label()
-            lbl_key.set_markup(f"<span foreground='{color}'>{icon}</span><b>{k}</b>")
+            lbl_key.set_markup(f"<span foreground='{color}'>{tag}</span> <b>{k}</b>")
             lbl_key.set_halign(Gtk.Align.START)
 
             lbl_val = Gtk.Label(label=str(v))
@@ -729,7 +729,7 @@ class SentinelDashboard(Gtk.Window):
         self.ide_entry.set_text("")
         self.load_capabilities_ui()
 
-    # ── Page 5: Remote Bridges ───────────────────────────────────────────────
+    # -- Page 5: Remote Bridges ------------------------------------------------
     def setup_remote_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_start(20)
@@ -742,7 +742,7 @@ class SentinelDashboard(Gtk.Window):
         card.get_style_context().add_class("card")
         box.pack_start(card, False, False, 0)
 
-        title = Gtk.Label(label="Mail-to-Intent Remote Trigger & Gateway")
+        title = Gtk.Label(label="Mail-to-Intent Remote Trigger and Gateway")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 0)
@@ -779,7 +779,7 @@ class SentinelDashboard(Gtk.Window):
         except Exception as e:
             print(f"[ERROR] Failed to save config: {e}")
 
-    # ── Page 6: Live Interaction Log ─────────────────────────────────────────
+    # -- Page 6: Live Interaction Log ------------------------------------------
     def setup_live_log_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_start(20)
@@ -791,7 +791,7 @@ class SentinelDashboard(Gtk.Window):
         head_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         box.pack_start(head_box, False, False, 0)
 
-        title = Gtk.Label(label="Kernel Syscall 548 & Execution Event Stream")
+        title = Gtk.Label(label="Kernel Syscall 548 and Execution Event Stream")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         head_box.pack_start(title, True, True, 0)
@@ -833,7 +833,7 @@ class SentinelDashboard(Gtk.Window):
             except Exception as e:
                 lines = [f"{{\"error\": \"{e}\"}}"]
         else:
-            lines = [f'{{"comm": "KERNEL", "query": "Kernel Syscall 548 sensor active · Listening...", "response_latency_ms": 0}}']
+            lines = [f'{{"comm": "KERNEL", "query": "Kernel Syscall 548 sensor active | Listening...", "response_latency_ms": 0}}']
 
         self.log_textbuffer.set_text("")
         overview_text = ""
@@ -866,7 +866,7 @@ class SentinelDashboard(Gtk.Window):
 
         return True
 
-    # ── Page 7: Process Stats / Analytics ────────────────────────────────────
+    # -- Page 7: Process Stats / Analytics -------------------------------------
     def setup_stats_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_start(20)
@@ -875,7 +875,7 @@ class SentinelDashboard(Gtk.Window):
         box.set_margin_bottom(16)
         self.stack.add_titled(box, "stats", "Process Analytics")
 
-        title = Gtk.Label(label="Process Syscall Activity & Latency Breakdown")
+        title = Gtk.Label(label="Process Syscall Activity and Latency Breakdown")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         box.pack_start(title, False, False, 0)
