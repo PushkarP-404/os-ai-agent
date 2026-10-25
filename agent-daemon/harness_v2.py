@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verified, policy-controlled task harness for AI-Agent OS  (v2.2).
+"""Verified, policy-controlled task harness for AI-Agent OS  (v2.3).
 
 Architecture
 ------------
@@ -41,6 +41,7 @@ REPAIR_LLM_N_PREDICT = 500  # token budget for repair plan
 
 # Commands whose first token is safe for command.argv (Linux read+light-write)
 SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
+    # Core POSIX utilities
     "ls", "cat", "head", "tail", "wc", "grep", "find", "awk", "sed",
     "sort", "uniq", "cut", "tr", "diff", "cp", "mv", "mkdir", "rm",
     "touch", "chmod", "chown", "ln", "stat", "du", "df", "free", "ps",
@@ -49,6 +50,19 @@ SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
     "apk", "rc-service", "rc-update",
     "echo", "printf", "date", "whoami", "hostname", "uname",
     "nc", "socat", "openssl",
+    # Archive / data tools
+    "zip", "unzip", "bzip2", "xz", "zcat", "jq",
+    # Document / PDF tools
+    "pdftotext", "pandoc", "convert",          # convert = ImageMagick
+    # Development tools
+    "git", "make", "cmake",
+    "npm", "npx", "node",
+    "pip3", "pip",
+    "pytest", "python3",
+    "go", "cargo", "rustc",
+    "ruby", "gem",
+    "java", "javac", "mvn", "gradle",
+    "docker", "docker-compose",
 })
 
 
@@ -352,13 +366,16 @@ class PolicyEngine:
     READ_ONLY: frozenset[str] = frozenset({
         "system.info", "disk.status", "memory.status",
         "package.query", "service.status", "service.logs",
-        "port.inspect", "file.read", "http.check",
-        "dir.query", "file.query", "command.argv",
+        "port.inspect", "file.read", "file.query", "file.list",
+        "http.check", "http.get",
+        "dir.query", "command.argv",
+        "llm.prompt",
     })
     CHANGE: frozenset[str] = frozenset({
         "package.install", "service.start", "service.restart",
         "service.stop", "service.enable", "service.disable",
-        "dir.create", "dir.remove", "file.write",
+        "dir.create", "dir.remove",
+        "file.write", "file.move", "file.delete",
     })
 
     def decide(self, mode: str, step: Step) -> tuple[str, str]:
@@ -717,6 +734,206 @@ class ToolExecutor:
                 pass
         return ToolResult(True, f"File written: {path} ({len(content)} bytes)")
 
+    def tool_file_move(self, args: dict[str, Any]) -> ToolResult:
+        """Move or rename a file/directory.
+
+        args:
+            src  – absolute source path
+            dst  – absolute destination path (file or directory target)
+        """
+        raw_src = args.get("src")
+        raw_dst = args.get("dst")
+        if not isinstance(raw_src, str) or not raw_src.strip():
+            raise ValueError("'src' must be a non-empty string")
+        if not isinstance(raw_dst, str) or not raw_dst.strip():
+            raise ValueError("'dst' must be a non-empty string")
+        src = Path(raw_src).resolve()
+        dst = Path(raw_dst).resolve()
+        protected = (Path("/proc"), Path("/sys"), Path("/dev"),
+                     Path("/bin"), Path("/sbin"), Path("/usr"))
+        for guard in protected:
+            if src == guard or guard in src.parents:
+                raise ValueError(f"Source path is inside a protected system directory: {src}")
+            if dst == guard or guard in dst.parents:
+                raise ValueError(f"Destination path is inside a protected system directory: {dst}")
+        if not src.exists():
+            return ToolResult(False, f"Source does not exist: {src}", exit_code=1)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return ToolResult(True, f"Moved {src} → {dst}")
+
+    def tool_file_delete(self, args: dict[str, Any]) -> ToolResult:
+        """Delete a single file (not a directory — use dir.remove for that).
+
+        args:
+            path – absolute path of the file to delete
+        """
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        protected = (
+            Path("/"), Path("/bin"), Path("/sbin"), Path("/usr"),
+            Path("/etc"), Path("/var"), Path("/proc"), Path("/sys"), Path("/dev"),
+        )
+        if path in protected:
+            raise ValueError(f"Cannot delete protected path: {path}")
+        if not path.exists():
+            return ToolResult(True, f"File already absent: {path}")
+        if not path.is_file():
+            raise ValueError(f"Path is not a regular file: {path} — use dir.remove for directories")
+        path.unlink()
+        return ToolResult(True, f"Deleted: {path}")
+
+    def tool_file_list(self, args: dict[str, Any]) -> ToolResult:
+        """List files in a directory, with optional glob pattern and recursion.
+
+        args:
+            path      – absolute directory path to list
+            pattern   – optional glob pattern, e.g. '*.py' (default '*')
+            recursive – if true, walk subdirectories (default false)
+            max_items – cap on number of results (default 200)
+        """
+        raw_path = args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError("'path' must be a non-empty string")
+        path = Path(raw_path).resolve()
+        if not path.is_dir():
+            return ToolResult(False, f"Directory does not exist: {path}", exit_code=1)
+        pattern   = args.get("pattern", "*")
+        recursive = bool(args.get("recursive", False))
+        max_items = int(args.get("max_items", 200))
+        if not isinstance(pattern, str):
+            pattern = "*"
+        if recursive:
+            entries = list(path.rglob(pattern))[:max_items]
+        else:
+            entries = list(path.glob(pattern))[:max_items]
+        lines = []
+        for e in sorted(entries):
+            kind = "d" if e.is_dir() else "f"
+            try:
+                size = e.stat().st_size if e.is_file() else 0
+            except OSError:
+                size = -1
+            lines.append(f"{kind}\t{size}\t{e}")
+        stdout = "\n".join(lines)
+        return ToolResult(
+            True,
+            f"Listed {len(entries)} entries in {path}",
+            stdout=stdout,
+            facts=[{"count": len(entries), "path": str(path), "pattern": pattern}],
+        )
+
+    def tool_http_get(self, args: dict[str, Any]) -> ToolResult:
+        """Perform an external HTTP GET request via curl (read-only, safe).
+
+        args:
+            url      – HTTP/HTTPS URL to fetch
+            headers  – optional dict of header name → value pairs
+            timeout  – optional request timeout in seconds (max 60)
+            max_bytes – optional limit on response body captured (default 32768)
+        """
+        url = args.get("url", "")
+        if not isinstance(url, str) or not re.fullmatch(
+            r"https?://[A-Za-z0-9._\-]+(:\d+)?(/[^\s]*)?", url
+        ):
+            raise ValueError("'url' must be a valid http:// or https:// URL")
+        # Block private network ranges to avoid SSRF against internal services
+        # localhost is already handled by http.check; block internal RFC1918
+        _blocked = re.search(
+            r"https?://(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))",
+            url, re.IGNORECASE,
+        )
+        if _blocked:
+            raise ValueError(
+                "http.get is for external URLs; use http.check for localhost."
+            )
+        if not shutil.which("curl"):
+            return ToolResult(False, "curl is required for http.get", exit_code=127)
+        timeout = args.get("timeout", 30)
+        if not isinstance(timeout, int) or timeout < 1 or timeout > 60:
+            timeout = 30
+        max_bytes = args.get("max_bytes", 32768)
+        if not isinstance(max_bytes, int) or max_bytes < 1:
+            max_bytes = 32768
+        headers_arg = args.get("headers", {})
+        extra: list[str] = []
+        if isinstance(headers_arg, dict):
+            for k, v in headers_arg.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    # Basic guard: no newlines in header name/value
+                    if "\n" not in k and "\n" not in v:
+                        extra += ["-H", f"{k}: {v}"]
+        argv = (
+            ["curl", "--silent", "--show-error", "--fail-with-body",
+             "--max-time", str(timeout),
+             "--max-filesize", str(max_bytes)]
+            + extra
+            + [url]
+        )
+        result = self._exec(argv, timeout=timeout + 5)
+        # Truncate captured body to max_bytes
+        result.stdout = result.stdout[:max_bytes]
+        return result
+
+    def tool_llm_prompt(self, args: dict[str, Any]) -> ToolResult:
+        """Run a prompt against the local Ollama/llama.cpp endpoint and capture the reply.
+
+        This is a read-only tool: it does not modify system state.
+        The response is returned in stdout and can be captured into the scratchpad
+        with a captures entry like ``{"summary": "stdout:strip"}``.
+
+        args:
+            prompt   – the text prompt to send
+            model    – optional model name (default: use the daemon's configured model)
+            max_tokens – optional max tokens for the response (default 512)
+            endpoint – optional base URL of the Ollama API (default http://localhost:11434)
+        """
+        prompt = args.get("prompt", "")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("'prompt' must be a non-empty string")
+        model    = args.get("model", "llama3")
+        if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9._:\-]{1,128}", model):
+            raise ValueError("'model' must be a simple model identifier")
+        max_tokens = args.get("max_tokens", 512)
+        if not isinstance(max_tokens, int) or max_tokens < 1 or max_tokens > 4096:
+            max_tokens = 512
+        endpoint = args.get("endpoint", "http://localhost:11434")
+        if not isinstance(endpoint, str) or not re.fullmatch(
+            r"https?://(127\.0\.0\.1|localhost)(:\d+)?", endpoint
+        ):
+            raise ValueError("'endpoint' must be a localhost Ollama URL")
+        if not shutil.which("curl"):
+            return ToolResult(False, "curl is required for llm.prompt", exit_code=127)
+        payload = json.dumps({
+            "model":  model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": max_tokens},
+        })
+        argv = [
+            "curl", "--silent", "--show-error",
+            "--max-time", "120",
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", payload,
+            f"{endpoint}/api/generate",
+        ]
+        result = self._exec(argv, timeout=125)
+        if result.ok and result.stdout:
+            try:
+                resp = json.loads(result.stdout)
+                text = resp.get("response", result.stdout)
+                return ToolResult(
+                    True, f"LLM response from {model} ({len(text)} chars)",
+                    stdout=text[:8192],
+                    facts=[{"model": model, "tokens": resp.get("eval_count", -1)}],
+                )
+            except (json.JSONDecodeError, KeyError):
+                pass  # fall through and return raw stdout
+        return result
+
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
@@ -875,6 +1092,12 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
         "- Use command.argv for tasks the typed tools cannot cover; "
         '  args must be {"argv":["binary","arg1",...]}'
         " where binary is in the safe allowlist.\n"
+        "Tool tips:\n"
+        "  file.list  {path, pattern?, recursive?, max_items?} – list directory contents\n"
+        "  file.move  {src, dst} – move or rename a file\n"
+        "  file.delete {path} – delete a single file\n"
+        "  http.get   {url, headers?, timeout?, max_bytes?} – external HTTP GET (captures stdout)\n"
+        "  llm.prompt {prompt, model?, max_tokens?, endpoint?} – query local Ollama (captures stdout)\n"
         "<|im_end|>\n"
         "<|im_start|>user\n"
         f"Intent: {intent}\n"
@@ -904,7 +1127,7 @@ def repair_prompt(purpose: str, failure: str, evidence: list[dict[str, Any]]) ->
 def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Plan | None:
     """Compile common local OS intents without spending a model request.
 
-    Patterns handled (14):
+    Patterns handled (17):
       1.  Directory creation
       2.  File creation / touch
       3.  Package installation
@@ -919,6 +1142,9 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
       12. Service enable (rc-update add)
       13. Service disable (rc-update del)
       14. Arbitrary read-only shell command (command.argv fast path)
+      15. File list / directory listing
+      16. File move / rename
+      17. File delete
     """
     caller   = caller or {}
     home_dir = caller.get("home") or "/root"
@@ -1168,6 +1394,54 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
                               "command.argv", {"argv": argv}, []))
             criteria.append({"description": f"Command '{argv[0]}' executed",
                              "tool": "system.info", "args": {}})
+
+    # ── 15. File list / directory listing ──────────────────────────────────
+    if not steps:
+        fl_m = re.search(
+            r"\b(?:list|ls|show|find)\s+(?:files?|contents?|entries?)?\s*"
+            r"(?:in|of|from|under)?\s*(/[^\s]+)", text, re.IGNORECASE)
+        if not fl_m:
+            fl_m = re.search(
+                r"\bwhat(?:'s| is| are)? in\s+(/[^\s]+)", text, re.IGNORECASE)
+        if fl_m:
+            ls_path = fl_m.group(1).rstrip(".,;:")
+            pattern = "*"
+            pat_m   = re.search(r"\bmatching\s+(\S+)", text_lower)
+            if pat_m:
+                pattern = pat_m.group(1)
+            recursive = any(t in text_lower for t in ("recursive", "recursively", "-r"))
+            a = {"path": ls_path, "pattern": pattern, "recursive": recursive}
+            steps.append(Step("list-files", f"List files in {ls_path}",
+                              "file.list", a, []))
+            criteria.append({"description": f"Files listed in {ls_path}",
+                             "tool": "dir.query", "args": {"path": ls_path}})
+
+    # ── 16. File move / rename ─────────────────────────────────────────────
+    if not steps:
+        mv_m = re.search(
+            r"\b(?:move|rename|mv)\s+(/[^\s]+)\s+(?:to\s+)?(/[^\s]+)", text, re.IGNORECASE)
+        if mv_m:
+            src = mv_m.group(1).rstrip(".,;:")
+            dst = mv_m.group(2).rstrip(".,;:")
+            steps.append(Step("move-file", f"Move {src} to {dst}",
+                              "file.move", {"src": src, "dst": dst},
+                              [{"tool": "file.query", "args": {"path": dst}}],
+                              "system_change"))
+            criteria.append({"description": f"File moved to {dst}",
+                             "tool": "file.query", "args": {"path": dst}})
+
+    # ── 17. File delete ────────────────────────────────────────────────────
+    if not steps:
+        del_m = re.search(
+            r"\b(?:delete|remove|rm|unlink)\s+(?:the\s+file\s+)?(/[^\s]+)", text, re.IGNORECASE)
+        if del_m:
+            del_path = del_m.group(1).rstrip(".,;:")
+            steps.append(Step("delete-file", f"Delete {del_path}",
+                              "file.delete", {"path": del_path},
+                              [{"tool": "file.query", "args": {"path": del_path}}],
+                              "system_change"))
+            criteria.append({"description": f"File {del_path} deleted",
+                             "tool": "file.query", "args": {"path": del_path}})
 
     if not steps:
         return None
