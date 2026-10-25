@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Background Squircle Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181b2e"/>
+      <stop offset="50%" stop-color="#0f111c"/>
+      <stop offset="100%" stop-color="#080911"/>
+    </linearGradient>
+
+    <!-- Border Glow Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+
+    <!-- Core Neon Gradients -->
+    <linearGradient id="cyanNeon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+
+    <linearGradient id="purpleNeon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="50%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="3"/>
+
+  <!-- Background Ambient Glow -->
+  <circle cx="128" cy="128" r="60" fill="#6366f1" opacity="0.18" filter="url(#softGlow)"/>
+  <circle cx="128" cy="128" r="35" fill="#38bdf8" opacity="0.22" filter="url(#softGlow)"/>
+
+  <!-- Neural Constellation Lines -->
+  <g stroke="url(#cyanNeon)" stroke-width="2.5" opacity="0.75">
+    <!-- Outer Octagon / Mesh Links -->
+    <line x1="84" y1="64" x2="128" y2="48"/>
+    <line x1="128" y1="48" x2="172" y2="64"/>
+    <line x1="172" y1="64" x2="204" y2="104"/>
+    <line x1="204" y1="104" x2="204" y2="152"/>
+    <line x1="204" y1="152" x2="172" y2="192"/>
+    <line x1="172" y1="192" x2="128" y2="208"/>
+    <line x1="128" y1="208" x2="84" y2="192"/>
+    <line x1="84" y1="192" x2="52" y2="152"/>
+    <line x1="52" y1="152" x2="52" y2="104"/>
+    <line x1="52" y1="104" x2="84" y2="64"/>
+
+    <!-- Inner Core Spokes -->
+    <line x1="128" y1="48" x2="128" y2="100"/>
+    <line x1="204" y1="104" x2="156" y2="128"/>
+    <line x1="172" y1="192" x2="148" y2="156"/>
+    <line x1="84" y1="192" x2="108" y2="156"/>
+    <line x1="52" y1="104" x2="100" y2="128"/>
+  </g>
+
+  <!-- Outer Node Sparkles -->
+  <g fill="#38bdf8" filter="url(#neonGlow)">
+    <circle cx="84" cy="64" r="5"/>
+    <circle cx="128" cy="48" r="6"/>
+    <circle cx="172" cy="64" r="5"/>
+    <circle cx="204" cy="104" r="5"/>
+    <circle cx="204" cy="152" r="5"/>
+    <circle cx="172" cy="192" r="5"/>
+    <circle cx="128" cy="208" r="6"/>
+    <circle cx="84" cy="192" r="5"/>
+    <circle cx="52" cy="152" r="5"/>
+    <circle cx="52" cy="104" r="5"/>
+  </g>
+
+  <!-- Central Microchip & AI Core Shield -->
+  <g filter="url(#neonGlow)">
+    <!-- Central Hexagonal Ring -->
+    <polygon points="128,88 162,108 162,148 128,168 94,148 94,108"
+             fill="none" stroke="url(#purpleNeon)" stroke-width="4"/>
+
+    <!-- Core Inner Diamond -->
+    <polygon points="128,104 150,128 128,152 106,128"
+             fill="url(#purpleNeon)" opacity="0.9"/>
+
+    <!-- Center Bright Pulse Node -->
+    <circle cx="128" cy="128" r="7" fill="#ffffff" filter="url(#neonGlow)"/>
+  </g>
+
+  <!-- Accent Tech Circuit Paths -->
+  <g stroke="#818cf8" stroke-width="2" stroke-linecap="round" opacity="0.8">
+    <path d="M 64,88 L 76,88 L 88,100"/>
+    <path d="M 192,88 L 180,88 L 168,100"/>
+    <path d="M 64,168 L 76,168 L 88,156"/>
+    <path d="M 192,168 L 180,168 L 168,156"/>
+  </g>
+</svg>

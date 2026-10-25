@@ -245,6 +245,29 @@ def query_ollama(prompt, min_tokens=8, n_predict=200):
             )
 
 
+def send_desktop_notification(title, message, urgency="normal"):
+    """Dispatches a desktop notification to active X11 desktop user if present."""
+    if not shutil.which("notify-send"):
+        return
+    env = os.environ.copy()
+    if "DISPLAY" not in env:
+        env["DISPLAY"] = ":0.0"
+    if "XAUTHORITY" not in env:
+        for xauth in ["/home/aiuser/.Xauthority", "/root/.Xauthority"]:
+            if os.path.exists(xauth):
+                env["XAUTHORITY"] = xauth
+                break
+    try:
+        subprocess.run(
+            ["notify-send", "-u", urgency, "-a", "AI-Agent OS", "-i", "ai-agent", title, str(message)[:150]],
+            env=env,
+            timeout=2,
+            capture_output=True
+        )
+    except Exception:
+        pass
+
+
 def handle_syscall_query(sock, query_payload):
     """Process a Phase 4 AI_MSG_SYSCALL_QUERY message and reply to kernel."""
     query_id = 0
@@ -348,7 +371,9 @@ def handle_syscall_query(sock, query_payload):
                             status = harness.run(query)
                             print(f"  [V2] Job {task_id} finished: {status}")
                         sys.stdout.flush()
+                        send_desktop_notification(f"AI Task {status}", f"{query[:60]} ({status})")
                     except Exception as exc:
+                        send_desktop_notification("AI Task Failed", str(exc)[:80], urgency="critical")
                         import traceback
                         store.event("task_fail", task_idx=0, reason="harness_exception",
                                     msg=str(exc))

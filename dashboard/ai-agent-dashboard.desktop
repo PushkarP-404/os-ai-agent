@@ -2,8 +2,16 @@
 Version=1.0
 Type=Application
 Name=Sentinel Control Center
-Comment=Manage the AI-Agent OS Kernel Daemon
+GenericName=AI Operating System Control Center
+Comment=Flagship AI-Agent OS Control Center & Interactive AI Assistant
 Exec=/usr/bin/ai-agent-dashboard
-Icon=preferences-system
+Icon=ai-agent
 Terminal=false
-Categories=System;Settings;
+StartupNotify=true
+Categories=System;Settings;Utility;
+Keywords=AI;Agent;Sentinel;LLM;Syscall;Telemetry;
+Actions=NewPrompt;
+
+[Desktop Action NewPrompt]
+Name=Open Interactive Prompt
+Exec=/usr/bin/ai-agent-dashboard --prompt

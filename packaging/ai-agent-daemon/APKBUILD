@@ -69,6 +69,14 @@ EOF
                 "$pkgdir/etc/skel/Desktop/ai-agent-dashboard.desktop"
         fi
 
+        # AI-Agent Brand Vector Icon
+        if [ -f "$_dashboard_src/ai-agent.svg" ]; then
+            install -Dm644 "$_dashboard_src/ai-agent.svg" \
+                "$pkgdir/usr/share/icons/hicolor/scalable/apps/ai-agent.svg"
+            install -Dm644 "$_dashboard_src/ai-agent.svg" \
+                "$pkgdir/usr/share/pixmaps/ai-agent.svg"
+        fi
+
         # Wallpaper
         if [ -f "$_dashboard_src/agent-os-wallpaper.jpg" ]; then
             install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
@@ -332,7 +340,19 @@ EOF
     <property name="title_font" type="string" value="Noto Sans Bold 9"/>
     <property name="title_alignment" type="string" value="center"/>
     <property name="button_layout" type="string" value="O|HMC"/>
-    <property name="use_compositing" type="bool" value="false"/>
+    <property name="use_compositing" type="bool" value="true"/>
+    <property name="box_move" type="bool" value="false"/>
+    <property name="box_resize" type="bool" value="false"/>
+    <property name="shadow_delta_height" type="int" value="4"/>
+    <property name="shadow_delta_width" type="int" value="0"/>
+    <property name="shadow_delta_x" type="int" value="0"/>
+    <property name="shadow_delta_y" type="int" value="3"/>
+    <property name="shadow_opacity" type="int" value="45"/>
+    <property name="shadow_radius" type="int" value="12"/>
+    <property name="show_dock_shadow" type="bool" value="true"/>
+    <property name="show_frame_shadow" type="bool" value="true"/>
+    <property name="show_popup_shadow" type="bool" value="true"/>
+    <property name="unredirect_overlays" type="bool" value="true"/>
   </property>
 </channel>
 EOF
@@ -342,6 +362,13 @@ EOF
 <channel name="xfce4-desktop" version="1.0">
   <property name="backdrop" type="empty">
     <property name="screen0" type="empty">
+      <property name="default" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
+        </property>
+      </property>
       <property name="monitor0" type="empty">
         <property name="workspace0" type="empty">
           <property name="color-style" type="int" value="0"/>
@@ -363,6 +390,13 @@ EOF
           <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
         </property>
       </property>
+      <property name="monitorVirtual-0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/agent-os-wallpaper.jpg"/>
+        </property>
+      </property>
     </property>
   </property>
   <property name="desktop-icons" type="empty">
@@ -373,6 +407,107 @@ EOF
       <property name="show-removable" type="bool" value="false"/>
     </property>
     <property name="icon-size" type="uint" value="48"/>
+    <property name="tooltip-size" type="double" value="128.0"/>
+    <property name="single-click" type="bool" value="false"/>
+    <property name="show-thumbnails" type="bool" value="true"/>
+  </property>
+</channel>
+EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xfce4-panel.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+    <value type="int" value="2"/>
+  </property>
+  <property name="panel-1" type="empty">
+    <property name="position" type="string" value="p=6;x=0;y=0"/>
+    <property name="length" type="uint" value="100"/>
+    <property name="position-locked" type="bool" value="true"/>
+    <property name="icon-size" type="uint" value="16"/>
+    <property name="size" type="uint" value="28"/>
+    <property name="plugin-ids" type="array">
+      <value type="int" value="1"/>
+      <value type="int" value="2"/>
+      <value type="int" value="3"/>
+      <value type="int" value="4"/>
+      <value type="int" value="5"/>
+    </property>
+  </property>
+  <property name="panel-2" type="empty">
+    <property name="position" type="string" value="p=10;x=0;y=12"/>
+    <property name="position-locked" type="bool" value="true"/>
+    <property name="icon-size" type="uint" value="36"/>
+    <property name="size" type="uint" value="48"/>
+    <property name="autohide-behavior" type="uint" value="0"/>
+    <property name="plugin-ids" type="array">
+      <value type="int" value="6"/>
+      <value type="int" value="7"/>
+      <value type="int" value="8"/>
+      <value type="int" value="9"/>
+      <value type="int" value="10"/>
+      <value type="int" value="11"/>
+    </property>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="show-button-title" type="bool" value="true"/>
+      <property name="button-title" type="string" value="AI-Agent OS"/>
+      <property name="button-icon" type="string" value="ai-agent"/>
+    </property>
+    <property name="plugin-2" type="string" value="tasklist">
+      <property name="flat-buttons" type="bool" value="true"/>
+      <property name="show-labels" type="bool" value="true"/>
+    </property>
+    <property name="plugin-3" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-4" type="string" value="systray">
+      <property name="square-icons" type="bool" value="true"/>
+    </property>
+    <property name="plugin-5" type="string" value="clock">
+      <property name="digital-layout" type="uint" value="3"/>
+      <property name="digital-time-format" type="string" value="%H:%M · %b %d"/>
+      <property name="mode" type="uint" value="2"/>
+    </property>
+    <property name="plugin-6" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="ai-agent-dashboard.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-7" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="xfce4-terminal.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-8" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="thunar.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-9" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="xfce4-appfinder.desktop"/>
+      </property>
+    </property>
+    <property name="plugin-10" type="string" value="showdesktop"/>
+    <property name="plugin-11" type="string" value="actions"/>
+  </property>
+</channel>
+EOF
+
+    cat << 'EOF' > "$pkgdir/usr/share/ai-agent/themes/xfce4-keyboard-shortcuts.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-keyboard-shortcuts" version="1.0">
+  <property name="commands" type="empty">
+    <property name="custom" type="empty">
+      <property name="&lt;Super&gt;space" type="string" value="/usr/bin/ai-agent-dashboard"/>
+      <property name="&lt;Alt&gt;space" type="string" value="/usr/bin/ai-agent-dashboard"/>
+      <property name="&lt;Primary&gt;&lt;Alt&gt;t" type="string" value="xfce4-terminal"/>
+    </property>
   </property>
 </channel>
 EOF
@@ -380,12 +515,10 @@ EOF
     # Install xfconf channels into skeleton and xdg templates
     install -d "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
     install -d "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xsettings.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xfwm4.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xfce4-desktop.xml" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xsettings.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xfwm4.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
-    cp "$pkgdir/usr/share/ai-agent/themes/xfce4-desktop.xml" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+    for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+        cp "$pkgdir/usr/share/ai-agent/themes/$cfg" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg"
+        cp "$pkgdir/usr/share/ai-agent/themes/$cfg" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg"
+    done
 
     # ── agent-cli binary ─────────────────────────────────────────────────
     install -Dm755 "$_cli_src/agent-cli" \
@@ -453,9 +586,9 @@ post_install() {
 
     # Apply XFCE4 default settings if xfconf is present
     if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
-        cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+            cp -f "/usr/share/ai-agent/themes/$cfg" "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+        done
     fi
 
     # Sync desktop shortcuts and configs to active user if present
@@ -466,9 +599,9 @@ post_install() {
         cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
         cp -f /etc/xdg/gtk-3.0/settings.ini /home/aiuser/.config/gtk-3.0/settings.ini 2>/dev/null || true
         cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xsettings.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfwm4.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+            cp -f "/usr/share/ai-agent/themes/$cfg" "/home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+        done
         cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/Wallpapers/agent-os-wallpaper.jpg 2>/dev/null || true
         cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/agent-os-wallpaper.jpg 2>/dev/null || true
         chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
@@ -500,9 +633,9 @@ post_upgrade() {
 
     # Apply XFCE4 default settings if xfconf is present
     if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
-        cp -f /usr/share/ai-agent/themes/xsettings.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+            cp -f "/usr/share/ai-agent/themes/$cfg" "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+        done
     fi
 
     # Update active user files on upgrade
@@ -513,9 +646,9 @@ post_upgrade() {
         cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
         cp -f /etc/xdg/gtk-3.0/settings.ini /home/aiuser/.config/gtk-3.0/settings.ini 2>/dev/null || true
         cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xsettings.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfwm4.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml 2>/dev/null || true
-        cp -f /usr/share/ai-agent/themes/xfce4-desktop.xml /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml 2>/dev/null || true
+        for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+            cp -f "/usr/share/ai-agent/themes/$cfg" "/home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+        done
         cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/Wallpapers/agent-os-wallpaper.jpg 2>/dev/null || true
         cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/agent-os-wallpaper.jpg 2>/dev/null || true
         chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true

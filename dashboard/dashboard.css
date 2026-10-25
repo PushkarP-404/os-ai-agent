@@ -1,51 +1,54 @@
 /* ==========================================================================
    AI-Agent OS: Sentinel Control Center Modern Dark Stylesheet
+   Modern Glassmorphic Dark Aesthetics with Glow Accents & Visual Telemetry
    ========================================================================== */
 
 /* Root window */
 window, .main-window {
-    background-color: #0c0e17;
+    background-color: #0b0d16;
     color: #f8fafc;
-    font-family: 'Inter', 'Noto Sans', 'Cantarell', -apple-system, sans-serif;
+    font-family: 'Noto Sans', 'Inter', 'Cantarell', -apple-system, sans-serif;
 }
 
 /* HeaderBar */
 headerbar, .header-bar {
-    background: #131622;
+    background: #111422;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     padding: 6px 16px;
-    min-height: 48px;
+    min-height: 52px;
 }
 
 headerbar .title {
-    font-weight: 700;
+    font-weight: 800;
     font-size: 14px;
-    color: #f8fafc;
+    letter-spacing: 0.3px;
+    color: #ffffff;
 }
 
 headerbar .subtitle {
     font-size: 11px;
+    font-weight: 500;
     color: #94a3b8;
 }
 
 /* Navigation Sidebar */
 .sidebar-box {
-    background-color: #131622;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 12px 10px;
+    background-color: #0f121e;
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 14px 10px;
 }
 
 .nav-item {
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     color: #94a3b8;
     font-size: 13px;
     font-weight: 500;
     padding: 10px 14px;
     margin-bottom: 4px;
-    transition: all 150ms ease;
+    transition: all 150ms ease-in-out;
     outline: none;
 }
 
@@ -55,44 +58,76 @@ headerbar .subtitle {
 }
 
 .nav-item.active, .nav-item:checked {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(139, 92, 246, 0.16));
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.18));
     border-left: 3px solid #6366f1;
     color: #ffffff;
-    font-weight: 600;
+    font-weight: 700;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.2);
 }
 
 /* Card Containers */
 .card {
-    background-color: #181c2b;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    background-color: #141828;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     transition: all 200ms ease;
 }
 
 .card:hover {
-    border-color: rgba(99, 102, 241, 0.25);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
 
 .card-title {
     font-size: 12px;
     font-weight: 700;
-    color: #94a3b8;
-    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #818cf8;
+    margin-bottom: 6px;
 }
 
 .metric-value {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 800;
-    color: #f8fafc;
+    color: #ffffff;
 }
 
 .metric-sub {
     font-size: 12px;
     color: #64748b;
     margin-top: 4px;
+}
+
+/* Visual Telemetry Progress Bars */
+progressbar {
+    border-radius: 9999px;
+    padding: 0;
+}
+
+progressbar trough {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 9999px;
+    min-height: 8px;
+    border: none;
+}
+
+progressbar progress {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #38bdf8);
+    border-radius: 9999px;
+    min-height: 8px;
+    border: none;
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+progressbar.ram-bar progress {
+    background: linear-gradient(90deg, #10b981, #06b6d4, #6366f1);
+}
+
+progressbar.cpu-bar progress {
+    background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
 }
 
 /* Status Pills */
@@ -104,6 +139,7 @@ headerbar .subtitle {
     padding: 4px 12px;
     font-size: 11px;
     font-weight: 700;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
 }
 
 .pill-offline {
@@ -126,11 +162,21 @@ headerbar .subtitle {
     font-weight: 600;
 }
 
+.pill-compute {
+    background-color: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 9999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
 /* Action Buttons */
 button {
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    background-color: #202538;
+    background-color: #1d2235;
     color: #f8fafc;
     font-weight: 600;
     font-size: 12px;
@@ -140,49 +186,78 @@ button {
 }
 
 button:hover {
-    background-color: #2a3148;
-    border-color: rgba(255, 255, 255, 0.2);
+    background-color: #272e47;
+    border-color: rgba(255, 255, 255, 0.25);
 }
 
 .btn-primary {
     background: linear-gradient(135deg, #6366f1, #8b5cf6);
     border: none;
     color: #ffffff;
-    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35);
 }
 
 .btn-primary:hover {
     background: linear-gradient(135deg, #4f46e5, #7c3aed);
-    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.5);
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.55);
 }
 
 .btn-success {
     background: linear-gradient(135deg, #10b981, #059669);
     border: none;
     color: #ffffff;
-    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 2px 10px rgba(16, 185, 129, 0.35);
 }
 
 .btn-success:hover {
     background: linear-gradient(135deg, #059669, #047857);
-    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.55);
 }
 
 .btn-danger {
     background: linear-gradient(135deg, #ef4444, #dc2626);
     border: none;
     color: #ffffff;
-    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.3);
+    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.35);
 }
 
 .btn-danger:hover {
     background: linear-gradient(135deg, #dc2626, #b91c1c);
-    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.5);
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.55);
+}
+
+/* Interactive Prompt Bar */
+.prompt-container {
+    background-color: #0f121e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 6px 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    transition: all 180ms ease;
+}
+
+.prompt-container:focus-within {
+    border-color: #6366f1;
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.45);
+}
+
+entry.prompt-entry {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    color: #ffffff;
+    font-size: 13.5px;
+    padding: 6px 10px;
+}
+
+entry.prompt-entry:focus {
+    border: none;
+    box-shadow: none;
 }
 
 /* Inputs & Form Controls */
 entry, spinbutton, combobox text {
-    background-color: #131622;
+    background-color: #121524;
     color: #f8fafc;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 8px;
@@ -193,22 +268,23 @@ entry, spinbutton, combobox text {
 
 entry:focus {
     border-color: #6366f1;
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
 }
 
 /* Monospace Live Log Terminal */
 .terminal-card {
-    background-color: #08090f;
+    background-color: #07090f;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     padding: 12px;
 }
 
 textview.terminal-view, textview.terminal-view text {
-    background-color: #08090f;
+    background-color: #07090f;
     color: #cbd5e1;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 11.5px;
+    font-size: 12px;
+    line-height: 1.45;
 }
 
 /* Custom Scrollbars */
@@ -217,7 +293,7 @@ scrollbar {
 }
 
 scrollbar slider {
-    background-color: rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.14);
     border-radius: 9999px;
     min-width: 6px;
     min-height: 6px;
@@ -225,25 +301,25 @@ scrollbar slider {
 }
 
 scrollbar slider:hover {
-    background-color: rgba(99, 102, 241, 0.5);
+    background-color: rgba(99, 102, 241, 0.6);
 }
 
 /* TreeView (Process Stats) */
 treeview {
-    background-color: #131622;
+    background-color: #121524;
     color: #f8fafc;
     border-radius: 8px;
 }
 
 treeview:selected {
-    background-color: rgba(99, 102, 241, 0.25);
+    background-color: rgba(99, 102, 241, 0.3);
     color: #ffffff;
 }
 
 treeview header button {
-    background: #181c2b;
+    background: #171b2d;
     border: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 0;
     color: #94a3b8;
     font-size: 11px;

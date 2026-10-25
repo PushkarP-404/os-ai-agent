@@ -1371,6 +1371,7 @@ class ToolExecutor:
             except Exception:
                 pass
 
+        messages.reverse()
         messages = messages[:max_emails]
         stdout = json.dumps(messages, ensure_ascii=False, indent=2)
         return ToolResult(
