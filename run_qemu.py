@@ -15,7 +15,9 @@ cmd = [
     "-boot", "c",
     "-netdev", f"user,id=n1,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
     "-device", "e1000,netdev=n1",
-    "-monitor", "tcp:127.0.0.1:5555,server,nowait"
+    "-monitor", "tcp:127.0.0.1:5555,server,nowait",
+    "-accel", "whpx",
+    "-accel", "tcg,thread=multi"
 ]
 
 print("Starting QEMU...")

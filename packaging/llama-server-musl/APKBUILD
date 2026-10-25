@@ -12,7 +12,7 @@ pkgdesc="llama.cpp native musl HTTP inference server for AI-Agent OS"
 arch="x86_64"
 license="MIT"
 url="https://github.com/ggerganov/llama.cpp"
-depends="libstdc++ curl"
+depends="libstdc++ curl libgomp"
 makedepends=""
 options="!check !fhs"  # no upstream test suite for server binary
 
@@ -27,11 +27,16 @@ build() {
     fi
     if [ -d "$builddir" ]; then
         cd "$builddir"
+        local vk_flag="-DGGML_VULKAN=OFF"
+        if [ -f /usr/include/vulkan/vulkan.h ] || pkg-config --exists vulkan 2>/dev/null; then
+            vk_flag="-DGGML_VULKAN=ON"
+        fi
         cmake -B build-apk \
             -DLLAMA_CURL=ON \
             -DLLAMA_BUILD_SERVER=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLAMA_NATIVE=OFF \
+            $vk_flag \
             -DCMAKE_INSTALL_PREFIX=/usr
         cmake --build build-apk --config Release -j"$(nproc)" --target llama-server
     fi
@@ -72,8 +77,12 @@ LLAMA_MODEL="/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf"
 LLAMA_HOST="127.0.0.1"
 LLAMA_PORT="11434"
 # Inference settings
-LLAMA_THREADS="4"
-LLAMA_CTX="512"
+# 'auto' automatically binds to all available physical/logical CPU cores
+LLAMA_THREADS="auto"
+# 'auto' dynamically sizes context window based on available RAM
+LLAMA_CTX="auto"
+# 'auto' detects active GPU compute devices (Vulkan/DRM/NVIDIA) and offloads layers
+LLAMA_NGL="auto"
 EOF
 
     # Create model directory (models are NOT bundled — installed separately)

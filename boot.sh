@@ -51,6 +51,15 @@ else
     GUI_ARGS=(-display none)
 fi
 
+ACCEL_ARGS=()
+if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
+    ACCEL_ARGS=(-enable-kvm -cpu host)
+elif [ "$(uname)" = "Darwin" ]; then
+    ACCEL_ARGS=(-accel hvf -cpu host)
+else
+    ACCEL_ARGS=(-accel tcg,thread=multi)
+fi
+
 exec qemu-system-x86_64 \
     -m "$MEMORY" \
     -smp "$CPUS" \
@@ -58,4 +67,5 @@ exec qemu-system-x86_64 \
     -boot c \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
     -device e1000,netdev=n1 \
+    "${ACCEL_ARGS[@]}" \
     "${GUI_ARGS[@]}"

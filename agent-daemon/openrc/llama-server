@@ -14,13 +14,61 @@ LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/usr/local/bin/llama-server}"
 LLAMA_MODEL="${LLAMA_MODEL:-/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf}"
 LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 LLAMA_PORT="${LLAMA_PORT:-11434}"
-LLAMA_THREADS="${LLAMA_THREADS:-4}"
-LLAMA_CTX="${LLAMA_CTX:-512}"
+LLAMA_THREADS="${LLAMA_THREADS:-auto}"
+LLAMA_CTX="${LLAMA_CTX:-auto}"
+LLAMA_NGL="${LLAMA_NGL:-auto}"
 LLAMA_LOG="/var/log/llama-server.log"
 LLAMA_PIDFILE="/run/llama-server.pid"
 
 depend() {
     need localmount
+}
+
+auto_detect_hardware() {
+    # 1. CPU thread scaling: dynamically use available physical/logical cores
+    if [ "${LLAMA_THREADS:-auto}" = "auto" ] || [ -z "$LLAMA_THREADS" ]; then
+        local cores="$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 4)"
+        if [ "$cores" -gt 16 ]; then
+            cores=16
+        elif [ "$cores" -lt 1 ]; then
+            cores=4
+        fi
+        LLAMA_THREADS="$cores"
+    fi
+    export OMP_NUM_THREADS="$LLAMA_THREADS"
+
+    # 2. Context window scaling based on installed physical RAM
+    if [ "${LLAMA_CTX:-auto}" = "auto" ] || [ -z "$LLAMA_CTX" ]; then
+        local mem_kb="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)"
+        if [ "$mem_kb" -ge 7500000 ]; then      # >= 8 GB RAM
+            LLAMA_CTX=2048
+        elif [ "$mem_kb" -ge 3500000 ]; then    # >= 4 GB RAM
+            LLAMA_CTX=1024
+        else
+            LLAMA_CTX=512
+        fi
+    fi
+
+    # 3. GPU acceleration auto-detection
+    GPU_ARGS=""
+    local ngl="${LLAMA_NGL:-auto}"
+    if [ "$ngl" = "auto" ]; then
+        if [ -d /dev/dri ] && ls /dev/dri/renderD* >/dev/null 2>&1; then
+            einfo "[COMPUTE] Hardware DRI GPU render node detected (/dev/dri/renderD*). Offloading layers to GPU."
+            GPU_ARGS="--n-gpu-layers 99"
+        elif ls /dev/nvidia* >/dev/null 2>&1; then
+            einfo "[COMPUTE] NVIDIA GPU device detected (/dev/nvidia*). Offloading layers to GPU."
+            GPU_ARGS="--n-gpu-layers 99"
+        else
+            einfo "[COMPUTE] No hardware GPU detected. Running multi-threaded CPU mode ($LLAMA_THREADS threads)."
+            GPU_ARGS="--n-gpu-layers 0"
+        fi
+    elif [ "$ngl" -gt 0 ] 2>/dev/null; then
+        einfo "[COMPUTE] User-configured GPU layer offload: $ngl layers"
+        GPU_ARGS="--n-gpu-layers $ngl"
+    else
+        GPU_ARGS="--n-gpu-layers 0"
+    fi
 }
 
 start_pre() {
@@ -40,6 +88,9 @@ start_pre() {
 
 start() {
     ebegin "Starting llama.cpp inference server"
+    auto_detect_hardware
+    einfo "Compute config: Threads=$LLAMA_THREADS, Context=$LLAMA_CTX, GPU_Args=${GPU_ARGS:-none}"
+
     LORA_ARGS=""
     if [ -f "/var/lib/ai-agent/models/os_agent_lora.gguf" ]; then
         LORA_ARGS="--lora /var/lib/ai-agent/models/os_agent_lora.gguf"
@@ -60,6 +111,7 @@ start() {
         --port "$LLAMA_PORT" \
         --threads "$LLAMA_THREADS" \
         --ctx-size "$LLAMA_CTX" \
+        $GPU_ARGS \
         --log-disable
     local ret=$?
     # Poll /health until server is ready (up to 120s for slow hardware)

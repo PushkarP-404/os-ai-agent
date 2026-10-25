@@ -148,6 +148,25 @@ def build_live_capabilities():
                  "grep", "awk", "sed", "find", "nc", "socat", "strace"]:
         if shutil.which(tool):
             live[f"has_{tool}"] = True
+    # Hardware compute & accelerator detection
+    live["cpu_cores"] = os.cpu_count() or 1
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    live["total_mem_kb"] = int(line.split()[1])
+                    break
+    except Exception:
+        pass
+
+    live["has_gpu"] = False
+    if os.path.exists("/dev/dri") and any(pathlib.Path("/dev/dri").glob("renderD*")):
+        live["has_gpu"] = True
+        live["gpu_backend"] = "drm_vulkan"
+    elif any(pathlib.Path("/dev").glob("nvidia*")):
+        live["has_gpu"] = True
+        live["gpu_backend"] = "nvidia"
+
     # Basic system info
     live["user"]     = os.environ.get("USER", "root")
     try:

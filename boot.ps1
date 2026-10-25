@@ -75,6 +75,6 @@ $displayArgs = if ($Gui) {
     -netdev "user,id=n1,hostfwd=tcp:127.0.0.1:$($SshPort)-:22,hostfwd=tcp:127.0.0.1:8080-:8080,hostfwd=tcp:127.0.0.1:9222-:9222" `
     -device virtio-net-pci,netdev=n1 `
     -monitor telnet:127.0.0.1:4444,server,nowait `
-    -accel tcg,thread=multi `
+    -accel whpx -accel tcg,thread=multi `
     @displayArgs
 
