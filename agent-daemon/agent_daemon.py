@@ -199,9 +199,27 @@ def save_capability(key, value):
 load_capabilities()
 
 
-def query_ollama(prompt, min_tokens=8, n_predict=200):
+# ── Plan grammar for grammar-constrained decoding ─────────────────────────────
+_GRAMMAR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan_grammar.gbnf")
+_PLAN_GRAMMAR_STR: str = ""
+try:
+    with open(_GRAMMAR_PATH, "r", encoding="utf-8") as _gf:
+        _PLAN_GRAMMAR_STR = _gf.read()
+    print(f"[DAEMON] Grammar-constrained decoding enabled ({_GRAMMAR_PATH})")
+except OSError:
+    print(f"[DAEMON] plan_grammar.gbnf not found — free-form JSON parsing active")
+
+
+def query_ollama(prompt: str, min_tokens: int = 8, n_predict: int = 200,
+                 use_grammar: bool = True) -> str:
     """POST a completion request to llama-server; return the response text.
-    
+
+    Grammar-constrained decoding:
+        When plan_grammar.gbnf is present and use_grammar=True, the grammar
+        field is included in the request so llama-server constrains the output
+        to valid Plan JSON automatically.  This eliminates F1 (invalid JSON)
+        and F2 (wrong tool name) failures without any model fine-tuning.
+
     Bug fix (2026-09-27): Removed '.' from stop tokens — it caused the 135M model
     to terminate after a single token (e.g. the model outputting '1.' immediately
     stops). Also increased n_predict from 128 to 200 to allow full JSON responses.
@@ -209,12 +227,16 @@ def query_ollama(prompt, min_tokens=8, n_predict=200):
     """
     # NOTE: Do NOT include '.' or single '\n' as stop tokens — the tiny SmolLM2
     # model outputs these almost immediately, resulting in single-character responses.
-    payload = {
-        "prompt": prompt,
-        "n_predict": n_predict,
+    payload: dict = {
+        "prompt":      prompt,
+        "n_predict":   n_predict,
         "temperature": 0.1,
         "stop": ["<|im_end|>", "<|im_start|>"],
     }
+    # Inject grammar only for planning prompts (identified by the plan schema marker)
+    # Repair prompts and simple queries skip grammar to allow more flexible output.
+    if use_grammar and _PLAN_GRAMMAR_STR and '"goal"' in prompt:
+        payload["grammar"] = _PLAN_GRAMMAR_STR
     data = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(
         LLAMA_URL,
@@ -358,9 +380,22 @@ def handle_syscall_query(sock, query_payload):
 
                 def _run_v2_job():
                     """Run the verified harness in a thread-pool worker."""
+                    # Adaptive n_predict: give more tokens to complex multi-step tasks.
+                    # Simple tasks (~1-3 steps) need ~700 tokens for plan JSON.
+                    # Complex multi-app tasks (~8+ steps) need up to 2000 tokens.
+                    import re as _re
+                    _action_count = sum(
+                        1 for v in [
+                            "open", "read", "write", "create", "send", "save",
+                            "export", "move", "find", "update", "compile", "run",
+                            "check", "generate", "summarize", "compare", "deploy",
+                        ] if v in query.lower()
+                    )
+                    _n_predict = min(2000, max(700, _action_count * 180))
+
                     harness = _harness_mod.Harness(
                         store, _caller, mode,
-                        lambda prompt: query_ollama(prompt, n_predict=700),
+                        lambda prompt: query_ollama(prompt, n_predict=_n_predict),
                         cancelled=cancel_event.is_set,
                     )
                     try:

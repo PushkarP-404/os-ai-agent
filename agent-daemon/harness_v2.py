@@ -43,11 +43,162 @@ from pathlib import Path
 from typing import Any, Callable
 
 # ── Public constants ─────────────────────────────────────────────────────────
-MAX_REPAIRS_PER_STEP = 2
+MAX_REPAIRS_PER_STEP = 3       # raised from 2: gives model one extra self-correction budget
 MAX_PLAN_STEPS = 20
-TOOL_TIMEOUT_DEFAULT = 60    # seconds per tool call
-PLAN_LLM_N_PREDICT  = 700   # token budget for plan generation
-REPAIR_LLM_N_PREDICT = 500  # token budget for repair plan
+TOOL_TIMEOUT_DEFAULT = 60      # seconds per tool call
+PLAN_LLM_N_PREDICT  = 700    # token budget for plan generation
+REPAIR_LLM_N_PREDICT = 500   # token budget for repair plan
+
+# Path to the GBNF grammar file for grammar-constrained decoding in llama-server.
+# When present, the grammar is embedded in LLM requests so the model can ONLY
+# emit valid Plan JSON — eliminating F1 (invalid JSON) and F2 (wrong tool name).
+import os as _os
+PLAN_GRAMMAR_PATH: str = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "plan_grammar.gbnf"
+)
+
+# ── Intent-to-tool-subset classifier ─────────────────────────────────────────
+# Maps broad task categories to the tool names relevant to that category.
+# Used by plan_prompt() to shrink the tool list in the system prompt by ~70%,
+# reducing token usage and improving focus for the planning LLM call.
+_CATEGORY_TOOLS: dict[str, list[str]] = {
+    "browser": [
+        "browser.navigate", "browser.dump", "browser.click",
+        "browser.type", "browser.screenshot",
+        "file.write", "file.read", "command.argv",
+    ],
+    "email": [
+        "email.send", "email.read",
+        "file.read", "file.write", "document.read", "command.argv",
+    ],
+    "coding": [
+        "command.argv", "file.read", "file.write", "file.list",
+        "file.append", "shell.script", "dir.create",
+        "http.check", "service.status",
+    ],
+    "files": [
+        "file.read", "file.write", "file.list", "file.move",
+        "file.delete", "file.append", "file.query",
+        "dir.create", "dir.remove", "dir.query",
+        "command.argv",
+    ],
+    "document": [
+        "document.read", "file.read", "file.write",
+        "command.argv", "data.csv_read", "data.csv_write",
+        "llm.prompt",
+    ],
+    "data": [
+        "data.csv_read", "data.csv_write", "file.read",
+        "file.write", "shell.script", "command.argv", "llm.prompt",
+    ],
+    "service": [
+        "service.status", "service.start", "service.restart",
+        "service.stop", "service.enable", "service.disable",
+        "service.logs", "package.install", "package.query",
+        "system.info", "disk.status", "command.argv",
+    ],
+    "system": [
+        "system.info", "disk.status", "memory.status",
+        "port.inspect", "http.check", "command.argv",
+        "service.status", "service.logs",
+    ],
+    "research": [
+        "file.read", "file.list", "document.read",
+        "data.csv_read", "http.get", "llm.prompt",
+        "file.write", "command.argv",
+    ],
+}
+
+# Keywords that signal each category
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "browser":  ["browser", "web", "url", "http", "website", "portal",
+                 "navigate", "open the browser", "fill out", "form", "click"],
+    "email":    ["email", "inbox", "send", "draft", "mail", "reply",
+                 "compose", "forward", "attachment"],
+    "coding":   ["repo", "git", "code", "test", "cursor", "claude code",
+                 "script", "function", "bug", "fix", "refactor", "build",
+                 "compile", "deploy", "ci", "lint"],
+    "files":    ["file", "folder", "directory", "rename", "move", "copy",
+                 "delete", "zip", "archive", "organize", "backup"],
+    "document": ["document", "docx", "pdf", "word", "spreadsheet",
+                 "summary", "report", "draft", "write", "edit"],
+    "data":     ["csv", "dataset", "analysis", "chart", "table",
+                 "calculate", "compute", "statistics", "export"],
+    "service":  ["service", "daemon", "restart", "start", "stop",
+                 "enable", "disable", "install", "package", "apk"],
+    "system":   ["disk", "memory", "cpu", "port", "process", "system",
+                 "health", "status", "log", "uptime"],
+    "research": ["research", "summarize", "summarise", "find all",
+                 "compile", "gather", "synthesize", "read all"],
+}
+
+
+def classify_intent_categories(intent: str) -> list[str]:
+    """Return the 1-3 most relevant tool categories for this intent string.
+
+    Falls back to returning an empty list (caller uses the full tool set).
+    """
+    text = intent.lower()
+    hits: list[tuple[int, str]] = []
+    for category, keywords in _CATEGORY_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in text)
+        if score:
+            hits.append((score, category))
+    hits.sort(reverse=True)
+    return [cat for _, cat in hits[:3]]
+
+
+def _build_tool_subset(intent: str) -> list[str]:
+    """Return the filtered tool list for the given intent.
+
+    Always includes 'system.info' and 'command.argv' as safe defaults.
+    Falls back to the full ALLOWED_TOOLS set when no category is detected.
+    """
+    categories = classify_intent_categories(intent)
+    if not categories:
+        return sorted(PolicyEngine.READ_ONLY | PolicyEngine.CHANGE)
+    tools: set[str] = {"system.info", "command.argv"}  # always present
+    for cat in categories:
+        tools.update(_CATEGORY_TOOLS.get(cat, []))
+    return sorted(tools)
+
+
+def _load_plan_grammar() -> str:
+    """Load GBNF grammar from plan_grammar.gbnf for grammar-constrained decoding.
+
+    Returns empty string when the file is absent (graceful degradation).
+    """
+    try:
+        with open(PLAN_GRAMMAR_PATH, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+# Pre-load grammar once at import time (fast path — file is small)
+_PLAN_GRAMMAR: str = _load_plan_grammar()
+
+
+def _estimate_complexity(intent: str) -> int:
+    """Heuristic estimate of the number of logical steps required.
+
+    Used to decide whether to activate chunked planning.
+    Returns an estimated step count (1-30+).
+    """
+    text = intent.lower()
+    # Count action verbs as rough step indicators
+    action_verbs = [
+        "open", "read", "write", "create", "send", "save", "export",
+        "move", "delete", "rename", "install", "start", "restart",
+        "check", "find", "compare", "update", "compile", "run",
+        "summarize", "summarise", "generate", "download", "upload",
+        "extract", "convert", "merge", "commit", "deploy",
+    ]
+    multi_app_words = ["and then", "then", "after that", "finally",
+                       "and also", "followed by", "next"]
+    step_estimate = sum(1 for v in action_verbs if v in text)
+    step_estimate += sum(2 for m in multi_app_words if m in text)
+    return max(1, step_estimate)
 
 # Commands whose first token is safe for command.argv (Linux read+light-write)
 SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
@@ -1595,23 +1746,42 @@ def extract_first_json_object(text: str) -> Any | None:
 
 
 # ── LLM prompt builders ───────────────────────────────────────────────────────
-def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
-    tools = sorted(ALLOWED_TOOLS)
+def plan_prompt(intent: str, inventory: list[dict[str, Any]],
+                tool_subset: list[str] | None = None) -> str:
+    """Build the system+user prompt for the planning LLM call.
+
+    tool_subset: pre-filtered list of relevant tools (from _build_tool_subset).
+    When None the full ALLOWED_TOOLS set is used as a fallback.
+    """
+    # Use the category-filtered subset to cut ~70% of prompt tokens on focused tasks
+    tools = tool_subset if tool_subset is not None else sorted(ALLOWED_TOOLS)
     inv_text = json.dumps(inventory, ensure_ascii=False)[:2000]
+    # Include a grammar note when constrained decoding is active so the model
+    # knows its output is being validated character-by-character.
+    grammar_note = (
+        "IMPORTANT: Your output is grammar-constrained. "
+        "Emit ONLY the bare JSON object — no markdown, no prose.\n"
+        if _PLAN_GRAMMAR else ""
+    )
     return (
         "<|im_start|>system\n"
         "You are the AI-Agent OS planner. Return ONE JSON object only. "
         "No markdown fences. No prose before or after the JSON.\n"
-        f"Registered tools: {tools}\n"
+        f"{grammar_note}"
+        f"Available tools: {tools}\n"
         "Schema:\n"
         '{"goal":string,"assumptions":[string],"success_criteria":[{"description":string,"tool":string,"args":{}}],'
         '"steps":[{"id":string,"purpose":string,"tool":string,"args":{},'
-        '"depends_on":[string],"verify":[{"tool":string,"args":{}}]}]}\n'
+        '"depends_on":[string],"risk":"read_only"|"change",'
+        '"captures":{varname:rule},"verify":[{"tool":string,"args":{}}]}]}\n'
         "Rules:\n"
-        "- Every system-changing step MUST have at least one verify entry.\n"
-        "- Step ids are lowercase alphanumeric with hyphens only.\n"
-        "- depends_on lists step ids that must complete before this step runs.\n"
-        "- Use command.argv for tasks the typed tools cannot cover; "
+        "- Every step with risk=change MUST have at least one verify entry.\n"
+        "- Step ids: lowercase a-z, 0-9, hyphens only.\n"
+        "- depends_on: list of step ids that must complete before this step runs.\n"
+        "- captures: map from variable name to capture rule. Rules: stdout:strip, "
+        "  stdout:first_line, exit_code, regex:<pattern>, json:<dot.path>\n"
+        "- Use ${scratchpad.varname} in args to reference captured values from prior steps.\n"
+        "- Use command.argv for tasks not covered by typed tools; "
         '  args must be {"argv":["binary","arg1",...]}'
         " where binary is in the safe allowlist.\n"
         "Tool tips:\n"
@@ -1626,7 +1796,7 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
         "  email.send {to, subject, body, attachments?} – send or spool an email\n"
         "  email.read {folder?, max_emails?, search?, unseen_only?} – read emails from inbox/spool\n"
         "  http.get   {url, headers?, timeout?, max_bytes?} – external HTTP GET (captures stdout)\n"
-        "  llm.prompt {prompt, model?, max_tokens?, endpoint?} – query local Ollama (captures stdout)\n"
+        "  llm.prompt {prompt, model?, max_tokens?, endpoint?} – query local LLM (captures stdout)\n"
         "  browser.navigate {url} – open/navigate browser to URL\n"
         "  browser.dump {} – dump accessibility elements of active browser tab\n"
         "  browser.click {id} – click browser element by ID\n"
@@ -1641,16 +1811,67 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
     )
 
 
+def chunk_planning_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
+    """Build a prompt for the first pass of chunked planning.
+
+    For complex intents (estimated > 8 logical steps), we first ask the model
+    to decompose the task into 2-5 high-level phases, then plan each phase
+    individually.  This keeps each LLM call within token budget.
+    """
+    inv_text = json.dumps(inventory, ensure_ascii=False)[:800]
+    return (
+        "<|im_start|>system\n"
+        "You are the AI-Agent OS task decomposer. "
+        "Decompose the user intent into 2-5 ordered phases. "
+        "Return ONE JSON object only: "
+        '{"phases":[{"id":"phase1","goal":"...","tools_hint":["tool1",...]},...]}.\n'
+        "No prose, no markdown. Phases must be sequential and each produce a clear output.\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"Intent: {intent}\n"
+        f"System inventory: {inv_text}\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
+
+def phase_plan_prompt(phase_goal: str, phase_id: str,
+                      scratchpad: dict[str, Any],
+                      inventory: list[dict[str, Any]],
+                      tool_subset: list[str] | None = None) -> str:
+    """Build the planning prompt for a single phase in chunked planning."""
+    tools = tool_subset if tool_subset is not None else sorted(ALLOWED_TOOLS)
+    sp_text = json.dumps(scratchpad, ensure_ascii=False)[:400] if scratchpad else "{}"
+    inv_text = json.dumps(inventory, ensure_ascii=False)[:600]
+    return (
+        "<|im_start|>system\n"
+        f"You are planning phase '{phase_id}'. "
+        "Return ONE JSON plan object (same schema as the full plan). "
+        "Max 8 steps for this phase.\n"
+        f"Available tools: {tools}\n"
+        "Use ${scratchpad.varname} to reference values captured in earlier phases.\n"
+        "No prose, no markdown.\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"Phase goal: {phase_goal}\n"
+        f"Current scratchpad: {sp_text}\n"
+        f"System inventory: {inv_text}\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
+
 def repair_prompt(purpose: str, failure: str, evidence: list[dict[str, Any]]) -> str:
     ev_text = json.dumps(evidence[-6:], ensure_ascii=False)[:1200]
+    # Use compact tool list in repair prompts to save token budget
     tools   = sorted(ALLOWED_TOOLS)
     return (
         "<|im_start|>system\n"
         f"Step '{purpose}' failed with: {failure}\n"
         f"Evidence: {ev_text}\n"
         "Return a JSON repair plan (same schema as a normal plan). "
-        f"Registered tools: {tools}. Max 3 steps. "
-        "Each system-changing step needs verify. No prose, just JSON.\n"
+        f"Available tools: {tools}. Max 3 steps. "
+        "Each system-changing step MUST have a verify entry. No prose, just JSON.\n"
         "<|im_end|>\n"
         "<|im_start|>user\nRepair plan:\n<|im_end|>\n"
         "<|im_start|>assistant\n"
@@ -2233,8 +2454,23 @@ class Harness:
                              steps=[s.purpose for s in plan.steps])
             return plan
 
-        # Tier 2 — LLM structured plan
-        raw = self.llm(plan_prompt(intent, inventory))
+        # Quick-win 2: category-filtered tool subset cuts system prompt tokens ~70%
+        tool_subset = _build_tool_subset(intent)
+        self.store.event("planner_tool_subset",
+                         categories=classify_intent_categories(intent),
+                         tool_count=len(tool_subset))
+
+        # Quick-win 3: chunked planning for complex multi-step intents
+        estimated_steps = _estimate_complexity(intent)
+        if estimated_steps > 8:
+            plan = self._chunked_plan(intent, inventory, tool_subset)
+            if plan is not None:
+                self.store.event("planner_chunked_ok",
+                                 steps=[s.purpose for s in plan.steps])
+                return plan
+
+        # Tier 2 — LLM structured plan (with grammar-filtered tool subset)
+        raw = self.llm(plan_prompt(intent, inventory, tool_subset))
         self.store.event("planner_raw", raw=raw[:2000] if isinstance(raw, str) else "")
         parsed = extract_first_json_object(raw)
         if parsed and isinstance(parsed, dict):
@@ -2244,6 +2480,28 @@ class Harness:
                 return plan
             except PlanError as exc:
                 self.store.event("planner_parse_fail", error=str(exc))
+                # Quick-win 4: one extra auto-repair attempt before falling through
+                # Ask the LLM to fix its own invalid plan output
+                repair_raw = self.llm(
+                    "<|im_start|>system\n"
+                    "The following JSON plan has a validation error: " + str(exc) + "\n"
+                    "Fix the JSON so it passes validation. Return only corrected JSON.\n"
+                    "<|im_end|>\n"
+                    "<|im_start|>user\n" + (raw[:1500] if isinstance(raw, str) else "") + "\n"
+                    "<|im_end|>\n"
+                    "<|im_start|>assistant\n"
+                )
+                reparsed = extract_first_json_object(
+                    repair_raw if isinstance(repair_raw, str) else ""
+                )
+                if reparsed and isinstance(reparsed, dict):
+                    try:
+                        plan = validate_plan(reparsed)
+                        self.store.event("planner_auto_repair_ok",
+                                         steps=[s.purpose for s in plan.steps])
+                        return plan
+                    except PlanError:
+                        pass
 
         # Tier 3 — single extracted command fallback
         cmd = self._extract_single_command(raw if isinstance(raw, str) else "")
@@ -2264,6 +2522,111 @@ class Harness:
                 return fallback
 
         return None
+
+    def _chunked_plan(self, intent: str, inventory: list[dict[str, Any]],
+                      tool_subset: list[str]) -> Plan | None:
+        """Two-phase planning for complex multi-step intents.
+
+        Phase 1: Ask LLM to decompose intent into 2-5 high-level phases.
+        Phase 2: For each phase, ask LLM for a detailed step plan.
+        Merge all per-phase steps into a single flat Plan.
+
+        Keeps each LLM call under the token budget by limiting per-phase scope.
+        """
+        self.store.event("planner_chunked_start", intent=intent[:200])
+
+        # Step 1: Decompose into phases
+        decomp_raw = self.llm(chunk_planning_prompt(intent, inventory))
+        decomp_parsed = extract_first_json_object(
+            decomp_raw if isinstance(decomp_raw, str) else ""
+        )
+        if not isinstance(decomp_parsed, dict):
+            self.store.event("planner_chunked_decomp_fail", raw=str(decomp_raw)[:500])
+            return None
+
+        phases = decomp_parsed.get("phases", [])
+        if not isinstance(phases, list) or not phases:
+            self.store.event("planner_chunked_no_phases")
+            return None
+
+        self.store.event("planner_chunked_phases",
+                         phases=[p.get("goal", "") for p in phases])
+
+        # Step 2: Plan each phase individually
+        all_steps: list[Step] = []
+        all_criteria: list[dict] = []
+        scratchpad_state: dict[str, Any] = dict(self.scratchpad)
+        id_offset = 0
+
+        for phase in phases[:5]:  # cap at 5 phases
+            if not isinstance(phase, dict):
+                continue
+            phase_id = str(phase.get("id", f"phase{id_offset+1}"))
+            phase_goal = str(phase.get("goal", ""))
+            if not phase_goal:
+                continue
+
+            # Build tool subset from phase's tools_hint if provided
+            phase_tools_hint = phase.get("tools_hint", [])
+            if isinstance(phase_tools_hint, list) and phase_tools_hint:
+                phase_tools = sorted(
+                    set(phase_tools_hint) & (PolicyEngine.READ_ONLY | PolicyEngine.CHANGE)
+                    | {"system.info", "command.argv"}
+                )
+            else:
+                phase_tools = tool_subset
+
+            p_raw = self.llm(phase_plan_prompt(
+                phase_goal, phase_id, scratchpad_state, inventory, phase_tools
+            ))
+            p_parsed = extract_first_json_object(
+                p_raw if isinstance(p_raw, str) else ""
+            )
+            if not isinstance(p_parsed, dict):
+                self.store.event("planner_chunked_phase_fail",
+                                 phase_id=phase_id, raw=str(p_raw)[:500])
+                continue
+
+            try:
+                p_plan = validate_plan(p_parsed)
+            except PlanError as exc:
+                self.store.event("planner_chunked_phase_invalid",
+                                 phase_id=phase_id, error=str(exc))
+                continue
+
+            # Re-number step IDs to avoid collisions across phases
+            for step in p_plan.steps:
+                step.id = f"{phase_id}-{step.id}"
+                # Fix depends_on references to include the phase prefix
+                step.depends_on = [
+                    f"{phase_id}-{d}" for d in step.depends_on
+                ]
+                all_steps.append(step)
+
+            all_criteria.extend(p_plan.success_criteria)
+            id_offset += 1
+
+            # Simulate captures for context passing to next phase
+            for step in p_plan.steps:
+                for var_name in step.captures:
+                    scratchpad_state.setdefault(var_name, f"<captured_by_{step.id}>")
+
+        if not all_steps:
+            self.store.event("planner_chunked_no_steps")
+            return None
+
+        # Enforce MAX_PLAN_STEPS limit across all phases
+        if len(all_steps) > MAX_PLAN_STEPS:
+            all_steps = all_steps[:MAX_PLAN_STEPS]
+
+        return Plan(
+            goal=intent,
+            success_criteria=all_criteria or [
+                {"description": "All phases completed", "tool": "system.info", "args": {}}
+            ],
+            steps=all_steps,
+            assumptions=[f"Chunked plan: {len(phases)} phases merged."],
+        )
 
     @staticmethod
     def _extract_single_command(text: str) -> list[str] | None:

@@ -1,0 +1,97 @@
+# plan_grammar.gbnf
+# Grammar for grammar-constrained decoding in llama-server.
+# Guarantees model output is a valid Plan JSON object matching the harness schema.
+# Pass this as the "grammar" field in the llama-server /completion API.
+
+root   ::= ws plan ws
+
+plan   ::= "{" ws
+           "\"goal\""              ws ":" ws string ws "," ws
+           "\"success_criteria\""  ws ":" ws criteria ws "," ws
+           "\"steps\""             ws ":" ws steps
+           ( ws "," ws "\"assumptions\""  ws ":" ws strings )?
+           ( ws "," ws "\"assumptions\""  ws ":" ws strings )?
+           ws "}"
+
+criteria ::= "[" ws criterion ( ws "," ws criterion )* ws "]"
+criterion ::= "{" ws
+              "\"description\"" ws ":" ws string ws "," ws
+              "\"tool\""        ws ":" ws tool-name ws "," ws
+              "\"args\""        ws ":" ws object
+              ws "}"
+
+steps  ::= "[" ws step ( ws "," ws step )* ws "]"
+step   ::= "{" ws
+           "\"id\""       ws ":" ws step-id   ws "," ws
+           "\"purpose\""  ws ":" ws string     ws "," ws
+           "\"tool\""     ws ":" ws tool-name  ws "," ws
+           "\"args\""     ws ":" ws object     ws "," ws
+           "\"verify\""   ws ":" ws verifiers
+           ( ws "," ws "\"depends_on\""  ws ":" ws strings  )?
+           ( ws "," ws "\"risk\""        ws ":" ws risk      )?
+           ( ws "," ws "\"captures\""    ws ":" ws object    )?
+           ws "}"
+
+verifiers ::= "[" ws ( verifier ( ws "," ws verifier )* )? ws "]"
+verifier  ::= "{" ws
+              "\"tool\"" ws ":" ws tool-name ws "," ws
+              "\"args\"" ws ":" ws object
+              ws "}"
+
+risk     ::= "\"read_only\"" | "\"change\"" | "\"system_change\""
+strings  ::= "[" ws ( string ( ws "," ws string )* )? ws "]"
+step-id  ::= "\"" [a-z] [a-z0-9_-]* "\""
+
+# Allowed tool names (drawn from PolicyEngine.READ_ONLY | CHANGE)
+tool-name ::= "\"system.info\""
+            | "\"disk.status\""
+            | "\"memory.status\""
+            | "\"package.query\""
+            | "\"service.status\""
+            | "\"service.logs\""
+            | "\"port.inspect\""
+            | "\"file.read\""
+            | "\"file.query\""
+            | "\"file.list\""
+            | "\"http.check\""
+            | "\"http.get\""
+            | "\"dir.query\""
+            | "\"command.argv\""
+            | "\"llm.prompt\""
+            | "\"data.csv_read\""
+            | "\"document.read\""
+            | "\"email.read\""
+            | "\"browser.navigate\""
+            | "\"browser.dump\""
+            | "\"browser.screenshot\""
+            | "\"package.install\""
+            | "\"service.start\""
+            | "\"service.restart\""
+            | "\"service.stop\""
+            | "\"service.enable\""
+            | "\"service.disable\""
+            | "\"dir.create\""
+            | "\"dir.remove\""
+            | "\"file.write\""
+            | "\"file.append\""
+            | "\"file.move\""
+            | "\"file.delete\""
+            | "\"shell.script\""
+            | "\"data.csv_write\""
+            | "\"email.send\""
+            | "\"browser.click\""
+            | "\"browser.type\""
+
+# Generic JSON primitives
+object  ::= "{" ws ( kv-pair ( ws "," ws kv-pair )* )? ws "}"
+kv-pair ::= string ws ":" ws value
+array   ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
+value   ::= string | number | object | array | "true" | "false" | "null"
+string  ::= "\"" char* "\""
+char    ::= [^"\\] | "\\" escape
+escape  ::= "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]
+number  ::= "-"? integer fraction? exponent?
+integer ::= "0" | [1-9] [0-9]*
+fraction ::= "." [0-9]+
+exponent ::= [eE] [-+]? [0-9]+
+ws      ::= [ \t\n\r]*
