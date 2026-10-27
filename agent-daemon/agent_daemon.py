@@ -70,7 +70,7 @@ RESP_SIZE   = struct.calcsize(RESP_FORMAT)
 # Override: LLAMA_URL=http://127.0.0.1:11434/completion
 LLAMA_URL   = os.environ.get("LLAMA_URL",   "http://127.0.0.1:11434/completion")
 LLAMA_MODEL = "smollm2-135m-instruct-q4_k_m"   # informational only
-AGENT_MODE  = os.environ.get("AGENT_MODE", "ASSIST") # "ASSIST" or "SUGGEST"
+AGENT_MODE  = os.environ.get("AGENT_MODE", "SUGGEST") # "SUGGEST", "ASSIST", or "APPLY" (safe default)
 
 # For logger.py compatibility we keep OLLAMA_MODEL pointing at LLAMA_MODEL
 OLLAMA_URL   = LLAMA_URL

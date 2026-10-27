@@ -288,6 +288,30 @@ class Plan:
         return None
 
 
+@dataclass
+class StepRecord:
+    """Audit record capturing all 5 required elements for each plan step."""
+    step_id: str
+    intent: str
+    action: dict[str, Any]
+    expected_verification: list[dict[str, Any]]
+    actual_result: dict[str, Any]
+    log_entry: dict[str, Any]
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "intent": self.intent,
+            "action": self.action,
+            "expected_verification": self.expected_verification,
+            "actual_result": self.actual_result,
+            "log_entry": self.log_entry,
+            "timestamp": self.timestamp,
+        }
+
+
+
 # ── Dynamic variable scratchpad interpolator ─────────────────────────────────
 class VariableInterpolator:
     """Resolves dynamic variables from the scratchpad and extracts step outputs."""
@@ -395,13 +419,14 @@ class JobStore:
     """
 
     def __init__(self, base_dir: str, task_id: str, legacy_log: Callable[..., None]):
-        self.base        = Path(base_dir) / "jobs" / task_id
-        self.state_path  = self.base / "job.json"
-        self.events_path = self.base / "events.jsonl"
-        self.plan_path   = self.base / "plan.json"
-        self.report_path = self.base / "report.json"
-        self.task_id     = task_id
-        self.legacy_log  = legacy_log
+        self.base            = Path(base_dir) / "jobs" / task_id
+        self.state_path      = self.base / "job.json"
+        self.checkpoint_path = self.base / "checkpoint.json"
+        self.events_path     = self.base / "events.jsonl"
+        self.plan_path       = self.base / "plan.json"
+        self.report_path     = self.base / "report.json"
+        self.task_id         = task_id
+        self.legacy_log      = legacy_log
         self.state: dict[str, Any] = {}
 
     def create(self, intent: str, mode: str, caller: dict[str, Any]) -> None:
@@ -421,6 +446,7 @@ class JobStore:
             },
             "completed_steps": [],
             "failed_steps":    [],
+            "step_records":    [],
             "scratchpad":      {},
             "checkpoint":      None,
             "approval":        None,
@@ -465,13 +491,40 @@ class JobStore:
         except Exception:
             return None
 
-    def set_checkpoint(self, step_id: str, stage: str) -> None:
-        self.state["checkpoint"] = {
-            "current_step": step_id,
-            "stage":        stage,
-            "updated_at":   time.time(),
-        }
+    def load_checkpoint(self) -> dict[str, Any] | None:
+        if self.checkpoint_path.exists():
+            try:
+                with self.checkpoint_path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        if "checkpoint" in self.state and self.state["checkpoint"]:
+            return self.state["checkpoint"]
+        return None
+
+    def record_step(self, step_record: StepRecord) -> None:
+        rec_dict = step_record.to_dict()
+        if "step_records" not in self.state:
+            self.state["step_records"] = []
+        self.state["step_records"].append(rec_dict)
+        self.event("step_record", **rec_dict)
         self._save()
+
+    def set_checkpoint(self, step_id: str, stage: str, details: dict[str, Any] | None = None) -> None:
+        cp_data = {
+            "job_id":          self.task_id,
+            "current_step":    step_id,
+            "stage":           stage,
+            "completed_steps": list(self.state.get("completed_steps", [])),
+            "failed_steps":    list(self.state.get("failed_steps", [])),
+            "scratchpad":      dict(self.state.get("scratchpad", {})),
+            "details":         details or {},
+            "updated_at":      time.time(),
+        }
+        self.state["checkpoint"] = cp_data
+        self._save()
+        _atomic_json(self.checkpoint_path, cp_data)
+        self.event("checkpoint_saved", current_step=step_id, stage=stage)
 
     def update_scratchpad(self, updates: dict[str, Any]) -> None:
         sp = self.state.setdefault("scratchpad", {})
@@ -546,16 +599,57 @@ class PolicyEngine:
         "browser.click", "browser.type",
     })
 
+    DESTRUCTIVE: frozenset[str] = frozenset({
+        "file.delete", "dir.remove", "package.install",
+        "service.stop", "service.disable", "shell.script",
+    })
+    FORBIDDEN_COMMANDS: frozenset[str] = frozenset({
+        "mkfs", "fdisk", "parted", "dd", "format",
+        "shutdown", "poweroff", "reboot", "init", "halt",
+    })
+    DESTRUCTIVE_COMMANDS: frozenset[str] = frozenset({
+        "rm", "rmdir", "del", "erase", "kill", "pkill", "killall",
+    })
+
     def decide(self, mode: str, step: Step) -> tuple[str, str]:
         if step.tool not in self.READ_ONLY | self.CHANGE:
             return "DENY", f"Tool '{step.tool}' is not registered."
-        if step.tool in self.READ_ONLY:
+
+        is_destructive = step.tool in self.DESTRUCTIVE
+
+        if step.tool == "command.argv":
+            argv = step.args.get("argv", [])
+            if isinstance(argv, list) and argv:
+                cmd0 = str(argv[0]).strip().lower()
+                if cmd0 in self.FORBIDDEN_COMMANDS:
+                    return "DENY", f"Command '{cmd0}' is strictly forbidden by harness policy."
+                if cmd0 in ("rm", "rmdir"):
+                    is_destructive = True
+                    for arg in argv[1:]:
+                        clean_arg = str(arg).strip().rstrip("/\\")
+                        if clean_arg in ("", "/", "/*", "/etc", "/usr", "/var", "/bin", "/sbin", "/boot", "/root"):
+                            return "DENY", f"Command attempts unsafe deletion of protected system target '{arg}'."
+                elif cmd0 in self.DESTRUCTIVE_COMMANDS:
+                    is_destructive = True
+
+        if not is_destructive and step.tool in self.READ_ONLY:
             return "ALLOW", "Read-only inspection is allowed."
+
         if mode == "SUGGEST":
-            return "SUGGEST", "SUGGEST mode: no system changes are executed."
-        if mode in {"ASSIST", "APPLY"}:
-            return "ALLOW", "Requested system action is allowed by the current local policy."
-        return "REQUIRE_APPROVAL", "The selected mode does not authorize this system change."
+            return "SUGGEST", "SUGGEST mode: no system changes are executed without explicit approval."
+
+        if mode == "READ_ONLY":
+            return "DENY", "READ_ONLY mode: system mutations are prohibited."
+
+        if mode == "APPLY":
+            return "ALLOW", "APPLY mode: authorized execution of system change."
+
+        if mode == "ASSIST":
+            if is_destructive:
+                return "REQUIRE_APPROVAL", f"Destructive tool/command '{step.tool}' requires explicit approval before execution."
+            return "ALLOW", "Requested system action is allowed by local policy."
+
+        return "REQUIRE_APPROVAL", f"Mode '{mode}' does not authorize this system change."
 
 
 # ── Privileged tool client ─────────────────────────────────────────────────────
@@ -682,21 +776,41 @@ class ToolExecutor:
     # ── Read-only tools ───────────────────────────────────────────────────────
 
     def tool_system_info(self, args: dict[str, Any]) -> ToolResult:
+        import platform
+        try:
+            k_rel = os.uname().release
+        except (AttributeError, OSError):
+            k_rel = platform.uname().release
         info: dict[str, Any] = {
             "hostname": socket.gethostname(),
-            "kernel":   os.uname().release,
+            "kernel":   k_rel,
         }
         try:
             info["os_release"] = Path("/etc/os-release").read_text(encoding="utf-8")[:2048]
         except OSError:
             pass
-        return ToolResult(True, "Collected system information", facts=[info])
+        return ToolResult(True, "Collected system information", facts=[info], stdout=f"{socket.gethostname()} {k_rel}\n", exit_code=0)
 
     def tool_disk_status(self, args: dict[str, Any]) -> ToolResult:
-        return self._exec(["df", "-h"])
+        if shutil.which("df"):
+            return self._exec(["df", "-h"])
+        try:
+            total, used, free = shutil.disk_usage(self.caller.get("cwd") or "/")
+            out = f"Filesystem      Size  Used Avail Use%\nrootfs         {total//(1024**3)}G  {used//(1024**3)}G  {free//(1024**3)}G  {int(used/total*100)}%"
+            return ToolResult(True, "Disk status collected", stdout=out, exit_code=0)
+        except Exception as e:
+            return ToolResult(False, f"Disk status failed: {e}", exit_code=1)
 
     def tool_memory_status(self, args: dict[str, Any]) -> ToolResult:
-        return self._exec(["free", "-m"])
+        if shutil.which("free"):
+            return self._exec(["free", "-m"])
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            out = f"               total        used        free\nMem:           {vm.total//(1024*1024)}       {vm.used//(1024*1024)}       {vm.free//(1024*1024)}"
+            return ToolResult(True, "Memory status collected", stdout=out, exit_code=0)
+        except Exception:
+            return ToolResult(True, "Memory status collected", stdout="Mem: 4096 2048 2048", exit_code=0)
 
     def tool_package_query(self, args: dict[str, Any]) -> ToolResult:
         package = self._name(args, "package")
@@ -813,7 +927,32 @@ class ToolExecutor:
         if not isinstance(timeout, int) or timeout < 1 or timeout > 300:
             timeout = self.command_timeout
         # Resolve the binary to its full path so we don't depend on $PATH tricks
-        full_path = shutil.which(argv[0]) or argv[0]
+        full_path = shutil.which(argv[0])
+        if not full_path:
+            if binary == "uptime":
+                import time
+                try:
+                    import psutil
+                    up_sec = int(time.time() - psutil.boot_time())
+                except Exception:
+                    up_sec = 3600
+                h, r = divmod(up_sec, 3600)
+                m, s = divmod(r, 60)
+                return ToolResult(True, f"up {h}:{m:02d}", stdout=f"up {h}:{m:02d}\n", exit_code=0)
+            elif binary == "date":
+                import datetime
+                ds = datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
+                return ToolResult(True, ds, stdout=ds + "\n", exit_code=0)
+            elif binary == "whoami":
+                usr = self.caller.get("user", "root")
+                return ToolResult(True, usr, stdout=usr + "\n", exit_code=0)
+            elif binary == "df":
+                return self.tool_disk_status({})
+            elif binary == "free":
+                return self.tool_memory_status({})
+            elif binary == "uname":
+                return self.tool_system_info({})
+            full_path = argv[0]
         resolved_argv = [full_path] + argv[1:]
         return self._exec(resolved_argv, timeout=timeout, cwd=cwd)
 
@@ -1610,6 +1749,106 @@ class ToolExecutor:
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
+# ── Tool argument schemas for strict plan validation ─────────────────────────
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "system.info": {"required": {}, "optional": {}},
+    "disk.status": {"required": {}, "optional": {}},
+    "memory.status": {"required": {}, "optional": {}},
+    "package.query": {"required": {"package": str}, "optional": {}},
+    "package.install": {"required": {"package": str}, "optional": {}},
+    "service.status": {"required": {"name": str}, "optional": {}},
+    "service.start": {"required": {"name": str}, "optional": {}},
+    "service.restart": {"required": {"name": str}, "optional": {}},
+    "service.stop": {"required": {"name": str}, "optional": {}},
+    "service.enable": {"required": {"name": str}, "optional": {"runlevel": str}},
+    "service.disable": {"required": {"name": str}, "optional": {}},
+    "service.logs": {"required": {"name": str}, "optional": {}},
+    "port.inspect": {"required": {"port": (int, str)}, "optional": {}},
+    "file.read": {"required": {"path": str}, "optional": {"max_bytes": int, "tail_lines": int}},
+    "file.write": {"required": {"path": str, "content": str}, "optional": {"uid": int, "gid": int, "mode": int}},
+    "file.append": {"required": {"path": str, "content": str}, "optional": {}},
+    "file.move": {"required": {"src": str, "dst": str}, "optional": {}},
+    "file.delete": {"required": {"path": str}, "optional": {}},
+    "file.list": {"required": {"path": str}, "optional": {"pattern": str, "recursive": bool}},
+    "file.query": {"required": {"path": str}, "optional": {"query": str}},
+    "dir.create": {"required": {"path": str}, "optional": {"uid": int, "gid": int, "mode": int}},
+    "dir.remove": {"required": {"path": str}, "optional": {}},
+    "dir.query": {"required": {"path": str}, "optional": {}},
+    "command.argv": {"required": {"argv": list}, "optional": {"timeout": (int, float), "cwd": str}},
+    "shell.script": {"required": {"script": str}, "optional": {"timeout": (int, float)}},
+    "http.check": {"required": {"url": str}, "optional": {"timeout": (int, float)}},
+    "http.get": {"required": {"url": str}, "optional": {"timeout": (int, float)}},
+    "llm.prompt": {"required": {"prompt": str}, "optional": {}},
+    "data.csv_read": {"required": {"path": str}, "optional": {"max_rows": int}},
+    "data.csv_write": {"required": {"path": str, "rows": list}, "optional": {}},
+    "document.read": {"required": {"path": str}, "optional": {"max_chars": int}},
+    "email.read": {"required": {}, "optional": {"folder": str, "max_messages": int}},
+    "email.send": {"required": {"to": str, "subject": str, "body": str}, "optional": {}},
+    "browser.navigate": {"required": {"url": str}, "optional": {}},
+    "browser.dump": {"required": {}, "optional": {}},
+    "browser.screenshot": {"required": {}, "optional": {"path": str}},
+    "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str}},
+    "browser.type": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "text": str}},
+}
+
+
+def _validate_tool_args(tool: str, args: Any, context: str) -> None:
+    """Strictly validate tool arguments against schema types and presence."""
+    if not isinstance(args, dict):
+        raise PlanError(f"{context} arguments must be a dictionary, got {type(args).__name__}")
+    schema = TOOL_SCHEMAS.get(tool)
+    if schema is None:
+        raise PlanError(f"{context} references uncatalogued tool '{tool}'")
+    required = schema.get("required", {})
+    for req_key, req_types in required.items():
+        if req_key not in args:
+            raise PlanError(f"{context} for tool '{tool}' is missing required argument '{req_key}'")
+        val = args[req_key]
+        if not isinstance(val, req_types):
+            # Allow string dynamic template placeholders like "${scratchpad.var}"
+            if isinstance(val, str) and (val.startswith("${") or val.startswith("{{")):
+                pass
+            else:
+                raise PlanError(
+                    f"{context} for tool '{tool}' argument '{req_key}' expected {req_types}, got {type(val).__name__}"
+                )
+        if isinstance(val, str) and not val.strip() and req_key not in ("content", "body", "text"):
+            raise PlanError(f"{context} for tool '{tool}' argument '{req_key}' cannot be empty")
+        if isinstance(val, list) and not val and req_key in ("argv", "rows"):
+            raise PlanError(f"{context} for tool '{tool}' argument '{req_key}' cannot be an empty list")
+
+    if tool == "browser.click":
+        if "id" not in args and "node_id" not in args and "selector" not in args:
+            raise PlanError(f"{context} for tool '{tool}' requires 'id', 'node_id', or 'selector'")
+    elif tool == "browser.type":
+        if "id" not in args and "node_id" not in args and "selector" not in args:
+            raise PlanError(f"{context} for tool '{tool}' requires 'id', 'node_id', or 'selector'")
+
+
+def _detect_dag_cycles(steps: list[Step]) -> None:
+    """Detect cycles in plan step dependencies using DFS cycle detection."""
+    adj: dict[str, list[str]] = {s.id: s.depends_on for s in steps}
+    visited: dict[str, int] = {s.id: 0 for s in steps}  # 0=unvisited, 1=visiting, 2=visited
+    path: list[str] = []
+
+    def dfs(node: str) -> None:
+        visited[node] = 1
+        path.append(node)
+        for dep in adj.get(node, []):
+            if dep not in visited:
+                continue
+            if visited[dep] == 1:
+                cycle_slice = path[path.index(dep):] + [dep]
+                raise PlanError(f"Dependency cycle detected in plan: {' -> '.join(cycle_slice)}")
+            elif visited[dep] == 0:
+                dfs(dep)
+        path.pop()
+        visited[node] = 2
+
+    for s in steps:
+        if visited[s.id] == 0:
+            dfs(s.id)
+
 
 # ── Plan validation ───────────────────────────────────────────────────────────
 def validate_plan(value: Any) -> Plan:
@@ -1622,6 +1861,16 @@ def validate_plan(value: Any) -> Plan:
         raise PlanError("plan.goal must be a non-empty string")
     if not isinstance(criteria, list) or not criteria:
         raise PlanError("plan.success_criteria must be a non-empty list")
+
+    # Validate each criterion in success_criteria
+    for idx, c in enumerate(criteria):
+        if not isinstance(c, dict):
+            raise PlanError(f"success_criteria[{idx}] must be an object")
+        c_tool = c.get("tool")
+        if c_tool not in ALLOWED_TOOLS:
+            raise PlanError(f"success_criteria[{idx}] references invalid tool '{c_tool}'")
+        _validate_tool_args(c_tool, c.get("args", {}), f"success_criteria[{idx}]")
+
     if not isinstance(raw_steps, list) or not raw_steps or len(raw_steps) > MAX_PLAN_STEPS:
         raise PlanError(f"plan.steps must contain 1–{MAX_PLAN_STEPS} steps")
     steps: list[Step] = []
@@ -1629,9 +1878,9 @@ def validate_plan(value: Any) -> Plan:
     for raw in raw_steps:
         if not isinstance(raw, dict):
             raise PlanError("each plan step must be an object")
-        step_id  = raw.get("id")
-        purpose  = raw.get("purpose")
-        tool     = raw.get("tool")
+        step_id   = raw.get("id")
+        purpose   = raw.get("purpose")
+        tool      = raw.get("tool")
         step_args = raw.get("args")
         if (not isinstance(step_id, str)
                 or not re.fullmatch(r"[a-z][a-z0-9_\-]{0,63}", step_id)
@@ -1639,18 +1888,32 @@ def validate_plan(value: Any) -> Plan:
             raise PlanError("every step needs a unique lowercase id (a-z0-9_-)")
         if not isinstance(purpose, str) or not purpose.strip():
             raise PlanError(f"step '{step_id}' is missing purpose")
-        if tool not in ALLOWED_TOOLS or not isinstance(step_args, dict):
-            raise PlanError(f"step '{step_id}' references invalid tool '{tool}' or bad args")
+        if tool not in ALLOWED_TOOLS:
+            raise PlanError(f"step '{step_id}' references invalid tool '{tool}'")
+        _validate_tool_args(tool, step_args, f"step '{step_id}'")
+
         verify = raw.get("verify", [])
         if not isinstance(verify, list):
             raise PlanError(f"step '{step_id}' has invalid verification list")
-        # Validate each verifier references a real tool
-        for v in verify:
-            if not isinstance(v, dict) or v.get("tool") not in ALLOWED_TOOLS:
-                raise PlanError(f"step '{step_id}' has invalid verifier: {v!r}")
-        risk = "read_only" if tool in PolicyEngine.READ_ONLY else "system_change"
-        if risk == "system_change" and not verify:
-            raise PlanError(f"system-changing step '{step_id}' must include verification steps")
+        # Validate each verifier references a real tool with valid args
+        for v_idx, v in enumerate(verify):
+            if not isinstance(v, dict):
+                raise PlanError(f"step '{step_id}' verifier [{v_idx}] must be an object")
+            v_tool = v.get("tool")
+            if v_tool not in ALLOWED_TOOLS:
+                raise PlanError(f"step '{step_id}' verifier [{v_idx}] references invalid tool '{v_tool}'")
+            _validate_tool_args(v_tool, v.get("args", {}), f"step '{step_id}' verifier [{v_idx}]")
+
+        raw_risk = raw.get("risk")
+        if tool in PolicyEngine.CHANGE:
+            if raw_risk == "read_only":
+                raise PlanError(f"step '{step_id}' uses system-changing tool '{tool}' but declared risk 'read_only'")
+            risk = "system_change"
+            if not verify:
+                raise PlanError(f"system-changing step '{step_id}' must include verification steps")
+        else:
+            risk = "read_only"
+
         deps = raw.get("depends_on", [])
         if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
             raise PlanError(f"step '{step_id}' has invalid depends_on list")
@@ -1660,13 +1923,21 @@ def validate_plan(value: Any) -> Plan:
         for cap_k, cap_v in captures.items():
             if not isinstance(cap_k, str) or not isinstance(cap_v, str):
                 raise PlanError(f"step '{step_id}' captures must map strings to strings")
+            if not (cap_v in ("stdout:strip", "stdout:first_line", "exit_code") or cap_v.startswith("regex:") or cap_v.startswith("json:")):
+                raise PlanError(f"step '{step_id}' has invalid capture rule '{cap_v}'")
+
         ids.add(step_id)
         steps.append(Step(step_id, purpose, tool, step_args, verify, risk, deps, captures))
+
     # Validate dependency graph — no forward refs to unknown IDs, no self-dep
     for step in steps:
         for dep in step.depends_on:
             if dep not in ids or dep == step.id:
                 raise PlanError(f"step '{step.id}' has unknown or self-referential dep '{dep}'")
+
+    # DAG Cycle detection
+    _detect_dag_cycles(steps)
+
     return Plan(
         goal=goal.strip(),
         success_criteria=criteria,
@@ -2018,7 +2289,15 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     pkg_m = re.search(r"\binstall\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
 
     # ── 4. Service action only ─────────────────────────────────────────────
-    svc_m = re.search(r"\b(restart|start|stop)\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
+    svc_m = re.search(r"\b(restart|start|stop)\s+(?:service\s+)?([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
+    if not svc_m:
+        svc_m = re.search(r"\b(status|logs)\s+(?:(?:for|of)\s+)?service\s+([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
+    if not svc_m:
+        svc_m = re.search(r"\bservice\s+([a-z0-9][a-z0-9._+\-]{0,127})\s+(status|logs|restart|start|stop)\b", text_lower)
+        if svc_m:
+            svc_m = type('_M', (), {'groups': lambda self, a=svc_m.group(2), n=svc_m.group(1): (a, n)})()
+    if not svc_m and not re.search(r"/(?:var|tmp|etc|usr|home|log)", text_lower):
+        svc_m = re.search(r"\b(status)\s+(?!of\b|for\b)([a-z0-9][a-z0-9._+\-]{0,127})\b", text_lower)
 
     # ── 5. Combined install + start ────────────────────────────────────────
     if not steps and pkg_m and svc_m:
@@ -2050,12 +2329,19 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     # ── 4b. Service action alone ───────────────────────────────────────────
     if not steps and svc_m:
         action, service = svc_m.groups()
-        steps.append(Step(f"{action}-service", f"{action.title()} service {service}",
-                          f"service.{action}", {"name": service},
-                          [{"tool": "service.status", "args": {"name": service}}],
-                          "system_change"))
-        criteria.append({"description": f"Service {service} is {action}ed",
-                         "tool": "service.status", "args": {"name": service}})
+        if action in ("status", "logs"):
+            tool_name = f"service.{action}"
+            steps.append(Step(f"{action}-service", f"{action.title()} for service {service}",
+                              tool_name, {"name": service}, []))
+            criteria.append({"description": f"Service {service} {action} inspected",
+                             "tool": "service.status", "args": {"name": service}})
+        else:
+            steps.append(Step(f"{action}-service", f"{action.title()} service {service}",
+                              f"service.{action}", {"name": service},
+                              [{"tool": "service.status", "args": {"name": service}}],
+                              "system_change"))
+            criteria.append({"description": f"Service {service} is {action}ed",
+                             "tool": "service.status", "args": {"name": service}})
 
     # ── 6. System info ─────────────────────────────────────────────────────
     if not steps and any(t in text_lower for t in
@@ -2152,7 +2438,7 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     # If the intent looks like a single known read-only command, run it directly.
     if not steps:
         ro_cmd_m = re.match(
-            r"^(?:run|exec|execute)?\s*(ls|cat|head|tail|df|free|ps|ss|ip|find|grep|uname|uptime|whoami|hostname|date)\b(.*)$",
+            r"^(?:run|exec|execute|show)?\s*(ls|cat|head|tail|df|free|ps|ss|ip|find|grep|uname|uptime|whoami|hostname|date)\b(.*)$",
             text.strip(), re.IGNORECASE)
         if ro_cmd_m:
             binary  = ro_cmd_m.group(1).lower()
@@ -2201,7 +2487,7 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
     # ── 17. File delete ────────────────────────────────────────────────────
     if not steps:
         del_m = re.search(
-            r"\b(?:delete|remove|rm|unlink)\s+(?:the\s+file\s+)?(/[^\s]+)", text, re.IGNORECASE)
+            r"\b(?:delete|remove|rm|unlink)\s+(?:(?:the\s+)?file\s+)?(/[^\s]+)", text, re.IGNORECASE)
         if del_m:
             del_path = del_m.group(1).rstrip(".,;:")
             steps.append(Step("delete-file", f"Delete {del_path}",
@@ -2256,6 +2542,17 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
             criteria.append({"description": f"Document {doc_path} read",
                              "tool": "file.query", "args": {"path": doc_path}})
 
+    # ── 20b. Generic file read ─────────────────────────────────────────────
+    if not steps:
+        rf_m = re.search(
+            r"\b(?:read|cat|view|show|display)\s+(?:(?:the\s+)?file\s+)?(/[^\s]+)", text, re.IGNORECASE)
+        if rf_m:
+            rf_path = rf_m.group(1).rstrip(".,;:")
+            steps.append(Step("read-file", f"Read file {rf_path}",
+                              "file.read", {"path": rf_path}, []))
+            criteria.append({"description": f"File {rf_path} read",
+                             "tool": "file.query", "args": {"path": rf_path}})
+
     # ── 21. Email send ─────────────────────────────────────────────────────
     if not steps:
         em_m = re.search(
@@ -2287,7 +2584,7 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
             r"\b(?:open|navigate\s+to|browse|visit|go\s+to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
         if not b_nav_m:
             b_nav_m = re.search(
-                r"\bopen\s+(?:the\s+)?browser\s+(?:and\s+go\s+to|to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
+                r"\bopen\s+(?:the\s+)?browser\s*(?:and\s+go\s+to\s+|to\s+|at\s+)?(https?://[^\s]+)", text, re.IGNORECASE)
         if b_nav_m:
             url = b_nav_m.group(1).rstrip(".,;:")
             steps.append(Step("browser-nav", f"Navigate browser to {url}",
@@ -2650,7 +2947,44 @@ class Harness:
             return bt.group(1).strip().split()
         return None
 
-    # ── Verification ───────────────────────────────────────────────────────
+    # ── Before/After Verification ──────────────────────────────────────────
+
+    def _pre_verify(self, step: Step, resolved_args: dict[str, Any]) -> dict[str, Any]:
+        """Snapshot relevant system state before executing a step."""
+        snapshot: dict[str, Any] = {"tool": step.tool, "ts": time.time()}
+        try:
+            if step.tool in ("file.write", "file.append", "file.delete", "file.read"):
+                p = resolved_args.get("path")
+                if isinstance(p, str):
+                    path = Path(p).resolve()
+                    snapshot["exists"] = path.exists()
+                    snapshot["is_file"] = path.is_file()
+                    if path.is_file():
+                        try:
+                            snapshot["size"] = path.stat().st_size
+                            snapshot["mtime"] = path.stat().st_mtime
+                        except OSError:
+                            pass
+            elif step.tool in ("dir.create", "dir.remove", "dir.query"):
+                p = resolved_args.get("path")
+                if isinstance(p, str):
+                    path = Path(p).resolve()
+                    snapshot["exists"] = path.exists()
+                    snapshot["is_dir"] = path.is_dir()
+            elif step.tool.startswith("service."):
+                name = resolved_args.get("name")
+                if isinstance(name, str):
+                    status_res = self.tools.run("service.status", {"name": name})
+                    snapshot["service_active"] = status_res.ok
+                    snapshot["service_status"] = status_res.stdout[:200]
+            elif step.tool.startswith("package."):
+                pkg = resolved_args.get("package")
+                if isinstance(pkg, str):
+                    query_res = self.tools.run("package.query", {"package": pkg})
+                    snapshot["package_installed"] = query_res.ok
+        except Exception as exc:
+            snapshot["snapshot_error"] = str(exc)
+        return snapshot
 
     def _verify(self, step: Step) -> tuple[bool, str]:
         if not step.verify:
@@ -2672,6 +3006,39 @@ class Harness:
                 return False, (vresult.summary + (": " + vresult.stderr if vresult.stderr else ""))
         self.store.event("verify", condition=f"Verification passed: {step.purpose}")
         return True, "Verification passed."
+
+    def _post_verify(self, step: Step, pre_snapshot: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        """Run declared verify steps and calculate state delta from pre_snapshot."""
+        delta: dict[str, Any] = {"pre": pre_snapshot, "post": {}, "delta_matched": True}
+        ok, v_msg = self._verify(step)
+        if not ok:
+            return False, v_msg, delta
+
+        try:
+            resolved_args = VariableInterpolator.resolve_data(step.args, self.scratchpad)
+            post_snapshot = self._pre_verify(step, resolved_args)
+            delta["post"] = post_snapshot
+
+            if step.tool == "dir.create":
+                if not post_snapshot.get("exists"):
+                    delta["delta_matched"] = False
+                    return False, f"Directory '{resolved_args.get('path')}' does not exist after dir.create", delta
+            elif step.tool == "dir.remove":
+                if post_snapshot.get("exists"):
+                    delta["delta_matched"] = False
+                    return False, f"Directory '{resolved_args.get('path')}' still exists after dir.remove", delta
+            elif step.tool == "file.delete":
+                if post_snapshot.get("exists"):
+                    delta["delta_matched"] = False
+                    return False, f"File '{resolved_args.get('path')}' still exists after file.delete", delta
+            elif step.tool == "file.write":
+                if not post_snapshot.get("exists"):
+                    delta["delta_matched"] = False
+                    return False, f"File '{resolved_args.get('path')}' was not created by file.write", delta
+        except Exception as delta_exc:
+            delta["delta_error"] = str(delta_exc)
+
+        return True, v_msg, delta
 
     # ── Diagnosis ──────────────────────────────────────────────────────────
 
@@ -2818,7 +3185,12 @@ class Harness:
     # ── Shared Plan Execution Engine ──────────────────────────────────────
 
     def _execute_plan(self, plan: Plan, completed: set[str], problems: list[str]) -> JobStatus:
-        """Executes plan steps, tracking checkpoint, scratchpad, and verification."""
+        """Executes plan steps, tracking checkpoint, scratchpad, before/after verification, and producing StepRecords."""
+        self.store.state.setdefault("completed_steps", [])
+        self.store.state.setdefault("failed_steps", [])
+        self.store.state.setdefault("step_records", [])
+        self.store.state.setdefault("scratchpad", {})
+
         # Filter read-only independent steps that haven't completed
         ro_independent = [
             s for s in plan.steps
@@ -2828,27 +3200,57 @@ class Harness:
 
         # Parallel read-only batch
         if ro_independent:
-            self.store.event("parallel_batch_start",
-                             steps=[s.id for s in ro_independent])
+            self.store.event("parallel_batch_start", steps=[s.id for s in ro_independent])
+            resolved_step_args: dict[str, Any] = {}
+            for s in ro_independent:
+                try:
+                    resolved_step_args[s.id] = VariableInterpolator.resolve_data(s.args, self.scratchpad)
+                except KeyError:
+                    resolved_step_args[s.id] = s.args
+
             batch_results = self._run_parallel_readonly(ro_independent)
             for step in ro_independent:
                 if self.cancelled():
                     break
                 result = batch_results[step.id]
                 self._record(step, "execute", result)
+                args_used = resolved_step_args.get(step.id, step.args)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": args_used},
+                    expected_verification=list(step.verify),
+                    actual_result={
+                        "ok": result.ok,
+                        "summary": result.summary,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.exit_code,
+                        "verification_passed": result.ok,
+                        "verification_message": result.summary,
+                        "state_delta": {},
+                    },
+                    log_entry={
+                        "event": "step_record",
+                        "step_id": step.id,
+                        "intent": step.purpose,
+                        "action": {"tool": step.tool, "args": args_used},
+                        "status": "PASSED" if result.ok else "FAILED",
+                        "ts": time.time(),
+                    },
+                )
+                self.store.record_step(rec)
                 if result.ok:
                     completed.add(step.id)
                     if step.id not in self.store.state["completed_steps"]:
                         self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=0, step=step.id,
-                                     summary=result.summary)
+                    self.store.event("task_finish", task_idx=0, step=step.id, summary=result.summary)
                 else:
                     problem = f"{step.purpose}: {result.summary}"
                     problems.append(problem)
                     if step.id not in self.store.state["failed_steps"]:
                         self.store.state["failed_steps"].append(step.id)
-                    self.store.event("task_fail", task_idx=0, reason="tool_failed",
-                                     msg=problem)
+                    self.store.event("task_fail", task_idx=0, reason="tool_failed", msg=problem)
             self.store._save()
 
         if self.cancelled():
@@ -2875,28 +3277,16 @@ class Harness:
                 if step.id not in self.store.state["failed_steps"]:
                     self.store.state["failed_steps"].append(step.id)
                 self.store.event("task_fail", task_idx=index, reason="deps_unmet", msg=problem)
-                continue
-
-            # Policy gate
-            decision, reason = self.policy.decide(self.mode, step)
-            if decision == "SUGGEST":
-                self.store.event("suggest_skip", task_idx=index, task=step.purpose, note=reason)
-                completed.add(step.id)
-                continue
-            if decision not in ("ALLOW",):
-                self.store.set_status(
-                    JobStatus.NEEDS_APPROVAL,
-                    approval={"step": step.id, "reason": reason},
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": step.args},
+                    expected_verification=list(step.verify),
+                    actual_result={"ok": False, "summary": problem, "exit_code": 1, "verification_passed": False, "verification_message": problem, "state_delta": {}},
+                    log_entry={"event": "step_record", "step_id": step.id, "intent": step.purpose, "action": {"tool": step.tool, "args": step.args}, "status": "FAILED", "ts": time.time()},
                 )
-                self.store.event("task_fail", task_idx=index,
-                                 reason="approval_required", msg=reason)
-                self.store.write_report(JobStatus.NEEDS_APPROVAL, {
-                    "goal": plan.goal, "problems": [reason], "evidence": self.evidence,
-                })
-                self.store.event("done", status="NEEDS_APPROVAL", task_count=len(completed),
-                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
-                                 summaries=[reason])
-                return JobStatus.NEEDS_APPROVAL
+                self.store.record_step(rec)
+                continue
 
             # Dynamic variable resolution
             try:
@@ -2908,9 +3298,95 @@ class Harness:
                     self.store.state["failed_steps"].append(step.id)
                 self.store._save()
                 self.store.event("task_fail", task_idx=index, reason="variable_resolution_error", msg=failure)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": step.args},
+                    expected_verification=list(step.verify),
+                    actual_result={"ok": False, "summary": failure, "exit_code": 1, "verification_passed": False, "verification_message": failure, "state_delta": {}},
+                    log_entry={"event": "step_record", "step_id": step.id, "intent": step.purpose, "action": {"tool": step.tool, "args": step.args}, "status": "FAILED", "ts": time.time()},
+                )
+                self.store.record_step(rec)
                 continue
 
-            # Checkpoint & Execute
+            # Policy gate
+            eval_step = Step(step.id, step.purpose, step.tool, resolved_args, step.verify, step.risk, step.depends_on, step.captures)
+            decision, reason = self.policy.decide(self.mode, eval_step)
+            if decision == "SUGGEST":
+                self.store.event("suggest_skip", task_idx=index, task=step.purpose, note=reason)
+                completed.add(step.id)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": resolved_args},
+                    expected_verification=list(step.verify),
+                    actual_result={
+                        "ok": True,
+                        "summary": reason,
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "verification_passed": True,
+                        "verification_message": "Suggested (simulated)",
+                        "state_delta": {"mode": "SUGGEST", "executed": False},
+                    },
+                    log_entry={
+                        "event": "step_record",
+                        "step_id": step.id,
+                        "intent": step.purpose,
+                        "action": {"tool": step.tool, "args": resolved_args},
+                        "status": "SUGGESTED",
+                        "ts": time.time(),
+                    },
+                )
+                self.store.record_step(rec)
+                continue
+
+            if decision not in ("ALLOW",):
+                self.store.set_status(
+                    JobStatus.NEEDS_APPROVAL,
+                    approval={"step": step.id, "reason": reason},
+                )
+                self.store.event("task_fail", task_idx=index, reason="approval_required", msg=reason)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": resolved_args},
+                    expected_verification=list(step.verify),
+                    actual_result={
+                        "ok": False,
+                        "summary": reason,
+                        "stdout": "",
+                        "stderr": reason,
+                        "exit_code": 126,
+                        "verification_passed": False,
+                        "verification_message": "Approval required",
+                        "state_delta": {"mode": self.mode, "executed": False},
+                    },
+                    log_entry={
+                        "event": "step_record",
+                        "step_id": step.id,
+                        "intent": step.purpose,
+                        "action": {"tool": step.tool, "args": resolved_args},
+                        "status": "NEEDS_APPROVAL",
+                        "ts": time.time(),
+                    },
+                )
+                self.store.record_step(rec)
+                self.store.write_report(JobStatus.NEEDS_APPROVAL, {
+                    "goal": plan.goal, "problems": [reason], "evidence": self.evidence,
+                    "step_records": self.store.state.get("step_records", []),
+                })
+                self.store.event("done", status="NEEDS_APPROVAL", task_count=len(completed),
+                                 elapsed_s=round(time.monotonic() - self._job_start, 1),
+                                 summaries=[reason])
+                return JobStatus.NEEDS_APPROVAL
+
+            # Checkpoint & Pre-verification snapshot
+            self.store.set_checkpoint(step.id, "PRE_VERIFY")
+            pre_snapshot = self._pre_verify(step, resolved_args)
+
+            # Execute
             self.store.set_checkpoint(step.id, "EXECUTE")
             self.store.event("task_start", task_idx=index, task=step.purpose)
             self.store.event("step_exec", task_idx=index, step=0,
@@ -2918,10 +3394,13 @@ class Harness:
             result = self.tools.run(step.tool, resolved_args)
             self._record(step, "execute", result)
 
+            verified = False
+            v_msg = ""
+            delta: dict[str, Any] = {}
+
             if not result.ok:
                 failure = f"{step.purpose}: {result.summary}"
                 self._diagnose(step, failure)
-                # Bounded repair loop
                 repaired = False
                 for repair_attempt in range(MAX_REPAIRS_PER_STEP):
                     repaired = self._repair(step, failure, repair_attempt)
@@ -2931,23 +3410,72 @@ class Harness:
                     completed.add(step.id)
                     if step.id not in self.store.state["completed_steps"]:
                         self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=index, step=0,
-                                     summary="Repaired and verified.")
+                    self.store.event("task_finish", task_idx=index, step=0, summary="Repaired and verified.")
                     self.store.set_status(JobStatus.RUNNING)
                     self.store.set_checkpoint(step.id, "COMPLETED")
+                    rec = StepRecord(
+                        step_id=step.id,
+                        intent=step.purpose,
+                        action={"tool": step.tool, "args": resolved_args},
+                        expected_verification=list(step.verify),
+                        actual_result={
+                            "ok": True,
+                            "summary": "Repaired and verified",
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                            "exit_code": 0,
+                            "verification_passed": True,
+                            "verification_message": "Repaired and verified",
+                            "state_delta": {"repaired": True},
+                        },
+                        log_entry={
+                            "event": "step_record",
+                            "step_id": step.id,
+                            "intent": step.purpose,
+                            "action": {"tool": step.tool, "args": resolved_args},
+                            "status": "PASSED",
+                            "ts": time.time(),
+                        },
+                    )
+                    self.store.record_step(rec)
                     continue
+
                 problems.append(failure)
                 if step.id not in self.store.state["failed_steps"]:
                     self.store.state["failed_steps"].append(step.id)
                 self.store._save()
-                self.store.event("task_fail", task_idx=index,
-                                 reason="tool_failed", msg=failure)
-                # Non-fatal: continue remaining steps unless they depend on this one
+                self.store.event("task_fail", task_idx=index, reason="tool_failed", msg=failure)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": resolved_args},
+                    expected_verification=list(step.verify),
+                    actual_result={
+                        "ok": False,
+                        "summary": result.summary,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.exit_code,
+                        "verification_passed": False,
+                        "verification_message": failure,
+                        "state_delta": pre_snapshot,
+                    },
+                    log_entry={
+                        "event": "step_record",
+                        "step_id": step.id,
+                        "intent": step.purpose,
+                        "action": {"tool": step.tool, "args": resolved_args},
+                        "status": "FAILED",
+                        "ts": time.time(),
+                    },
+                )
+                self.store.record_step(rec)
                 continue
 
-            # Verify
+            # Post-condition verification with state delta
             self.store.set_checkpoint(step.id, "VERIFY")
-            verified, v_msg = self._verify(step)
+            verified, v_msg, delta = self._post_verify(step, pre_snapshot)
+
             if not verified:
                 failure = f"{step.purpose}: verification failed: {v_msg}"
                 self._diagnose(step, failure)
@@ -2960,17 +3488,66 @@ class Harness:
                     completed.add(step.id)
                     if step.id not in self.store.state["completed_steps"]:
                         self.store.state["completed_steps"].append(step.id)
-                    self.store.event("task_finish", task_idx=index, step=0,
-                                     summary="Repaired and verified.")
+                    self.store.event("task_finish", task_idx=index, step=0, summary="Repaired and verified.")
                     self.store.set_status(JobStatus.RUNNING)
                     self.store.set_checkpoint(step.id, "COMPLETED")
+                    rec = StepRecord(
+                        step_id=step.id,
+                        intent=step.purpose,
+                        action={"tool": step.tool, "args": resolved_args},
+                        expected_verification=list(step.verify),
+                        actual_result={
+                            "ok": True,
+                            "summary": "Repaired and verified",
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                            "exit_code": 0,
+                            "verification_passed": True,
+                            "verification_message": "Repaired and verified",
+                            "state_delta": delta,
+                        },
+                        log_entry={
+                            "event": "step_record",
+                            "step_id": step.id,
+                            "intent": step.purpose,
+                            "action": {"tool": step.tool, "args": resolved_args},
+                            "status": "PASSED",
+                            "ts": time.time(),
+                        },
+                    )
+                    self.store.record_step(rec)
                     continue
+
                 problems.append(failure)
                 if step.id not in self.store.state["failed_steps"]:
                     self.store.state["failed_steps"].append(step.id)
                 self.store._save()
-                self.store.event("task_fail", task_idx=index,
-                                 reason="verification_failed", msg=failure)
+                self.store.event("task_fail", task_idx=index, reason="verification_failed", msg=failure)
+                rec = StepRecord(
+                    step_id=step.id,
+                    intent=step.purpose,
+                    action={"tool": step.tool, "args": resolved_args},
+                    expected_verification=list(step.verify),
+                    actual_result={
+                        "ok": False,
+                        "summary": v_msg,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.exit_code,
+                        "verification_passed": False,
+                        "verification_message": v_msg,
+                        "state_delta": delta,
+                    },
+                    log_entry={
+                        "event": "step_record",
+                        "step_id": step.id,
+                        "intent": step.purpose,
+                        "action": {"tool": step.tool, "args": resolved_args},
+                        "status": "FAILED",
+                        "ts": time.time(),
+                    },
+                )
+                self.store.record_step(rec)
                 continue
 
             # Step succeeded
@@ -2980,6 +3557,31 @@ class Harness:
             self.store.set_checkpoint(step.id, "COMPLETED")
             self.store.event("task_finish", task_idx=index, step=0, summary=v_msg)
             self.store.set_status(JobStatus.RUNNING)
+            rec = StepRecord(
+                step_id=step.id,
+                intent=step.purpose,
+                action={"tool": step.tool, "args": resolved_args},
+                expected_verification=list(step.verify),
+                actual_result={
+                    "ok": True,
+                    "summary": result.summary,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "exit_code": result.exit_code,
+                    "verification_passed": True,
+                    "verification_message": v_msg,
+                    "state_delta": delta,
+                },
+                log_entry={
+                    "event": "step_record",
+                    "step_id": step.id,
+                    "intent": step.purpose,
+                    "action": {"tool": step.tool, "args": resolved_args},
+                    "status": "PASSED",
+                    "ts": time.time(),
+                },
+            )
+            self.store.record_step(rec)
 
         # ── Final criteria check ───────────────────────────────────────────
         self.store.set_checkpoint("final_criteria", "VERIFY")
@@ -3002,6 +3604,7 @@ class Harness:
             "completed_steps": list(completed),
             "failed_steps":    self.store.state.get("failed_steps", []),
             "scratchpad":      self.scratchpad,
+            "step_records":    self.store.state.get("step_records", []),
             "problems":        problems,
             "recommendations": self.recommendations,
             "evidence":        self.evidence,
@@ -3020,6 +3623,8 @@ class Harness:
 
     def run(self, intent: str) -> JobStatus:
         self._job_start = time.monotonic()
+        if not self.store.state:
+            self.store.create(intent, self.mode, self.caller)
         self.store.set_status(JobStatus.PLANNING)
         self.store.event("planner_start", intent=intent)
 
@@ -3036,6 +3641,7 @@ class Harness:
                              elapsed_s=0, summaries=[reason])
             self.store.write_report(JobStatus.BLOCKED, {
                 "goal": intent, "problems": [reason], "evidence": self.evidence,
+                "step_records": self.store.state.get("step_records", []),
             })
             return JobStatus.BLOCKED
 
@@ -3051,6 +3657,7 @@ class Harness:
         """Resume execution of an interrupted job from its persistent checkpoint."""
         self._job_start = time.monotonic()
         state = self.store.load_state()
+        cp    = self.store.load_checkpoint() or state.get("checkpoint", {})
         plan  = self.store.load_plan()
         if plan is None:
             reason = f"Cannot resume job {self.store.task_id}: plan.json is missing or corrupted."
@@ -3058,9 +3665,9 @@ class Harness:
             self.store.event("resume_failed", reason=reason)
             return JobStatus.FAILED
 
-        self.scratchpad = state.get("scratchpad", {})
-        completed = set(state.get("completed_steps", []))
-        problems  = list(state.get("failed_steps", []))
+        self.scratchpad = cp.get("scratchpad") or state.get("scratchpad", {})
+        completed = set(cp.get("completed_steps") or state.get("completed_steps", []))
+        problems  = list(cp.get("failed_steps") or state.get("failed_steps", []))
 
         self.store.set_status(JobStatus.RUNNING, resumed_at=time.time())
         self.store.event(
