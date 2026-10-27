@@ -354,24 +354,6 @@ os-ai-agent/
 
 ---
 
-## Roadmap & Milestone Summary
-
-| Phase | Milestone | Status |
-| --- | --- | --- |
-| **Phase 1** | Userspace `ptrace` syscall monitor | [Validated] |
-| **Phase 2** | LLM syscall explanation and analysis pipeline | [Validated] |
-| **Phase 3** | LKM `kernel_clone` hook + Netlink IPC (Proto 31) | [Validated] |
-| **Phase 4** | Custom kernel `6.6.142-ai-agent` + `sys_agent_query` (#548) | [Validated] |
-| **Phase 5** | In-guest native musl `llama.cpp` + SmolLM2-135M | [Validated] |
-| **Phase 6** | Self-contained compressed OS appliance image (`ai-agent-os-v0.1.qcow2`) | [Validated] |
-| **Phase 7** | OS Agent Fine-Tuning (LoRA) - Knowledge distillation and GGUF quantization | [Validated] |
-| **Phase 8** | Intent-Driven Execution (Orchestrator OS) - Automatic task delegation via sub-processes | [Validated] |
-| **Phase 9** | Universal Visual Orchestration - GUI Automation via Chrome DevTools Protocol | [Validated] |
-| **Phase 10** | Context-Aware Assistance - Real-time kernel observability via eBPF sensors | [Validated] |
-| **Phase 11** | Harness v2.3 Autonomous Execution - 38 native OS tools, DAG planning, and GBNF grammar | [Validated] |
-
----
-
 ## Contributing and Security Disclosures
 
 Since this project introduces kernel-level changes (custom system calls, Netlink IPC hooks, and eBPF probes), security and reliability are top priorities.
