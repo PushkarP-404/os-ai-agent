@@ -84,12 +84,12 @@ for pkg in $BUILD_PKGS; do
     echo "  ✓ $pkg built successfully"
 done
 
-# ── Handle ai-agent-model-lora separately (only if GGUF exists) ──────────────
-LORA_GGUF="/var/lib/ai-agent/models/os_agent_lora.gguf"
-if [ -f "$LORA_GGUF" ]; then
+# ── Handle ai-agent-model-lora separately (only if GGUF exists and not already built) ──
+MODELS_DIR="/var/lib/ai-agent/models"
+if [ "$ONLY_PKG" != "ai-agent-model-lora" ] && { [ -f "$MODELS_DIR/os_planner_lora.gguf" ] || [ -f "$MODELS_DIR/os_agent_lora.gguf" ]; }; then
     echo ""
     echo "─────────────────────────────────────────────────"
-    echo "  Building: ai-agent-model-lora (LoRA GGUF found)"
+    echo "  Building: ai-agent-model-lora (GGUF model found)"
     echo "─────────────────────────────────────────────────"
     PKG_BUILD_DIR="/home/$PACKAGER_USER/build/ai-agent-model-lora"
     mkdir -p "$PKG_BUILD_DIR"
@@ -104,7 +104,7 @@ if [ -f "$LORA_GGUF" ]; then
     echo "  ✓ ai-agent-model-lora built"
 else
     echo ""
-    echo "[INFO] $LORA_GGUF not found — skipping ai-agent-model-lora"
+    echo "[INFO] GGUF models not found in $MODELS_DIR — skipping ai-agent-model-lora"
     echo "       Run fine-tuning pipeline and sync GGUF to VM, then re-run build_all.sh"
 fi
 

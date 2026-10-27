@@ -12,7 +12,7 @@
 
 pkgname="ai-agent-daemon"
 pkgver="0.1.0"
-pkgrel=3
+pkgrel=4
 pkgdesc="AI-Agent OS kernel-userspace daemon, agent-cli, and Sentinel Control Center UI"
 arch="x86_64"
 license="GPL-2.0-only"
@@ -34,12 +34,16 @@ build() {
 }
 
 package() {
-    # ── Python daemon files ──────────────────────────────────────────────
+    # ── Python daemon files & GBNF grammar ────────────────────────────────
     for pyf in "$_daemon_src"/*.py; do
         if [ -f "$pyf" ]; then
             install -Dm644 "$pyf" "$pkgdir/usr/lib/ai-agent/$(basename "$pyf")"
         fi
     done
+    if [ -f "$_daemon_src/plan_grammar.gbnf" ]; then
+        install -Dm644 "$_daemon_src/plan_grammar.gbnf" \
+            "$pkgdir/usr/lib/ai-agent/plan_grammar.gbnf"
+    fi
 
     # ── Sentinel Control Center GUI + CSS ───────────────────────────────
     if [ -d "$_dashboard_src" ]; then
@@ -60,6 +64,9 @@ EOF
         mkdir -p "$pkgdir/usr/local/lib/ai-agent"
         ln -sf /usr/lib/ai-agent/dashboard.py "$pkgdir/usr/local/lib/ai-agent/dashboard.py"
         ln -sf /usr/lib/ai-agent/dashboard.css "$pkgdir/usr/local/lib/ai-agent/dashboard.css"
+        ln -sf /usr/lib/ai-agent/agent_daemon.py "$pkgdir/usr/local/lib/ai-agent/agent_daemon.py"
+        ln -sf /usr/lib/ai-agent/harness_v2.py "$pkgdir/usr/local/lib/ai-agent/harness_v2.py"
+        ln -sf /usr/lib/ai-agent/plan_grammar.gbnf "$pkgdir/usr/local/lib/ai-agent/plan_grammar.gbnf"
 
         # Desktop application launcher
         if [ -f "$_dashboard_src/ai-agent-dashboard.desktop" ]; then

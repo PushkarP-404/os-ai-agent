@@ -13,9 +13,9 @@
 # and auto-loads it as a LoRA adapter if present — no other changes needed.
 
 pkgname="ai-agent-model-lora"
-pkgver="0.1.0"
+pkgver="0.2.0"
 pkgrel=0
-pkgdesc="LoRA fine-tuned GGUF adapter for AI-Agent OS (SmolLM2-135M base)"
+pkgdesc="Fine-tuned Task Planner & LoRA GGUF models for AI-Agent OS (SmolLM2-135M)"
 arch="all"
 license="MIT"
 url="https://github.com/ai-agent-os/ai-agent"
@@ -23,33 +23,43 @@ depends="llama-server-musl"
 options="!check !strip !fhs"
 
 _model_src="/var/lib/ai-agent/models"
+_planner_file="os_planner_lora.gguf"
 _lora_file="os_agent_lora.gguf"
 
 build() {
-    # Nothing to compile — this package just installs a GGUF file
-    if [ ! -f "$_model_src/$_lora_file" ]; then
-        die "LoRA model not found at $_model_src/$_lora_file"
-        die "Run the distillation pipeline first, then upload the GGUF."
+    # Nothing to compile — this package installs GGUF model files
+    local found=0
+    if [ -f "$_model_src/$_planner_file" ]; then found=1; fi
+    if [ -f "$_model_src/$_lora_file" ]; then found=1; fi
+    if [ "$found" -eq 0 ]; then
+        die "Neither $_planner_file nor $_lora_file found at $_model_src"
+        die "Run the fine-tuning pipeline first, then upload the GGUF model."
     fi
     return 0
 }
 
 package() {
-    install -Dm644 "$_model_src/$_lora_file" \
-        "$pkgdir/var/lib/ai-agent/models/$_lora_file"
+    if [ -f "$_model_src/$_planner_file" ]; then
+        install -Dm644 "$_model_src/$_planner_file" \
+            "$pkgdir/var/lib/ai-agent/models/$_planner_file"
+    fi
+    if [ -f "$_model_src/$_lora_file" ]; then
+        install -Dm644 "$_model_src/$_lora_file" \
+            "$pkgdir/var/lib/ai-agent/models/$_lora_file"
+    fi
 }
 
 post_install() {
-    einfo "LoRA adapter installed: /var/lib/ai-agent/models/$_lora_file"
+    einfo "AI-Agent models installed in /var/lib/ai-agent/models/"
     einfo "Restart llama-server to activate: rc-service llama-server restart"
 }
 
 post_upgrade() {
-    # Restart inference server so it picks up the new adapter
+    # Restart inference server so it picks up the new model/adapter
     rc-service llama-server restart 2>/dev/null || true
 }
 
 post_deinstall() {
-    einfo "LoRA adapter removed. llama-server will use the base model."
+    einfo "AI-Agent models removed. llama-server will use the base model."
     rc-service llama-server restart 2>/dev/null || true
 }

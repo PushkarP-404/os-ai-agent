@@ -36,12 +36,14 @@ PASSWORD = os.environ.get("VM_PASSWORD", "password_123")
 # ── Local paths (Windows) ─────────────────────────────────────────────────────
 LOCAL_BASE = r"C:\qemu-alpine\os-ai-agent"
 LOCAL_PKG  = os.path.join(LOCAL_BASE, "packaging")
-LOCAL_LORA = r"C:\qemu-alpine\distillation-fine-tuning\os_agent_lora.gguf"
+LOCAL_MODELS = [
+    (r"C:\qemu-alpine\distillation-fine-tuning\os_planner_lora.gguf", "/var/lib/ai-agent/models/os_planner_lora.gguf"),
+    (r"C:\qemu-alpine\distillation-fine-tuning\os_agent_lora.gguf", "/var/lib/ai-agent/models/os_agent_lora.gguf"),
+]
 
 # ── Remote paths (Alpine VM) ──────────────────────────────────────────────────
 REMOTE_BASE = "/root/os-ai-agent"
 REMOTE_PKG  = f"{REMOTE_BASE}/packaging"
-REMOTE_LORA = "/var/lib/ai-agent/models/os_agent_lora.gguf"
 
 
 def connect():
@@ -107,17 +109,17 @@ def upload_packaging(sftp, ssh):
                 sftp.put(local_f, remote_f)
                 print(f"  -> {pkg}/{fname}")
 
-    # Also upload the current agent-daemon Python files so the APKBUILD's
+    # Also upload the current agent-daemon Python & GBNF files so the APKBUILD's
     # package() step always gets the latest versions
     print("\n[sync] Uploading latest daemon source files...")
-    run(ssh, "mkdir -p /usr/local/lib/ai-agent", check=False)
+    run(ssh, "mkdir -p /root/os-ai-agent/agent-daemon /usr/local/lib/ai-agent", check=False)
     daemon_dir = os.path.join(LOCAL_BASE, "agent-daemon")
     for fname in os.listdir(daemon_dir):
-        if fname.endswith(".py"):
+        if fname.endswith(".py") or fname.endswith(".gbnf"):
             local  = os.path.join(daemon_dir, fname)
-            remote = f"/usr/local/lib/ai-agent/{fname}"
-            sftp.put(local, remote)
-            print(f"  -> /usr/local/lib/ai-agent/{fname}")
+            sftp.put(local, f"/root/os-ai-agent/agent-daemon/{fname}")
+            sftp.put(local, f"/usr/local/lib/ai-agent/{fname}")
+            print(f"  -> /root/os-ai-agent/agent-daemon/{fname}")
 
     # agent-cli source
     run(ssh, "mkdir -p /root/os-ai-agent/agent-cli", check=False)
@@ -139,17 +141,21 @@ def upload_packaging(sftp, ssh):
 
 
 def upload_lora(sftp, ssh):
-    """Upload LoRA GGUF to VM if it exists on the host."""
-    if not os.path.exists(LOCAL_LORA):
-        print("\n[sync] LoRA GGUF not found on host — skipping upload.")
-        print(f"       Expected at: {LOCAL_LORA}")
-        return False
-    size_mb = os.path.getsize(LOCAL_LORA) / 1024 / 1024
-    print(f"\n[sync] Uploading LoRA GGUF ({size_mb:.1f} MB)...")
+    """Upload GGUF models to VM if they exist on the host."""
     run(ssh, "mkdir -p /var/lib/ai-agent/models", check=False)
-    sftp.put(LOCAL_LORA, REMOTE_LORA)
-    print(f"  -> {REMOTE_LORA}")
-    return True
+    uploaded = 0
+    for local_path, remote_path in LOCAL_MODELS:
+        if os.path.exists(local_path):
+            size_mb = os.path.getsize(local_path) / 1024 / 1024
+            print(f"\n[sync] Uploading model ({size_mb:.1f} MB)...")
+            print(f"       From: {local_path}")
+            print(f"       To:   {remote_path}")
+            sftp.put(local_path, remote_path)
+            print(f"  [PASS] Uploaded to {remote_path}")
+            uploaded += 1
+        else:
+            print(f"\n[sync] Model file not found at {local_path} — skipping.")
+    return uploaded > 0
 
 
 def main():
