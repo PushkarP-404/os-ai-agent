@@ -564,6 +564,16 @@ def main():
     reconcile_orphaned_jobs()
     os.makedirs(TASKS_DIR, exist_ok=True)
 
+    # ── Phase 12: OS Automation Engine & Intent Bus ───────────────────────────
+    try:
+        from automation_engine import get_automation_engine
+        _automation_engine = get_automation_engine()
+        print("[AGENT DAEMON] OS Automation Engine & Intent Bus active (/var/run/ai-agent/intent.sock)")
+        sys.stdout.flush()
+    except Exception as _ae_err:
+        print(f"[WARN] Could not initialize OS Automation Engine: {_ae_err}")
+        sys.stdout.flush()
+
     # ── Open Netlink socket ──────────────────────────────────────────────────
     try:
         sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, NETLINK_AI_AGENT)

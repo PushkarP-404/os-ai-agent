@@ -29,6 +29,18 @@ import time
 import urllib.request
 import urllib.error
 
+# ── OS Automation Engine & Intent Bus Bridge ─────────────────────────────────
+from automation_engine import (
+    ActionRegistry,
+    AutomationEngine,
+    IntentBus,
+    IntentBusClient,
+    IntentMessage,
+    IntentResponse,
+    LocalPolicyManager,
+    get_automation_engine,
+)
+
 # ── Configuration ────────────────────────────────────────────────────────────
 LLAMA_URL         = os.environ.get("LLAMA_URL",         "http://127.0.0.1:11434/completion")
 AI_AGENT_LOG_DIR  = os.environ.get("AI_AGENT_LOG_DIR",  "/var/ai-agent")
