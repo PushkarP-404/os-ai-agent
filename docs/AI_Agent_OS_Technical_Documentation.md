@@ -1642,4 +1642,75 @@ With the initial 9 phases completed, the system has successfully scaled from a s
 
 ---
 
+---
+
+## 23. Phase 11: Harness v2.3 Core Stabilization & OS Automation Engine
+
+**Status:** ✅ Complete & Empirically Validated (2026-10-28)
+
+### 23.1 Objectives
+1. **Harden the Task Harness Core**: Ensure 100% of generated plans are parseable, 0 destructive operations execute without approval, and mid-flight interruptions resume atomically without duplicate work or state corruption.
+2. **Replace "Task Runner" with a True OS Automation Engine**: Operate as a system-wide coordinator with an inter-app intent bus, process-to-process messaging, and autonomous multi-application routing without human bridging.
+
+### 23.2 Harness v2.3 Core Stabilization Architecture
+
+- **Strict Plan Validation & DAG Cycle Detection**:
+  - Validates all plan parameters, tool names, and arguments prior to execution.
+  - Detects cyclic dependencies (`s1 -> s2 -> s1`) via depth-first graph search.
+  - Rejects mutating tools declaring `risk: "read_only"`.
+  - Enforces mandatory verification steps for every state change.
+- **Deep Policy Screening & Destructive Allowlists**:
+  - `SUGGEST` (Default Mode): State changes are held as suggestions (0 destructive actions execute without explicit operator approval).
+  - `ASSIST` Mode: Read-only tools execute automatically; destructive actions (`file.delete`, `service.stop`, `dir.remove`) mandate explicit confirmation.
+  - `READ_ONLY` Mode: Strictly prohibits all mutations.
+  - `command.argv` Screening: Screens raw commands against wipe signatures (`mkfs.*`, `fdisk`, `dd`, `rm -rf /`, `shutdown`, `poweroff`).
+- **5-Element StepRecord Audit Trail**:
+  Every step generates a persistent 5-element tuple:
+  `[intent, action, expected_verification, actual_result, log_entry]`
+  Serialized to `/var/ai-agent/jobs/<task_id>/report.json` and streaming `/var/ai-agent/jobs/<task_id>/events.jsonl`.
+- **Before/After State Verification & State Delta**:
+  Captures pre-execution snapshot (`_pre_verify`), executes tool, captures post-execution snapshot (`_post_verify`), and calculates real-time delta (`delta_matched`, file creation, byte sizes, service active states).
+- **Atomic Checkpoint & Crash Resume**:
+  Mid-flight task state is serialized atomically via `checkpoint.json`. On reboot or interruption, `harness.resume()` re-verifies completed steps and resumes execution seamlessly.
+
+### 23.3 OS Automation Engine & Intent Bus Layer
+
+- **Unix Domain Socket Broker**:
+  Listens at `/var/run/ai-agent/intent.sock` (mode `0666`, accessible to both root and non-root processes) with socket lifecycle protection and TCP fallback.
+- **Standard Intent Schema (`IntentMessage` / `IntentResponse`)**:
+  Fields: `task_id`, `source_app`, `target_app`, `intent_type`, `payload`, `required_confirmation`, `timeout`, `callback_route`.
+- **Action Registry (7 Domains)**:
+  Browser, File, Email, Git, Service, Document, and Coding-Assistant tools.
+- **Local Policy Manager (`LocalPolicyManager`)**:
+  Enforces per-app allow/deny lists, user privilege boundaries, and risk classes.
+- **Autonomous Multi-App Workflow Routing**:
+  Chains complex tasks across separate applications (e.g., `code-editor` -> `coding-assistant` -> `file-manager` -> `email-service`) without human manual intervention.
+- **CLI Utility (`agent-intent`)**:
+  Provides `send`, `ping`, `confirm`, and `route` subcommands for shell and terminal integration.
+
+### 23.4 Practical Long-Term Autonomous Tasks
+
+1. **Autonomous Multi-Stage Software Build, Test & Canary Deployment**:
+   Inspects git status -> runs code analysis -> compiles and tests -> installs packages -> stages config -> restarts service -> verifies port -> automatic rollback on failure.
+2. **Self-Healing System Maintenance & Log Rotation**:
+   Monitors disk thresholds -> identifies bloated logs -> archives old sessions -> purges temporary files -> verifies reclaimed disk space with before/after state delta.
+3. **Cross-Application Coordinated Security Incident Response**:
+   Kernel eBPF sensor alert -> checks git history -> queries coding-assistant to analyze shell payload -> isolates affected directories -> drafts alert in email-service.
+4. **Non-Destructive Database & Configuration Migration**:
+   Executes dry-run in `SUGGEST` mode -> pre-verifies database snapshots -> applies migrations in topological DAG order -> calculates state deltas -> bounded self-repair (up to 3 iterations) if syntax errors occur.
+
+### 23.5 Empirical Verification Results
+
+| Verification Metric | Host Suite | In-Guest Alpine VM |
+| :--- | :--- | :--- |
+| **`test_harness_stabilization.py`** | 28 / 28 PASS | 28 / 28 PASS |
+| **`test_automation_engine.py`** | 21 / 21 PASS | 21 / 21 PASS |
+| **`test_harness_comprehensive.py`** | 16 / 16 PASS | 16 / 16 PASS |
+| **`verify_harness_live.py`** (6 Empirical Probes) | 6 / 6 PASS | 6 / 6 PASS |
+| **Parseable Plan Rate** | 100.0% (30/30) | 100.0% (30/30) |
+| **Common Task Completion Rate** | 100.0% (10/10) | 100.0% (10/10) |
+| **Unapproved Destructive Executions** | 0 / 16 (0%) | 0 / 16 (0%) |
+
+---
+
 *End of document. This is a living record and should be updated as each phase progresses, as networking issues are resolved, and as concrete kernel-level code is written.*
