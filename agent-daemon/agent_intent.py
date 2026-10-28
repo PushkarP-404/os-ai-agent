@@ -57,7 +57,8 @@ def main():
     # 4. Route workflow
     route_parser = subparsers.add_parser("route", help="Execute an autonomous multi-app workflow")
     route_parser.add_argument("--from", dest="source_app", default="agent-cli", help="Source application name")
-    route_parser.add_argument("--file", dest="workflow_file", required=True, help="JSON file defining workflow steps")
+    route_parser.add_argument("--file", dest="workflow_file", default=None, help="JSON file defining workflow steps")
+    route_parser.add_argument("--workflow", dest="workflow_json", default=None, help="JSON string defining workflow steps")
     route_parser.add_argument("--mode", dest="mode", default="APPLY", choices=["SUGGEST", "ASSIST", "APPLY"])
 
     args = parser.parse_args()
@@ -120,8 +121,14 @@ def main():
             sys.exit(1)
 
     elif args.command == "route":
-        with open(args.workflow_file, "r", encoding="utf-8") as f:
-            workflow_steps = json.load(f)
+        if args.workflow_file:
+            with open(args.workflow_file, "r", encoding="utf-8") as f:
+                workflow_steps = json.load(f)
+        elif args.workflow_json:
+            workflow_steps = json.loads(args.workflow_json)
+        else:
+            print("Error: Either --file or --workflow must be specified.", file=sys.stderr)
+            sys.exit(2)
         engine = get_automation_engine()
         results = engine.route_multi_app_workflow(
             source_app=args.source_app,
@@ -135,3 +142,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

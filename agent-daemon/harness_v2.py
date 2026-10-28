@@ -621,7 +621,8 @@ class PolicyEngine:
             argv = step.args.get("argv", [])
             if isinstance(argv, list) and argv:
                 cmd0 = str(argv[0]).strip().lower()
-                if cmd0 in self.FORBIDDEN_COMMANDS:
+                cmd_base = os.path.basename(cmd0).split(".")[0]
+                if cmd0 in self.FORBIDDEN_COMMANDS or cmd_base in self.FORBIDDEN_COMMANDS:
                     return "DENY", f"Command '{cmd0}' is strictly forbidden by harness policy."
                 if cmd0 in ("rm", "rmdir"):
                     is_destructive = True

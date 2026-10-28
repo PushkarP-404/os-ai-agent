@@ -898,6 +898,7 @@ class IntentBus:
 
         self._server_sock: Optional[socket.socket] = None
         self._is_running = False
+        self._owns_socket: bool = False
         self._server_thread: Optional[threading.Thread] = None
 
         # Registered client applications: app_name -> socket
@@ -938,15 +939,29 @@ class IntentBus:
         elif os.name != "nt":
             # Unix Domain Socket mode (standard on Linux/Alpine)
             sock_p = Path(self.socket_path)
-            try:
-                sock_p.parent.mkdir(parents=True, exist_ok=True)
-                if sock_p.exists():
+            sock_p.parent.mkdir(parents=True, exist_ok=True)
+            if sock_p.exists():
+                try:
+                    test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    test_sock.settimeout(0.5)
+                    test_sock.connect(str(sock_p))
+                    test_sock.close()
+                    # Existing server is healthy and responding; do not clobber
+                    self._owns_socket = False
+                    self._is_running = True
+                    logger.info("IntentBus socket %s is already active; using existing broker", sock_p)
+                    return
+                except (OSError, ConnectionRefusedError):
+                    # Stale socket from dead process
                     try:
                         sock_p.unlink()
                     except OSError:
                         pass
+
+            try:
                 self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 self._server_sock.bind(str(sock_p))
+                self._owns_socket = True
                 try:
                     os.chmod(str(sock_p), 0o666)  # Accessible to non-root apps
                 except OSError:
@@ -957,11 +972,22 @@ class IntentBus:
                 sock_p.parent.mkdir(parents=True, exist_ok=True)
                 if sock_p.exists():
                     try:
-                        sock_p.unlink()
-                    except OSError:
-                        pass
+                        test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        test_sock.settimeout(0.5)
+                        test_sock.connect(str(sock_p))
+                        test_sock.close()
+                        self._owns_socket = False
+                        self._is_running = True
+                        logger.info("IntentBus socket %s is already active; using existing broker", sock_p)
+                        return
+                    except (OSError, ConnectionRefusedError):
+                        try:
+                            sock_p.unlink()
+                        except OSError:
+                            pass
                 self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 self._server_sock.bind(str(sock_p))
+                self._owns_socket = True
                 try:
                     os.chmod(str(sock_p), 0o666)
                 except OSError:
@@ -987,6 +1013,12 @@ class IntentBus:
             try:
                 self._server_sock.close()
             except Exception:
+                pass
+        if getattr(self, "_owns_socket", True) and os.name != "nt" and self.socket_path and self.tcp_port is None:
+            try:
+                if os.path.exists(self.socket_path):
+                    os.unlink(self.socket_path)
+            except OSError:
                 pass
         with self._clients_lock:
             for sock in self._registered_apps.values():
@@ -1357,11 +1389,15 @@ class AutomationEngine:
         base_dir: Optional[Path] = None,
         policy_path: Optional[Path] = None,
         tcp_port: Optional[int] = None,
+        socket_path: Optional[str] = None,
     ):
         self.base_dir = base_dir or DEFAULT_STORAGE_DIR
         self.policy = LocalPolicyManager(policy_path)
         self.registry = ActionRegistry()
+        if socket_path is None and base_dir is not None and Path(base_dir).resolve() != DEFAULT_STORAGE_DIR.resolve():
+            socket_path = str(Path(base_dir) / "intent.sock")
         self.bus = IntentBus(
+            socket_path=socket_path,
             policy_manager=self.policy,
             registry=self.registry,
             tcp_port=tcp_port,
