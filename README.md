@@ -1,39 +1,42 @@
-# AI-Agent OS
+# Elenchus
 
-> An operating system architecture where an autonomous AI agent is integrated directly into the Linux kernel and process lifecycle, allowing any process to be observed, understood, and directed without application-level APIs, plugins, or MCP.
+### A Custom Linux Distribution Built from Scratch with a Custom Kernel for Local, In-OS AI
+*(formerly AI-Agent OS)*
+
+> **Elenchus is not a desktop wrapper, chatbot tool, or cloud API client.**
+> 
+> **It is a complete, standalone Linux operating system** (built on an Alpine Linux base) powered by a **custom-compiled Linux kernel (`6.6.142-ai-agent`)** with native in-guest AI reasoning. AI is woven directly into the operating system's kernel, process lifecycle, and inter-process communication layers, enabling any binary or script to query intelligence natively without cloud dependencies or external APIs.
 
 *Contain. Compute. Conquer.*
 
 [![Status](https://img.shields.io/badge/Status-Phases%201--11%20Complete%20%26%20Validated-brightgreen.svg)]()
-[![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent-blue.svg)]()
-[![Base Distro](https://img.shields.io/badge/Base%20Distro-Alpine%203.20%20(musl)-blue.svg)]()
-[![Inference](https://img.shields.io/badge/Inference-llama.cpp%20(native%20musl)-orange.svg)]()
-[![Model](https://img.shields.io/badge/Model-SmolLM2--135M--Instruct--Q4_K_M-purple.svg)]()
+[![Distro](https://img.shields.io/badge/Distro-Alpine%20Linux%203.20%20(musl)-blue.svg)]()
+[![Kernel](https://img.shields.io/badge/Kernel-6.6.142--ai--agent%20(Syscall%20%23548)-blue.svg)]()
+[![Inference](https://img.shields.io/badge/Inference-llama.cpp%20(Native%20Musl%2C%20Offline)-orange.svg)]()
+[![Model](https://img.shields.io/badge/Model-SmolLM2--135M--Instruct%20%2B%20LoRA-purple.svg)]()
+[![Architecture](https://img.shields.io/badge/Arch-x86__64%20(QEMU%20%7C%20KVM%20%7C%20WHPX)-lightgrey.svg)]()
 
 ---
 
-## The Core Vision
+## What is Elenchus?
 
-Modern AI assistants integrate with applications via plugins, APIs, or protocols like MCP (Model Context Protocol). This requires every application to be explicitly rewritten or adapted to support AI.
+Most modern AI assistants integrate with applications via plugins, APIs, or protocols like MCP (Model Context Protocol). This requires every application to be explicitly rewritten or adapted to support AI, while leaving legacy binaries, CLI tools, system services, and shell scripts completely blind to AI.
 
-**AI-Agent OS flips this model:**
-> **The integration point is the operating system itself, not the application.**
+**Elenchus flips this model: The integration point is the operating system itself.**
 
-Every process - legacy binaries, CLI tools, services, scripts, containers - must execute system calls through the kernel. By embedding an agent at the OS layer, the system provides:
+Because every program on a system must execute system calls through the kernel, Elenchus integrates autonomous intelligence directly into the OS stack:
 
-- **Universal Observability:** Intercept process events and syscall activity without application knowledge.
-- **Synchronous Kernel-AI Syscall (`sys_agent_query` #548):** Any program can query the operating system's built-in reasoning engine natively.
-- **OS Automation Engine & Intent Bus:** Process-to-process and app-to-app messaging broker over `/var/run/ai-agent/intent.sock` routing requests autonomously across application boundaries without human bridging.
-- **Harness v2.3 Stabilized Autonomous Task Engine:** Decomposes complex user goals into policy-checked, verified DAG execution plans with cycle detection, before/after state delta verification, atomic checkpoint/resume, and zero unapproved destructive actions.
-- **Grammar-Constrained Decoding:** In-guest `llama-server` utilizes `plan_grammar.gbnf` to guarantee 100% syntactically valid JSON plans from compact edge models.
-- **Self-Contained In-Guest Inference:** Powered by native musl `llama.cpp` and fine-tuned `SmolLM2-135M-Instruct` (`os_planner_lora.gguf`), operating completely offline with zero host or cloud dependencies.
-- **Continuous Telemetry & Fine-Tuning Pipeline:** Every query, latency metric, and verdict is logged to `/var/ai-agent/` in JSONL format for domain-adapted LoRA distillation.
+- **Custom-Built Linux Kernel**: Ships with `Linux 6.6.142-ai-agent`, introducing a native synchronous system call (`sys_agent_query` #548), process-creation tracking via kretprobes, and bidirectional Netlink IPC channels. Any binary—from a 10-line C program to a bash script—can query the OS intelligence natively.
+- **100% Local In-Guest Inference**: An offline inference engine (`llama.cpp` compiled natively for musl libc) runs inside the guest OS alongside a fine-tuned edge model (`SmolLM2-135M-Instruct` + `os_planner_lora.gguf`) with GBNF grammar constraints. Zero telemetry leaves the machine; zero internet or cloud access is required.
+- **OS Automation Engine & Intent Bus**: A local Unix-socket message broker (`/var/run/ai-agent/intent.sock`) enables process-to-process and app-to-app intent dispatching. Applications can request actions across application boundaries (e.g., file operations, git workflows, browser automation) routed automatically by the OS.
+- **Stabilized Execution Harness (Harness v2.3)**: A verified DAG execution runtime with strict schema validation, cycle detection, before/after state delta verification, repair loops, atomic checkpoint/resume, and strict policy allowlists (zero unapproved destructive actions).
+- **Complete Bootable Distribution**: A full Linux appliance with an XFCE4 desktop, the interactive Sentinel Control Center cockpit, streaming CLI utilities (`agent-cli`, `agent-intent`), and OpenRC service supervision.
 
 ---
 
 ## Hardware Requirements
 
-Because AI-Agent OS runs a local LLM inference engine (`llama-server`) directly inside the guest VM alongside a graphical desktop and kernel telemetry sensors, requirements scale based on desired workload:
+Because Elenchus runs a local LLM inference engine (`llama-server`) directly inside the guest VM alongside a graphical desktop and kernel telemetry sensors, requirements scale based on desired workload:
 
 ### Minimum Requirements (Basic Task Execution)
 
@@ -201,7 +204,7 @@ Verified across both host and in-guest Alpine Linux test suites (`test_harness_s
 
 ## OS Automation Engine & Intent Bus Layer ("The Real AI OS Layer")
 
-To operate as a unified operating system rather than a single command executor, AI-Agent OS incorporates the **OS Automation Engine** (`agent-daemon/automation_engine.py`):
+To operate as a unified operating system rather than a single command executor, Elenchus incorporates the **OS Automation Engine** (`agent-daemon/automation_engine.py`):
 
 ```
 +----------------------------------------------------------------------------------+
@@ -301,7 +304,7 @@ agent-intent send --from code-editor --to file-manager --type file.delete --payl
 
 ## Practical Long-Term Tasks the New Harness Can Handle
 
-The combination of **strict DAG plan validation**, **before/after state verification**, **atomic checkpoint/resume**, and the **OS Intent Bus** transforms AI-Agent OS from a basic command executor into a resilient, autonomous system engine. Below are concrete, long-term tasks the new architecture handles reliably:
+The combination of **strict DAG plan validation**, **before/after state verification**, **atomic checkpoint/resume**, and the **OS Intent Bus** transforms Elenchus from a basic command executor into a resilient, autonomous system engine. Below are concrete, long-term tasks the new architecture handles reliably:
 
 ### 1. Autonomous Multi-Stage Software Build, Test & Canary Deployment
 * **Workflow**:
