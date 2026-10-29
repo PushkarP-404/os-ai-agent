@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-task_runner.py — AI-Agent OS: Dynamic Autonomous Task Execution Engine
+task_runner.py — Elenchus: Dynamic Autonomous Task Execution Engine
 
 Runs as a subprocess spawned by agent_daemon.py upon receiving an intent
 from agent-cli via kernel syscall 548. Decoupled from the Netlink event loop.

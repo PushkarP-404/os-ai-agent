@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""automation_engine.py — AI-Agent OS Automation Engine & Intent Bus
+"""automation_engine.py — Elenchus Automation Engine & Intent Bus
 
 Replaces the legacy single-command task runner with a system-level automation
 engine and inter-process intent broker.
@@ -635,7 +635,7 @@ class ActionRegistry:
         return {"ok": rc == 0, "summary": "Git diff generated", "diff": out[:8192], "error": err if rc != 0 else None}
 
     def _exec_git_commit(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
-        msg = payload.get("message", "Automated commit via AI OS")
+        msg = payload.get("message", "Automated commit via Elenchus")
         args = ["commit", "-m", msg]
         if payload.get("all", True):
             args.append("-a")

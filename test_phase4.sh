@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "=================================================="
-echo "      AI-Agent OS: Phase 4 Verification Test      "
+echo "      Elenchus: Phase 4 Verification Test      "
 echo "=================================================="
 
 # 1. Verify Kernel Version

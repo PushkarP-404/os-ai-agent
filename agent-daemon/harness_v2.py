@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verified, policy-controlled task harness for AI-Agent OS  (v2.3).
+"""Verified, policy-controlled task harness for Elenchus (v2.3).
 
 Architecture
 ------------
@@ -2037,7 +2037,7 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]],
     )
     return (
         "<|im_start|>system\n"
-        "You are the AI-Agent OS planner. Return ONE JSON object only. "
+        "You are the Elenchus planner. Return ONE JSON object only. "
         "No markdown fences. No prose before or after the JSON.\n"
         f"{grammar_note}"
         f"Available tools: {tools}\n"
@@ -2093,7 +2093,7 @@ def chunk_planning_prompt(intent: str, inventory: list[dict[str, Any]]) -> str:
     inv_text = json.dumps(inventory, ensure_ascii=False)[:800]
     return (
         "<|im_start|>system\n"
-        "You are the AI-Agent OS task decomposer. "
+        "You are the Elenchus task decomposer. "
         "Decompose the user intent into 2-5 ordered phases. "
         "Return ONE JSON object only: "
         '{"phases":[{"id":"phase1","goal":"...","tools_hint":["tool1",...]},...]}.\n'

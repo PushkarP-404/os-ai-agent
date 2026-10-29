@@ -1,9 +1,9 @@
 #!/sbin/openrc-run
-# /etc/init.d/ai-agent — OpenRC service for the AI-Agent OS kernel daemon
+# /etc/init.d/ai-agent — OpenRC service for the Elenchus kernel daemon
 # Install: cp this file to /etc/init.d/ai-agent && chmod +x /etc/init.d/ai-agent
 #          rc-update add ai-agent default
 
-description="AI-Agent OS kernel-userspace agent daemon"
+description="Elenchus kernel-userspace agent daemon"
 
 # Phase 6: paths normalized to system locations (/usr/local)
 AGENT_SCRIPT="${AGENT_SCRIPT:-/usr/local/lib/ai-agent/agent_daemon.py}"
@@ -51,7 +51,7 @@ start_pre() {
 }
 
 start() {
-    ebegin "Starting AI-Agent OS kernel daemon"
+    ebegin "Starting Elenchus kernel daemon"
     start-stop-daemon --start \
         --background \
         --make-pidfile \
@@ -68,7 +68,7 @@ start() {
 }
 
 stop() {
-    ebegin "Stopping AI-Agent OS kernel daemon"
+    ebegin "Stopping Elenchus kernel daemon"
     start-stop-daemon --stop \
         --pidfile "$AGENT_PIDFILE" \
         --retry "SIGTERM/10/SIGKILL/5"

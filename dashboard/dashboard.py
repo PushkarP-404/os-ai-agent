@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sentinel Control Center -- AI-Agent OS Flagship GUI and Interactive Assistant
+Sentinel Control Center -- Elenchus Flagship GUI and Interactive Assistant
 Clean Dark Layout, Live CPU and RAM Progress Meters, Compute Telemetry,
 and Real-Time Interactive AI Execution Console.
 """
@@ -141,7 +141,7 @@ class SentinelDashboard(Gtk.Window):
     def setup_headerbar(self):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
-        header.set_title("AI-Agent OS")
+        header.set_title("Elenchus")
         header.set_subtitle("Sentinel Control Center - Flagship AI Operating System")
         header.get_style_context().add_class("header-bar")
         self.set_titlebar(header)
@@ -440,7 +440,7 @@ class SentinelDashboard(Gtk.Window):
 
         welcome_msg = (
             "------------------------------------------------------------\n"
-            "  AI-AGENT OS: INTERACTIVE SENTINEL COCKPIT\n"
+            "  ELENCHUS: INTERACTIVE SENTINEL COCKPIT\n"
             "  Local Musl In-Guest Inference and Kernel Syscall 548 Controller\n"
             "------------------------------------------------------------\n"
             "  Type a system task, command, or query below and hit Enter.\n\n"

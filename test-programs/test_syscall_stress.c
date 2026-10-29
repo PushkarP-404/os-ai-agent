@@ -84,7 +84,7 @@ int main(void)
     int i, all_passed = 1;
 
     printf("==================================================\n");
-    printf("  AI-Agent OS: sys_agent_query Concurrent Stress  \n");
+    printf("  Elenchus: sys_agent_query Concurrent Stress  \n");
     printf("  Threads: %d  Syscall: #%d\n", NUM_THREADS, __NR_agent_query);
     printf("==================================================\n\n");
 

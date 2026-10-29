@@ -1,5 +1,5 @@
-﻿#!/bin/sh
-# test_phase6_boot.sh â€” AI-Agent OS Phase 6 Boot & Appliance Validation Test Harness
+#!/bin/sh
+# test_phase6_boot.sh — Elenchus Phase 6 Boot & Appliance Validation Test Harness
 #
 # Validates:
 #   1. Custom kernel: 6.6.142-ai-agent running
@@ -35,7 +35,7 @@ DATASET_PATH="/var/ai-agent/training_data/dataset.jsonl"
 TEST_SYSCALL_BIN="$SCRIPT_DIR/test-programs/test_syscall"
 
 echo "=================================================="
-echo "    AI-Agent OS: Phase 6 Boot Validation Harness  "
+echo "    Elenchus: Boot Validation Harness  "
 echo "=================================================="
 
 # â”€â”€ Step 1: Kernel Version â”€â”€

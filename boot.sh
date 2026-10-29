@@ -1,5 +1,5 @@
 #!/bin/bash
-# boot.sh â€” Launch AI-Agent OS Appliance v0.1 in QEMU (Linux/macOS)
+# boot.sh â€” Launch Elenchus Appliance v0.1 in QEMU (Linux/macOS)
 #
 # Usage:
 #   ./boot.sh [image_path]
@@ -30,7 +30,7 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
 fi
 
 echo "=================================================="
-echo "       Starting AI-Agent OS Appliance v0.1        "
+echo "       Starting Elenchus Appliance v0.1        "
 echo "=================================================="
 echo "  Image:    $IMAGE"
 echo "  RAM:      $MEMORY"

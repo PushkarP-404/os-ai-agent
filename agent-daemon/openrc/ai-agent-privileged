@@ -1,7 +1,7 @@
 #!/sbin/openrc-run
 # Root-owned local broker for the narrow V2 harness tool set.
 
-description="AI-Agent OS privileged harness broker"
+description="Elenchus privileged harness broker"
 
 BROKER_SCRIPT="${BROKER_SCRIPT:-/usr/lib/ai-agent/harness_privileged.py}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
@@ -21,14 +21,14 @@ start_pre() {
 }
 
 start() {
-    ebegin "Starting AI-Agent privileged harness broker"
+    ebegin "Starting Elenchus privileged harness broker"
     start-stop-daemon --start --background --make-pidfile --pidfile "$BROKER_PIDFILE" \
         --stdout "$BROKER_LOG" --stderr "$BROKER_LOG" --exec "$PYTHON_BIN" -- "$BROKER_SCRIPT"
     eend $?
 }
 
 stop() {
-    ebegin "Stopping AI-Agent privileged harness broker"
+    ebegin "Stopping Elenchus privileged harness broker"
     start-stop-daemon --stop --pidfile "$BROKER_PIDFILE" --retry "SIGTERM/10/SIGKILL/5"
     eend $?
 }

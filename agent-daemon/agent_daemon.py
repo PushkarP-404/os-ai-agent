@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-agent_daemon.py — AI-Agent OS: Unified Kernel-Userspace Agent Daemon
+agent_daemon.py — Elenchus: Unified Kernel-Userspace Agent Daemon
 
 Handles two Netlink message types from the ai_agent kernel subsystem:
   AI_MSG_PROCESS_EVENT (1)  — Phase 3: process-creation events
@@ -281,7 +281,7 @@ def send_desktop_notification(title, message, urgency="normal"):
                 break
     try:
         subprocess.run(
-            ["notify-send", "-u", urgency, "-a", "AI-Agent OS", "-i", "ai-agent", title, str(message)[:150]],
+            ["notify-send", "-u", urgency, "-a", "Elenchus", "-i", "ai-agent", title, str(message)[:150]],
             env=env,
             timeout=2,
             capture_output=True
@@ -551,7 +551,7 @@ def reconcile_orphaned_jobs():
 
 def main():
     print("==================================================")
-    print("       AI-Agent OS: Unified Agent Daemon          ")
+    print("           Elenchus: Unified Agent Daemon         ")
     print("==================================================")
     print(f"[AGENT DAEMON] PID: {os.getpid()}")
     print(f"[AGENT DAEMON] LLM: {OLLAMA_URL} (model: {OLLAMA_MODEL})")

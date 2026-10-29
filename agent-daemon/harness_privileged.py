@@ -107,7 +107,7 @@ def serve(path: str = SOCKET_PATH) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AI-Agent OS privileged tool broker")
+    parser = argparse.ArgumentParser(description="Elenchus privileged tool broker")
     parser.add_argument("--socket", default=SOCKET_PATH)
     args = parser.parse_args()
     serve(args.socket)

@@ -1,5 +1,5 @@
 /*
- * agent-cli.c — AI-Agent OS: Phase 11 Streaming Intent CLI
+ * agent-cli.c — Elenchus: Phase 11 Streaming Intent CLI
  *
  * Phase 11 upgrade: instead of printing a single 2048-byte kernel response
  * and exiting, agent-cli now:

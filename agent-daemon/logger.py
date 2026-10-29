@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-logger.py â€” AI-Agent OS Structured Interaction Logger
+logger.py — Elenchus Structured Interaction Logger
 
 Writes JSONL records of every agent interaction to /var/ai-agent/.
 These records form the raw training data corpus for the Phase 5 LoRA

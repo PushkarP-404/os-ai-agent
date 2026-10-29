@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("==================================================\n");
-    printf("    AI-Agent OS: Syscall Interface (sys_agent_query) \n");
+    printf("    Elenchus: Syscall Interface (sys_agent_query) \n");
     printf("==================================================\n");
     printf("Invoking syscall #%d...\n", __NR_agent_query);
     printf("Caller PID: %d\n", getpid());

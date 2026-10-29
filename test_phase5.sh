@@ -1,5 +1,5 @@
-﻿#!/bin/sh
-# test_phase5.sh â€” AI-Agent OS Phase 5 Verification Harness
+#!/bin/sh
+# test_phase5.sh — Elenchus Phase 5 Verification Harness
 #
 # Phase 5 (native musl llama.cpp): validates:
 #   1. Custom ai-agent kernel is running
@@ -37,7 +37,7 @@ LLAMA_PORT=11434
 LLAMA_HOST=127.0.0.1
 
 echo "=================================================="
-echo "      AI-Agent OS: Phase 5 Verification Test      "
+echo "      Elenchus: Phase 5 Verification Test      "
 echo "      (Native musl llama.cpp + SmolLM2-135M)      "
 echo "=================================================="
 

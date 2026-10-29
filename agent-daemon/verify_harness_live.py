@@ -330,7 +330,7 @@ def probe_6_intent_bus_socket_and_multi_app_routing():
 
 def main():
     print("==================================================================")
-    print("       AI-AGENT OS: INDEPENDENT LIVE HARNESS & ENGINE AUDIT       ")
+    print("       ELENCHUS: INDEPENDENT LIVE HARNESS & ENGINE AUDIT       ")
     print("==================================================================")
     start_time = time.time()
 

@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=================================================="
-echo "      AI-Agent OS: Kernel Build & Install         "
+echo "      Elenchus: Kernel Build & Install         "
 echo "=================================================="
 
 if [ ! -d "$KERNEL_DIR" ]; then
@@ -99,15 +99,15 @@ fi
 echo "Root filesystem device: $ROOT_DEV"
 
 cat << EOF > /boot/extlinux.conf
-# AI-Agent OS Bootloader Configuration
+# Elenchus Bootloader Configuration
 DEFAULT menu.c32
 PROMPT 0
-MENU TITLE AI-Agent OS Boot Menu
+MENU TITLE Elenchus Boot Menu
 TIMEOUT 20
 
 LABEL ai-os
   MENU DEFAULT
-  MENU LABEL Linux 6.6.142-ai-agent (AI-Agent OS Kernel)
+  MENU LABEL Linux 6.6.142-ai-agent (Elenchus Kernel)
   LINUX vmlinuz-ai-agent
   INITRD initramfs-ai-agent
   APPEND root=${ROOT_DEV} modules=sd-mod,usb-storage,ext4 quiet rootfstype=ext4

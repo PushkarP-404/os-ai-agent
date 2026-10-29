@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    Boots the AI-Agent OS appliance image in QEMU.
+    Boots the Elenchus appliance image in QEMU.
 .DESCRIPTION
-    Launches QEMU x86_64 with 4GB RAM, 4 vCPUs, and boots into AI-Agent OS v0.1.
+    Launches QEMU x86_64 with 4GB RAM, 4 vCPUs, and boots into Elenchus v0.1.
     All system services (llama-server, ai-agent, sshd) initialize automatically.
     SSH access is forwarded to localhost:2222 (user: root, pass: password).
 #>
@@ -44,7 +44,7 @@ if ($running) {
 }
 
 Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "       Starting AI-Agent OS Appliance v0.1        " -ForegroundColor Green
+Write-Host "       Starting Elenchus Appliance v0.1        " -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "  Image:    $Image"
 Write-Host "  RAM:      $MemoryMB MB"
@@ -59,7 +59,7 @@ $displayArgs = if ($Gui) {
         "-device", "usb-tablet",
         "-vga", "virtio",
         "-display", "sdl",
-        "-name", "AI-Agent OS v0.1 (XFCE4 Desktop)"
+        "-name", "Elenchus v0.1 (XFCE4 Desktop)"
     )
 } else {
     @(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent_intent.py — CLI interface to the AI-Agent OS Intent Bus.
+"""agent_intent.py — CLI interface to the Elenchus Intent Bus.
 
 Allows command-line users, shell scripts, and external applications to:
 1. Dispatch standard OS intents to apps or services:
@@ -30,7 +30,7 @@ from automation_engine import (
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AI-Agent OS Intent Bus CLI")
+    parser = argparse.ArgumentParser(description="Elenchus Intent Bus CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # 1. Send intent

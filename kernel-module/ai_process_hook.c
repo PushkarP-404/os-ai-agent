@@ -12,8 +12,8 @@
 #define COMM_LEN 16
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("AI-Agent OS Team");
-MODULE_DESCRIPTION("LKM Process Creation Hook for AI Agent OS");
+MODULE_AUTHOR("Elenchus Team");
+MODULE_DESCRIPTION("LKM Process Creation Hook for Elenchus");
 MODULE_VERSION("0.1");
 
 struct process_event {
