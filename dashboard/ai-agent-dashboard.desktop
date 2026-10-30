@@ -2,14 +2,14 @@
 Version=1.0
 Type=Application
 Name=Sentinel Control Center
-GenericName=AI Operating System Control Center
-Comment=Flagship AI-Agent OS Control Center & Interactive AI Assistant
+GenericName=Elenchus Control Center
+Comment=Elenchus Flagship Control Center & Autonomous AI Assistant
 Exec=/usr/bin/ai-agent-dashboard
-Icon=ai-agent
+Icon=elenchus
 Terminal=false
 StartupNotify=true
 Categories=System;Settings;Utility;
-Keywords=AI;Agent;Sentinel;LLM;Syscall;Telemetry;
+Keywords=Elenchus;AI;Agent;Sentinel;LLM;Syscall;Telemetry;
 Actions=NewPrompt;
 
 [Desktop Action NewPrompt]

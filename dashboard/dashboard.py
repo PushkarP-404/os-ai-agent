@@ -84,6 +84,7 @@ class CPUStatsSampler:
 class SentinelDashboard(Gtk.Window):
     def __init__(self):
         super().__init__(title="Sentinel Control Center")
+        self.set_icon_name("elenchus")
         self.set_default_size(960, 620)
         self.get_style_context().add_class("main-window")
 
@@ -142,7 +143,7 @@ class SentinelDashboard(Gtk.Window):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.set_title("Elenchus")
-        header.set_subtitle("Sentinel Control Center - Flagship AI Operating System")
+        header.set_subtitle("Sentinel Control Center - Flagship Autonomous OS")
         header.get_style_context().add_class("header-bar")
         self.set_titlebar(header)
 
