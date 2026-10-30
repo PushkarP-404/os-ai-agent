@@ -60,6 +60,16 @@ else
     ACCEL_ARGS=(-accel tcg,thread=multi)
 fi
 
+BIOS_ARGS=()
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/bios/elenchus-bios.bin" ]; then
+    BIOS_ARGS=(-bios "$SCRIPT_DIR/bios/elenchus-bios.bin")
+elif [ -f "bios/elenchus-bios.bin" ]; then
+    BIOS_ARGS=(-bios "bios/elenchus-bios.bin")
+elif [ -f "../elenchus-bios.bin" ]; then
+    BIOS_ARGS=(-bios "../elenchus-bios.bin")
+fi
+
 exec qemu-system-x86_64 \
     -m "$MEMORY" \
     -smp "$CPUS" \
@@ -68,4 +78,5 @@ exec qemu-system-x86_64 \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22 \
     -device e1000,netdev=n1 \
     "${ACCEL_ARGS[@]}" \
+    "${BIOS_ARGS[@]}" \
     "${GUI_ARGS[@]}"

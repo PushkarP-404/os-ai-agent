@@ -8,6 +8,7 @@
 #>
 param(
     [string]$Image = "ai-agent-os-v0.1.qcow2",
+    [string]$Bios = "bios\elenchus-bios.bin",
     [string]$QemuExe = "C:\Program Files\qemu\qemu-system-x86_64.exe",
     [int]$MemoryMB = 4096,
     [int]$Cores = 4,
@@ -52,6 +53,24 @@ Write-Host "  vCPUs:    $Cores"
 Write-Host "  SSH Port: $SshPort (root / password)"
 Write-Host "--------------------------------------------------" -ForegroundColor Gray
 
+$biosArgs = @()
+if ($Bios) {
+    $resolvedBios = $null
+    if (Test-Path $Bios) {
+        $resolvedBios = $Bios
+    } elseif (Test-Path "$PSScriptRoot\$Bios") {
+        $resolvedBios = "$PSScriptRoot\$Bios"
+    } elseif (Test-Path "..\$Bios") {
+        $resolvedBios = "..\$Bios"
+    } elseif (Test-Path "C:\qemu-alpine\elenchus-bios.bin") {
+        $resolvedBios = "C:\qemu-alpine\elenchus-bios.bin"
+    }
+    if ($resolvedBios) {
+        $biosArgs = @("-bios", $resolvedBios)
+        Write-Host "  BIOS:     $resolvedBios"
+    }
+}
+
 $displayArgs = if ($Gui) {
     @(
         "-device", "virtio-tablet-pci",
@@ -76,5 +95,6 @@ $displayArgs = if ($Gui) {
     -device virtio-net-pci,netdev=n1 `
     -monitor telnet:127.0.0.1:4444,server,nowait `
     -accel whpx -accel tcg,thread=multi `
+    @biosArgs `
     @displayArgs
 
