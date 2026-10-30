@@ -64,6 +64,10 @@ def call_cdp(ws, method, params=None, timeout=10.0):
     raise TimeoutError(f"CDP call '{method}' timed out after {timeout}s")
 
 def cmd_dump(ws, page):
+    try:
+        call_cdp(ws, "Accessibility.enable", timeout=3.0)
+    except Exception:
+        pass
     result = call_cdp(ws, "Accessibility.getFullAXTree")
     nodes = result.get('nodes', [])
     if not nodes:

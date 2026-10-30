@@ -64,7 +64,7 @@ PLAN_GRAMMAR_PATH: str = _os.path.join(
 _CATEGORY_TOOLS: dict[str, list[str]] = {
     "browser": [
         "browser.navigate", "browser.dump", "browser.click",
-        "browser.type", "browser.screenshot",
+        "browser.type", "browser.screenshot", "app.launch",
         "file.write", "file.read", "command.argv",
     ],
     "email": [
@@ -79,7 +79,7 @@ _CATEGORY_TOOLS: dict[str, list[str]] = {
     "files": [
         "file.read", "file.write", "file.list", "file.move",
         "file.delete", "file.append", "file.query",
-        "dir.create", "dir.remove", "dir.query",
+        "dir.create", "dir.remove", "dir.query", "app.launch",
         "command.argv",
     ],
     "document": [
@@ -224,6 +224,7 @@ SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
     "ruby", "gem",
     "java", "javac", "mvn", "gradle",
     "docker", "docker-compose",
+    "chromium", "chromium-browser", "thunar", "xfce4-terminal", "xdg-open", "mousepad",
 })
 
 
@@ -587,6 +588,7 @@ class PolicyEngine:
         "data.csv_read", "document.read",
         "email.read",
         "browser.navigate", "browser.dump", "browser.screenshot",
+        "app.launch",
     })
     CHANGE: frozenset[str] = frozenset({
         "package.install", "service.start", "service.restart",
@@ -597,6 +599,7 @@ class PolicyEngine:
         "data.csv_write",
         "email.send",
         "browser.click", "browser.type",
+        "app.launch",
     })
 
     DESTRUCTIVE: frozenset[str] = frozenset({
@@ -1727,6 +1730,89 @@ class ToolExecutor:
             raise ValueError("'id' is required for browser.type")
         return self._run_cdp("type", id=int(node_id), text=str(text))
 
+
+    def tool_app_launch(self, args: dict[str, Any]) -> ToolResult:
+        """Launch a desktop/GUI application in the user's graphical session.
+
+        args:
+            app  - application name or alias ("browser", "file_manager", "terminal", "editor", etc.)
+            url  - optional URL for browser
+            path - optional target file/directory for file manager
+        """
+        app = str(args.get("app") or args.get("name") or "browser").lower().strip()
+        url = str(args.get("url") or "").strip()
+        path = str(args.get("path") or "").strip()
+
+        target_user = self.caller.get("user") or "aiuser"
+        if target_user == "root" and os.path.exists("/home/aiuser"):
+            target_user = "aiuser"
+
+        xauth = f"/home/{target_user}/.Xauthority" if target_user != "root" else "/var/run/lightdm/root/:0"
+        display = os.environ.get("DISPLAY") or ":0"
+
+        dbus_addr = ""
+        try:
+            pids = subprocess.check_output(["pgrep", "-u", target_user, "xfce4-session"]).decode().split()
+            if pids:
+                with open(f"/proc/{pids[0]}/environ", "rb") as ef:
+                    for e in ef.read().split(b"\0"):
+                        if e.startswith(b"DBUS_SESSION_BUS_ADDRESS="):
+                            dbus_addr = e.decode().split("=", 1)[1]
+                            break
+        except Exception:
+            pass
+
+        if app in ("browser", "chromium", "web", "chrome"):
+            target_url = url or "http://127.0.0.1:8080"
+            cmd = (
+                f"chromium --no-first-run --no-default-browser-check "
+                f"--remote-debugging-port=9222 --remote-allow-origins=* '{target_url}'"
+            )
+            app_label = "Chromium Browser"
+        elif app in ("file_manager", "files", "thunar", "filemanager"):
+            target_path = f"/home/{target_user}" if (not path or path == "/home/root") else path
+            cmd = f"thunar '{target_path}'"
+            app_label = "Thunar File Manager"
+        elif app in ("terminal", "console", "xfce4-terminal", "shell"):
+            cmd = "xfce4-terminal"
+            app_label = "XFCE Terminal"
+        elif app in ("editor", "text_editor", "mousepad", "edit"):
+            target_path = path or ""
+            cmd = f"mousepad {target_path}".strip()
+            app_label = "Mousepad Text Editor"
+        elif app in ("dashboard", "sentinel", "control_center"):
+            cmd = "python3 /usr/local/lib/ai-agent/dashboard.py"
+            app_label = "Sentinel Control Center"
+        else:
+            bin_path = shutil.which(app)
+            if not bin_path:
+                return ToolResult(False, f"Application '{app}' not found on system", exit_code=127)
+            cmd = f"{bin_path} {path}".strip()
+            app_label = app
+
+        env_prefix = f"DISPLAY={display} XAUTHORITY={xauth} "
+        if dbus_addr:
+            env_prefix += f"DBUS_SESSION_BUS_ADDRESS='{dbus_addr}' "
+
+        full_shell_cmd = f"su - {target_user} -c \"{env_prefix} nohup {cmd} >/dev/null 2>&1 &\""
+
+        try:
+            subprocess.run(
+                ["sh", "-c", full_shell_cmd],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            time.sleep(0.5)
+            return ToolResult(
+                True,
+                f"Launched {app_label} successfully in user '{target_user}' desktop session",
+                stdout=f"{app_label} active on DISPLAY={display}",
+                facts=[{"app": app, "user": target_user, "display": display}],
+            )
+        except Exception as e:
+            return ToolResult(False, f"Failed to launch {app_label}: {e}", exit_code=1)
+
     def tool_browser_screenshot(self, args: dict[str, Any]) -> ToolResult:
         """Capture a screenshot of the active browser tab and save to a file.
 
@@ -1788,6 +1874,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser.navigate": {"required": {"url": str}, "optional": {}},
     "browser.dump": {"required": {}, "optional": {}},
     "browser.screenshot": {"required": {}, "optional": {"path": str}},
+    "app.launch": {"required": {"app": str}, "optional": {"url": str, "path": str, "name": str}},
     "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str}},
     "browser.type": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "text": str}},
 }
@@ -2579,7 +2666,7 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
             criteria.append({"description": "Inbox checked",
                              "tool": "system.info", "args": {}})
 
-    # ── 23. Browser navigate ───────────────────────────────────────────────
+    # ── 23. Browser launch & navigate ──────────────────────────────────────
     if not steps:
         b_nav_m = re.search(
             r"\b(?:open|navigate\s+to|browse|visit|go\s+to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
@@ -2588,9 +2675,33 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
                 r"\bopen\s+(?:the\s+)?browser\s*(?:and\s+go\s+to\s+|to\s+|at\s+)?(https?://[^\s]+)", text, re.IGNORECASE)
         if b_nav_m:
             url = b_nav_m.group(1).rstrip(".,;:")
-            steps.append(Step("browser-nav", f"Navigate browser to {url}",
-                              "browser.navigate", {"url": url}, []))
-            criteria.append({"description": f"Navigated to {url}",
+            steps.append(Step("browser-launch", f"Launch browser at {url}",
+                              "app.launch", {"app": "browser", "url": url}, []))
+            criteria.append({"description": f"Browser launched at {url}",
+                             "tool": "system.info", "args": {}})
+        elif re.search(r"\b(?:open|launch|start)\s+(?:the\s+)?(?:web\s+)?browser\b", text_lower):
+            steps.append(Step("browser-launch", "Launch browser",
+                              "app.launch", {"app": "browser", "url": "http://127.0.0.1:8080"}, []))
+            criteria.append({"description": "Browser active on desktop",
+                             "tool": "system.info", "args": {}})
+
+    # ── 23b. File manager launch ───────────────────────────────────────────
+    if not steps:
+        fm_m = re.search(r"\b(?:open|launch|show)\s+(?:the\s+)?(?:file\s*manager|files)(?:\s+(?:in|at|to)\s+(\S+))?\b", text_lower)
+        if fm_m:
+            raw_p = fm_m.group(1)
+            fm_path = raw_p if raw_p else ("/home/aiuser" if os.path.exists("/home/aiuser") else "/root")
+            steps.append(Step("file-manager-launch", f"Launch file manager at {fm_path}",
+                              "app.launch", {"app": "file_manager", "path": fm_path}, []))
+            criteria.append({"description": "File manager active on desktop",
+                             "tool": "system.info", "args": {}})
+
+    # ── 23c. Terminal / console launch ─────────────────────────────────────
+    if not steps:
+        if re.search(r"\b(?:open|launch|start)\s+(?:the\s+)?(?:terminal|console|shell)\b", text_lower):
+            steps.append(Step("terminal-launch", "Launch terminal",
+                              "app.launch", {"app": "terminal"}, []))
+            criteria.append({"description": "Terminal active on desktop",
                              "tool": "system.info", "args": {}})
 
     # ── 24. Browser dump ───────────────────────────────────────────────────

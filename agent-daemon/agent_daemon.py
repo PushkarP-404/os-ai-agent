@@ -257,6 +257,24 @@ def query_ollama(prompt: str, min_tokens: int = 8, n_predict: int = 200,
                         continue
                     return "[AI AGENT FALLBACK] LLM response too short to be useful. Policy verdict: ALLOW with monitoring."
                 return content
+        except urllib.error.HTTPError as e:
+            if "grammar" in payload:
+                print(f"  [WARN] LLM rejected grammar ({e}). Retrying without grammar...")
+                del payload["grammar"]
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    LLAMA_URL,
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                )
+                continue
+            if attempt < 2:
+                print(f"  [WARN] LLM request failed: {e}. Retrying... Attempt {attempt+1}/3")
+                continue
+            return (
+                f"[AI AGENT FALLBACK] Local LLM unreachable ({e}). "
+                f"Policy verdict: ALLOW with monitoring."
+            )
         except Exception as e:
             if attempt < 2:
                 print(f"  [WARN] LLM request failed: {e}. Retrying... Attempt {attempt+1}/3")

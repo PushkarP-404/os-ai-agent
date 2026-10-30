@@ -410,6 +410,9 @@ class ActionRegistry:
         self.register("browser.type", self._exec_browser_type)
         self.register("browser.screenshot", self._exec_browser_screenshot)
         self.register("browser.extract", self._exec_browser_extract)
+        self.register("browser.open", self._exec_app_launch)
+        self.register("app.launch", self._exec_app_launch)
+        self.register("file.open_manager", self._exec_app_launch)
 
         # 2. File Tools
         self.register("file.read", self._exec_file_read)
@@ -466,6 +469,17 @@ class ActionRegistry:
         self.register("disk.status", self._exec_disk_status)
         self.register("memory.status", self._exec_memory_status)
         self.register("port.inspect", self._exec_port_inspect)
+
+    # ── Category 0: Desktop & Application Launch Tools ───────────────────────
+    def _exec_app_launch(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
+        harness = self._get_tool_executor()
+        if harness and hasattr(harness, "tool_app_launch"):
+            try:
+                res = harness.tool_app_launch(payload)
+                return {"ok": res.ok, "summary": res.summary, "stdout": res.stdout}
+            except Exception as e:
+                return {"error": f"app.launch execution failed: {e}"}
+        return {"error": "No app.launch executor available"}
 
     # ── Category 1: Browser Tools ─────────────────────────────────────────────
     def _exec_browser_navigate(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
