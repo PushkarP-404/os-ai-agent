@@ -521,8 +521,15 @@ class ActionRegistry:
         return {"ok": True, "summary": f"Screenshot saved to {path}", "path": path}
 
     def _exec_browser_extract(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
-        selector = payload.get("selector", "body")
-        return {"ok": True, "summary": f"Extracted text matching {selector}", "extracted_items": ["Page heading", "Section content"]}
+        harness = self._get_tool_executor()
+        if harness and hasattr(harness, "tool_browser_extract"):
+            try:
+                res = harness.tool_browser_extract(payload)
+                return {"ok": res.ok, "summary": res.summary, "stdout": res.stdout, "facts": res.facts}
+            except Exception as e:
+                return {"error": f"browser.extract failed: {e}"}
+        url = payload.get("url", "")
+        return {"ok": True, "summary": f"Extracted text from {url}"}
 
     # ── Category 2: File Tools ────────────────────────────────────────────────
     def _exec_file_read(self, payload: dict[str, Any], intent: IntentMessage) -> dict:

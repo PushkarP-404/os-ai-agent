@@ -64,7 +64,7 @@ PLAN_GRAMMAR_PATH: str = _os.path.join(
 _CATEGORY_TOOLS: dict[str, list[str]] = {
     "browser": [
         "browser.navigate", "browser.dump", "browser.click",
-        "browser.type", "browser.screenshot", "app.launch",
+        "browser.type", "browser.screenshot", "browser.extract", "app.launch",
         "file.write", "file.read", "command.argv",
     ],
     "email": [
@@ -225,6 +225,7 @@ SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
     "java", "javac", "mvn", "gradle",
     "docker", "docker-compose",
     "chromium", "chromium-browser", "thunar", "xfce4-terminal", "xdg-open", "mousepad",
+    "lightpanda",
 })
 
 
@@ -587,7 +588,7 @@ class PolicyEngine:
         "llm.prompt",
         "data.csv_read", "document.read",
         "email.read",
-        "browser.navigate", "browser.dump", "browser.screenshot",
+        "browser.navigate", "browser.dump", "browser.screenshot", "browser.extract",
         "app.launch",
     })
     CHANGE: frozenset[str] = frozenset({
@@ -1730,6 +1731,31 @@ class ToolExecutor:
             raise ValueError("'id' is required for browser.type")
         return self._run_cdp("type", id=int(node_id), text=str(text))
 
+    def tool_browser_extract(self, args: dict[str, Any]) -> ToolResult:
+        """Extract clean text/markdown from a web page using Lightpanda engine.
+        Fast, headless, non-rendering, and token-optimized for LLMs.
+        """
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return ToolResult(False, "Missing required argument 'url'", exit_code=1)
+
+        lp_bin = "/usr/local/bin/lightpanda" if os.path.exists("/usr/local/bin/lightpanda") else "lightpanda"
+        try:
+            res = subprocess.run(
+                [lp_bin, "fetch", url, "--dump", "markdown", "--strip-mode", "clutter"],
+                capture_output=True,
+                text=True,
+                timeout=25,
+            )
+            if res.returncode == 0:
+                content = res.stdout.strip()
+                summary = f"Extracted {len(content)} characters of markdown from {url}"
+                return ToolResult(True, summary, stdout=content[:12000], facts=[{"url": url, "chars": len(content)}])
+            else:
+                err_msg = res.stderr.strip() or f"exit code {res.returncode}"
+                return ToolResult(False, f"Lightpanda extraction failed: {err_msg}", exit_code=res.returncode)
+        except Exception as e:
+            return ToolResult(False, f"Lightpanda execution error: {e}", exit_code=1)
 
     def tool_app_launch(self, args: dict[str, Any]) -> ToolResult:
         """Launch a desktop/GUI application in the user's graphical session.
@@ -1873,6 +1899,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "email.send": {"required": {"to": str, "subject": str, "body": str}, "optional": {}},
     "browser.navigate": {"required": {"url": str}, "optional": {}},
     "browser.dump": {"required": {}, "optional": {}},
+    "browser.extract": {"required": {"url": str}, "optional": {"format": str}},
     "browser.screenshot": {"required": {}, "optional": {"path": str}},
     "app.launch": {"required": {"app": str}, "optional": {"url": str, "path": str, "name": str}},
     "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str}},
@@ -2664,6 +2691,16 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
             steps.append(Step("read-emails", "Check inbox for emails",
                               "email.read", {"max_emails": 10}, []))
             criteria.append({"description": "Inbox checked",
+                             "tool": "system.info", "args": {}})
+
+    # ── 22b. Web scrape / extract (Lightpanda fast path) ───────────────────
+    if not steps:
+        ex_m = re.search(r"\b(?:scrape|extract|read\s+web\s*page|fetch\s+page|summarize\s+page)\s+(?:from\s+)?(https?://\S+)", text, re.IGNORECASE)
+        if ex_m:
+            url = ex_m.group(1).rstrip(".,;:")
+            steps.append(Step("web-extract", f"Extract page content from {url}",
+                              "browser.extract", {"url": url}, []))
+            criteria.append({"description": f"Extracted content from {url}",
                              "tool": "system.info", "args": {}})
 
     # ── 23. Browser launch & navigate ──────────────────────────────────────
