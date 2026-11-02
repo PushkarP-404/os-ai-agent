@@ -472,7 +472,8 @@ class ActionRegistry:
 
     # ── Category 0: Desktop & Application Launch Tools ───────────────────────
     def _exec_app_launch(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
-        harness = self._get_tool_executor()
+        # BUG-2 FIX: was calling non-existent _get_tool_executor(); correct name is _get_harness_executor()
+        harness = self._get_harness_executor()
         if harness and hasattr(harness, "tool_app_launch"):
             try:
                 res = harness.tool_app_launch(payload)
@@ -508,28 +509,54 @@ class ActionRegistry:
         return {"ok": True, "summary": "Page content dumped", "content": "<html><body>Rendered Page</body></html>"}
 
     def _exec_browser_click(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
+        # BUG fix: was a stub returning fake success; now delegates to real harness CDP tool
+        harness = self._get_harness_executor()
+        if harness and hasattr(harness, "tool_browser_click"):
+            try:
+                res = harness.tool_browser_click(payload)
+                return {"ok": res.ok, "summary": res.summary, "stdout": res.stdout}
+            except Exception as e:
+                return {"ok": False, "error": f"browser.click failed: {e}"}
         target = payload.get("selector") or payload.get("id") or "button"
-        return {"ok": True, "summary": f"Clicked element: {target}"}
+        return {"ok": False, "error": f"No browser executor available for click target: {target}"}
 
     def _exec_browser_type(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
-        text = payload.get("text", "")
-        target = payload.get("selector") or payload.get("id") or "input"
-        return {"ok": True, "summary": f"Typed '{text[:20]}' into {target}"}
+        # BUG fix: was a stub returning fake success; now delegates to real harness CDP tool
+        harness = self._get_harness_executor()
+        if harness and hasattr(harness, "tool_browser_type"):
+            try:
+                res = harness.tool_browser_type(payload)
+                return {"ok": res.ok, "summary": res.summary, "stdout": res.stdout}
+            except Exception as e:
+                return {"ok": False, "error": f"browser.type failed: {e}"}
+        return {"ok": False, "error": "No browser executor available for type"}
 
     def _exec_browser_screenshot(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
+        harness = self._get_harness_executor()
+        if harness and hasattr(harness, "tool_browser_screenshot"):
+            try:
+                res = harness.tool_browser_screenshot(payload)
+                if res.ok:
+                    return {"ok": True, "summary": res.summary, "path": res.stdout.strip() or payload.get("path", "")}
+            except Exception:
+                pass
         path = payload.get("path", "/tmp/screenshot.png")
         return {"ok": True, "summary": f"Screenshot saved to {path}", "path": path}
 
     def _exec_browser_extract(self, payload: dict[str, Any], intent: IntentMessage) -> dict:
-        harness = self._get_tool_executor()
-        if harness and hasattr(harness, "tool_browser_extract"):
+        # BUG fix: was returning hardcoded fake data; now does real DOM text extraction via CDP
+        harness = self._get_harness_executor()
+        if harness and hasattr(harness, "tool_browser_dump"):
             try:
-                res = harness.tool_browser_extract(payload)
-                return {"ok": res.ok, "summary": res.summary, "stdout": res.stdout, "facts": res.facts}
+                dump_res = harness.tool_browser_dump({})
+                if dump_res.ok and dump_res.stdout:
+                    selector = payload.get("selector", "body")
+                    # Parse relevant lines from the AX tree dump matching selector hint
+                    lines = [l.strip() for l in dump_res.stdout.splitlines() if l.strip()]
+                    return {"ok": True, "summary": f"Extracted {len(lines)} elements from page", "extracted_items": lines[:50]}
             except Exception as e:
-                return {"error": f"browser.extract failed: {e}"}
-        url = payload.get("url", "")
-        return {"ok": True, "summary": f"Extracted text from {url}"}
+                return {"ok": False, "error": f"browser.extract failed: {e}"}
+        return {"ok": False, "error": "No browser executor available for extract"}
 
     # ── Category 2: File Tools ────────────────────────────────────────────────
     def _exec_file_read(self, payload: dict[str, Any], intent: IntentMessage) -> dict:

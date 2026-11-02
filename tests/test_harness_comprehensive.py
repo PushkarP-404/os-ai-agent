@@ -52,9 +52,9 @@ class TestPolicyEngine(unittest.TestCase):
         self.policy = PolicyEngine()
 
     def test_all_registered_tools_accounted_for(self):
-        self.assertEqual(len(PolicyEngine.READ_ONLY), 21)
-        self.assertEqual(len(PolicyEngine.CHANGE), 17)
-        self.assertEqual(len(ALLOWED_TOOLS), 38)
+        self.assertEqual(len(PolicyEngine.READ_ONLY), 22)
+        self.assertEqual(len(PolicyEngine.CHANGE), 18)
+        self.assertEqual(len(ALLOWED_TOOLS), 40)
         self.assertTrue(PolicyEngine.READ_ONLY.isdisjoint(PolicyEngine.CHANGE))
 
     def test_readonly_tools_allowed_in_all_modes(self):

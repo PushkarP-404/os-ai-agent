@@ -1,6 +1,6 @@
-# AI-Agent OS — Multi-Repo Architecture & Contributor Guide
+# Elenchus OS — Multi-Repo Architecture & Contributor Guide
 
-AI-Agent OS is divided into **three specialized GitHub repositories**. This modular architecture separates **system development**, **model intelligence training**, and **package distribution**.
+Elenchus (formerly AI-Agent OS) is divided into **three specialized GitHub repositories**. This modular architecture separates **system development**, **model intelligence training**, and **package distribution**.
 
 ---
 
@@ -8,7 +8,7 @@ AI-Agent OS is divided into **three specialized GitHub repositories**. This modu
 
 | Repository | GitHub Target | Primary Role | Key Technologies |
 |---|---|---|---|
-| **`os-ai-agent`** | [`PushkarP-404/os-ai-agent`](https://github.com/PushkarP-404/os-ai-agent) | **Core Operating System** | Linux Kernel 6.6 (C), LKM, OpenRC, Python, Alpine Linux |
+| **`os-ai-agent`** | [`PushkarP-404/os-ai-agent`](https://github.com/PushkarP-404/os-ai-agent) | **Elenchus Core Operating System** | Linux Kernel 6.6 (C), LKM, OpenRC, Python, Alpine Linux |
 | **`distillation-fine-tuning`** | [`PushkarP-404/distillation-fine-tuning`](https://github.com/PushkarP-404/distillation-fine-tuning) | **AI Brain & Intelligence** | PyTorch, Hugging Face, PEFT/LoRA, llama.cpp GGUF, Groq API |
 | **`ai-agent-apk-repo`** | [`PushkarP-404/ai-agent-apk-repo`](https://github.com/PushkarP-404/ai-agent-apk-repo) | **Public Package Mirror** | Alpine APK format, cryptographic signing (`abuild-sign`), GitHub Pages |
 
@@ -22,7 +22,7 @@ AI-Agent OS is divided into **three specialized GitHub repositories**. This modu
    │ 1. Train model on OS syscall events
    │ 2. Export LoRA adapter to GGUF format
    ▼
-os_agent_lora.gguf (37.3 MB)
+os_agent_lora.gguf (37.3 MB) / os_planner_lora.gguf (100.6 MB)
    │
    ▼
 [ os-ai-agent ]
@@ -39,7 +39,7 @@ os_agent_lora.gguf (37.3 MB)
    │ 1. Static HTTP hosting via GitHub Pages
    │ 2. Serves packages to end-users worldwide
    ▼
-End-User / Live OS (apk add ai-agent-daemon)
+End-User / Live Elenchus OS (apk add ai-agent-daemon)
 ```
 
 ---
@@ -49,7 +49,7 @@ End-User / Live OS (apk add ai-agent-daemon)
 ### 1. `distillation-fine-tuning` (The Brain)
 Responsible for dataset generation, teacher-model distillation, and training lightweight edge adapters for the OS.
 
-* **Main Outputs**: `os_agent_lora.gguf`
+* **Main Outputs**: `os_agent_lora.gguf`, `os_planner_lora.gguf`
 * **Prerequisites**: Python 3.10+, PyTorch, Hugging Face `transformers`, `peft`
 * **Setup & Development Flow**:
   1. Clone repository: `git clone https://github.com/PushkarP-404/distillation-fine-tuning.git`
@@ -63,7 +63,7 @@ Responsible for dataset generation, teacher-model distillation, and training lig
 
 ---
 
-### 2. `os-ai-agent` (The Operating System)
+### 2. `os-ai-agent` (Elenchus Operating System)
 Contains all operating system code: kernel module, userspace daemon, system CLI, OpenRC init scripts, and packaging build definitions.
 
 * **Key Directories**:
@@ -81,7 +81,7 @@ Contains all operating system code: kernel module, userspace daemon, system CLI,
 ---
 
 ### 3. `ai-agent-apk-repo` (The Distribution Mirror)
-The public-facing CDN repository that allows anyone running Alpine Linux to install or update the OS components using native `apk` commands.
+The public-facing CDN repository that allows anyone running Elenchus / Alpine Linux to install or update the OS components using native `apk` commands.
 
 * **Key Directories**:
   * `x86_64/`: Contains the binary `.apk` archives and signed `APKINDEX.tar.gz`.

@@ -114,6 +114,7 @@ if HARNESS_V2:
 # Per-job cancellation tokens keyed by task_id
 _cancel_tokens: dict[str, threading.Event] = {}
 _cancel_lock   = threading.Lock()
+_netlink_send_lock = threading.Lock()
 _worker_pool   = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def load_capabilities():
@@ -520,7 +521,8 @@ def handle_syscall_query(sock, query_payload):
         hdr        = struct.pack(NLMSG_HDR_FORMAT, total_len, AI_MSG_SYSCALL_RESP,
                                  0, 0, os.getpid())
         try:
-            sock.sendto(hdr + payload, (0, 0))
+            with _netlink_send_lock:
+                sock.sendto(hdr + payload, (0, 0))
             print(f"  [REPLY] Sent response for query #{query_id}")
             sys.stdout.flush()
         except OSError as e:
@@ -537,7 +539,8 @@ def handle_syscall_query(sock, query_payload):
                 payload  = struct.pack(RESP_FORMAT, query_id, 0, err_resp)
                 hdr      = struct.pack(NLMSG_HDR_FORMAT, NLMSG_HDR_SIZE + len(payload),
                                        AI_MSG_SYSCALL_RESP, 0, 0, os.getpid())
-                sock.sendto(hdr + payload, (0, 0))
+                with _netlink_send_lock:
+                    sock.sendto(hdr + payload, (0, 0))
             except Exception:
                 pass
 

@@ -225,7 +225,6 @@ SAFE_ARGV_COMMANDS: frozenset[str] = frozenset({
     "java", "javac", "mvn", "gradle",
     "docker", "docker-compose",
     "chromium", "chromium-browser", "thunar", "xfce4-terminal", "xdg-open", "mousepad",
-    "lightpanda",
 })
 
 
@@ -589,7 +588,6 @@ class PolicyEngine:
         "data.csv_read", "document.read",
         "email.read",
         "browser.navigate", "browser.dump", "browser.screenshot", "browser.extract",
-        "app.launch",
     })
     CHANGE: frozenset[str] = frozenset({
         "package.install", "service.start", "service.restart",
@@ -1731,31 +1729,6 @@ class ToolExecutor:
             raise ValueError("'id' is required for browser.type")
         return self._run_cdp("type", id=int(node_id), text=str(text))
 
-    def tool_browser_extract(self, args: dict[str, Any]) -> ToolResult:
-        """Extract clean text/markdown from a web page using Lightpanda engine.
-        Fast, headless, non-rendering, and token-optimized for LLMs.
-        """
-        url = str(args.get("url") or "").strip()
-        if not url:
-            return ToolResult(False, "Missing required argument 'url'", exit_code=1)
-
-        lp_bin = "/usr/local/bin/lightpanda" if os.path.exists("/usr/local/bin/lightpanda") else "lightpanda"
-        try:
-            res = subprocess.run(
-                [lp_bin, "fetch", url, "--dump", "markdown", "--strip-mode", "clutter"],
-                capture_output=True,
-                text=True,
-                timeout=25,
-            )
-            if res.returncode == 0:
-                content = res.stdout.strip()
-                summary = f"Extracted {len(content)} characters of markdown from {url}"
-                return ToolResult(True, summary, stdout=content[:12000], facts=[{"url": url, "chars": len(content)}])
-            else:
-                err_msg = res.stderr.strip() or f"exit code {res.returncode}"
-                return ToolResult(False, f"Lightpanda extraction failed: {err_msg}", exit_code=res.returncode)
-        except Exception as e:
-            return ToolResult(False, f"Lightpanda execution error: {e}", exit_code=1)
 
     def tool_app_launch(self, args: dict[str, Any]) -> ToolResult:
         """Launch a desktop/GUI application in the user's graphical session.
@@ -1788,46 +1761,72 @@ class ToolExecutor:
         except Exception:
             pass
 
+        # BUG-4 FIX: Build argv lists directly — no shell string interpolation of user args.
+        # Each branch uses subprocess.Popen with a real argv list; env vars are passed
+        # through the environment dict rather than interpolated into a shell -c string.
+        launch_argv: list[str] | None = None
         if app in ("browser", "chromium", "web", "chrome"):
             target_url = url or "http://127.0.0.1:8080"
-            cmd = (
-                f"chromium --no-first-run --no-default-browser-check "
-                f"--remote-debugging-port=9222 --remote-allow-origins=* '{target_url}'"
-            )
+            # Validate URL contains no shell-dangerous characters before use
+            if not re.fullmatch(r"https?://[^\s'\";<>&|`$]+", target_url):
+                return ToolResult(False, f"Unsafe URL rejected: {target_url!r}", exit_code=2)
+            launch_argv = [
+                "chromium", "--no-first-run", "--no-default-browser-check",
+                "--remote-debugging-port=9222", "--remote-allow-origins=*",
+                target_url,
+            ]
             app_label = "Chromium Browser"
         elif app in ("file_manager", "files", "thunar", "filemanager"):
-            target_path = f"/home/{target_user}" if (not path or path == "/home/root") else path
-            cmd = f"thunar '{target_path}'"
+            target_path = (
+                f"/home/{target_user}"
+                if (not path or path == "/home/root")
+                else path
+            )
+            # Validate path is an absolute filesystem path
+            if not re.fullmatch(r"/[^\x00]*", target_path):
+                return ToolResult(False, f"Unsafe path rejected: {target_path!r}", exit_code=2)
+            launch_argv = ["thunar", target_path]
             app_label = "Thunar File Manager"
         elif app in ("terminal", "console", "xfce4-terminal", "shell"):
-            cmd = "xfce4-terminal"
+            launch_argv = ["xfce4-terminal"]
             app_label = "XFCE Terminal"
         elif app in ("editor", "text_editor", "mousepad", "edit"):
-            target_path = path or ""
-            cmd = f"mousepad {target_path}".strip()
+            launch_argv = ["mousepad"] + ([path] if path else [])
             app_label = "Mousepad Text Editor"
         elif app in ("dashboard", "sentinel", "control_center"):
-            cmd = "python3 /usr/local/lib/ai-agent/dashboard.py"
+            launch_argv = ["python3", "/usr/local/lib/ai-agent/dashboard.py"]
             app_label = "Sentinel Control Center"
         else:
             bin_path = shutil.which(app)
             if not bin_path:
                 return ToolResult(False, f"Application '{app}' not found on system", exit_code=127)
-            cmd = f"{bin_path} {path}".strip()
+            launch_argv = [bin_path] + ([path] if path else [])
             app_label = app
 
-        env_prefix = f"DISPLAY={display} XAUTHORITY={xauth} "
+        # Build env — no shell interpolation; env is passed as a dict to Popen
+        launch_env = {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "HOME": f"/home/{target_user}",
+            "USER": target_user,
+            "DISPLAY": display,
+            "XAUTHORITY": xauth,
+        }
         if dbus_addr:
-            env_prefix += f"DBUS_SESSION_BUS_ADDRESS='{dbus_addr}' "
-
-        full_shell_cmd = f"su - {target_user} -c \"{env_prefix} nohup {cmd} >/dev/null 2>&1 &\""
+            launch_env["DBUS_SESSION_BUS_ADDRESS"] = dbus_addr
 
         try:
-            subprocess.run(
-                ["sh", "-c", full_shell_cmd],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            # Use su --session-command with a safe argv — not sh -c with a string
+            # su -s /bin/sh -c 'exec "$@"' -- user <argv...> avoids any shell-expansion of args
+            full_argv = (
+                ["su", "-s", "/bin/sh", "-", target_user, "-c",
+                 "exec \"$@\"", "--"] + launch_argv
+            )
+            subprocess.Popen(
+                full_argv,
+                env=launch_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
             time.sleep(0.5)
             return ToolResult(
@@ -1859,6 +1858,20 @@ class ToolExecutor:
                 return ToolResult(True, f"Root window screenshot saved to {path}", stdout=str(path))
         return res
 
+    def tool_browser_extract(self, args: dict[str, Any]) -> ToolResult:
+        """Extract text content from the active browser tab matching a CSS selector.
+
+        args:
+            selector – optional CSS selector (default 'body')
+        """
+        selector = args.get("selector", "body")
+        if not isinstance(selector, str) or not selector.strip():
+            selector = "body"
+        res = self._run_cdp("extract", selector=selector.strip())
+        if res.ok:
+            return ToolResult(True, f"Extracted text matching '{selector}'", stdout=res.stdout)
+        return res
+
 
 ALLOWED_TOOLS = PolicyEngine.READ_ONLY | PolicyEngine.CHANGE
 
@@ -1888,7 +1901,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "dir.remove": {"required": {"path": str}, "optional": {}},
     "dir.query": {"required": {"path": str}, "optional": {}},
     "command.argv": {"required": {"argv": list}, "optional": {"timeout": (int, float), "cwd": str}},
-    "shell.script": {"required": {"script": str}, "optional": {"timeout": (int, float)}},
+    "shell.script": {"required": {"code": str}, "optional": {"timeout": (int, float), "interpreter": str, "cwd": str, "args": list}},
     "http.check": {"required": {"url": str}, "optional": {"timeout": (int, float)}},
     "http.get": {"required": {"url": str}, "optional": {"timeout": (int, float)}},
     "llm.prompt": {"required": {"prompt": str}, "optional": {}},
@@ -1899,8 +1912,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "email.send": {"required": {"to": str, "subject": str, "body": str}, "optional": {}},
     "browser.navigate": {"required": {"url": str}, "optional": {}},
     "browser.dump": {"required": {}, "optional": {}},
-    "browser.extract": {"required": {"url": str}, "optional": {"format": str}},
     "browser.screenshot": {"required": {}, "optional": {"path": str}},
+    "browser.extract": {"required": {}, "optional": {"selector": str}},
     "app.launch": {"required": {"app": str}, "optional": {"url": str, "path": str, "name": str}},
     "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str}},
     "browser.type": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "text": str}},
@@ -2188,6 +2201,8 @@ def plan_prompt(intent: str, inventory: list[dict[str, Any]],
         "  browser.click {id} – click browser element by ID\n"
         "  browser.type {id, text} – type text into browser element\n"
         "  browser.screenshot {path?} – save browser screenshot to PNG\n"
+        "  browser.extract {selector?} – extract text matching CSS selector from active browser tab\n"
+        "  app.launch {app, url?, path?} – launch GUI app (browser, file_manager, terminal, editor)\n"
         "<|im_end|>\n"
         "<|im_start|>user\n"
         f"Intent: {intent}\n"
@@ -2693,32 +2708,24 @@ def deterministic_plan(intent: str, caller: dict[str, Any] | None = None) -> Pla
             criteria.append({"description": "Inbox checked",
                              "tool": "system.info", "args": {}})
 
-    # ── 22b. Web scrape / extract (Lightpanda fast path) ───────────────────
-    if not steps:
-        ex_m = re.search(r"\b(?:scrape|extract|read\s+web\s*page|fetch\s+page|summarize\s+page)\s+(?:from\s+)?(https?://\S+)", text, re.IGNORECASE)
-        if ex_m:
-            url = ex_m.group(1).rstrip(".,;:")
-            steps.append(Step("web-extract", f"Extract page content from {url}",
-                              "browser.extract", {"url": url}, []))
-            criteria.append({"description": f"Extracted content from {url}",
-                             "tool": "system.info", "args": {}})
-
     # ── 23. Browser launch & navigate ──────────────────────────────────────
     if not steps:
         b_nav_m = re.search(
-            r"\b(?:open|navigate\s+to|browse|visit|go\s+to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
+            r"\b(?:navigate\s+to|browse(?:\s+to)?|visit|go\s+to)\s+(https?://[^\s]+)", text, re.IGNORECASE)
         if not b_nav_m:
             b_nav_m = re.search(
-                r"\bopen\s+(?:the\s+)?browser\s*(?:and\s+go\s+to\s+|to\s+|at\s+)?(https?://[^\s]+)", text, re.IGNORECASE)
+                r"\bopen\s+(https?://[^\s]+)(?:\s+in\s+(?:the\s+)?browser)?\b", text, re.IGNORECASE)
         if b_nav_m:
             url = b_nav_m.group(1).rstrip(".,;:")
-            steps.append(Step("browser-launch", f"Launch browser at {url}",
-                              "app.launch", {"app": "browser", "url": url}, []))
-            criteria.append({"description": f"Browser launched at {url}",
+            steps.append(Step("browser-nav", f"Navigate browser to {url}",
+                              "browser.navigate", {"url": url}, []))
+            criteria.append({"description": f"Navigated to {url}",
                              "tool": "system.info", "args": {}})
         elif re.search(r"\b(?:open|launch|start)\s+(?:the\s+)?(?:web\s+)?browser\b", text_lower):
+            b_url_m = re.search(r"(https?://[^\s]+)", text)
+            target_url = b_url_m.group(1).rstrip(".,;:") if b_url_m else "http://127.0.0.1:8080"
             steps.append(Step("browser-launch", "Launch browser",
-                              "app.launch", {"app": "browser", "url": "http://127.0.0.1:8080"}, []))
+                              "app.launch", {"app": "browser", "url": target_url}, []))
             criteria.append({"description": "Browser active on desktop",
                              "tool": "system.info", "args": {}})
 
