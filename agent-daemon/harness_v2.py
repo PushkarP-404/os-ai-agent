@@ -1674,60 +1674,95 @@ class ToolExecutor:
             facts=[{"count": len(messages), "folder": folder}],
         )
 
-    def _run_cdp(self, action: str, **kwargs: Any) -> ToolResult:
-        """Helper to invoke CDP controller via subprocess."""
+    def _run_cdp(self, action: str, browser: str = "auto", **kwargs: Any) -> ToolResult:
+        """Helper to invoke CDP controller via subprocess.
+
+        P4 FIX: Accepts an optional 'browser' kwarg ("auto", "chromium", or
+        "lightpanda") and passes it as --browser to cdp_controller.py so that
+        individual plan steps can pin a specific engine when needed.
+        """
         cdp_script = Path(__file__).parent / "cdp_controller.py"
         if not cdp_script.is_file():
             cdp_script = Path("/usr/local/lib/ai-agent/cdp_controller.py")
         if not cdp_script.is_file():
             return ToolResult(False, "cdp_controller.py not found", exit_code=127)
-        argv = [sys.executable, str(cdp_script), action]
+        argv = [sys.executable, str(cdp_script), action, "--browser", browser]
         for k, v in kwargs.items():
             if v is not None:
                 argv.extend([f"--{k}", str(v)])
-        return self._exec(argv, timeout=25)
+        return self._exec(argv, timeout=30)
 
     def tool_browser_navigate(self, args: dict[str, Any]) -> ToolResult:
-        """Navigate the browser to a URL.
+        """Navigate the browser to a URL and wait for the page to fully load.
 
         args:
-            url – HTTP/HTTPS URL
+            url     – HTTP/HTTPS URL
+            browser – optional engine override: "auto" (default), "chromium",
+                      or "lightpanda"
         """
         url = args.get("url", "")
         if not isinstance(url, str) or not re.fullmatch(r"https?://[^\s]+", url):
             raise ValueError("'url' must be a valid http:// or https:// URL")
-        return self._run_cdp("goto", url=url)
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        return self._run_cdp("goto", browser=browser, url=url)
 
     def tool_browser_dump(self, args: dict[str, Any]) -> ToolResult:
         """Extract interactive elements and accessibility tree from active browser tab.
 
-        args: none required
+        args:
+            browser – optional engine override: "auto" (default), "chromium",
+                      or "lightpanda"
         """
-        return self._run_cdp("dump")
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        return self._run_cdp("dump", browser=browser)
 
     def tool_browser_click(self, args: dict[str, Any]) -> ToolResult:
-        """Click an element in the active browser tab by backendNodeId.
+        """Click an element in the active browser tab.
+
+        For Chromium the id is a backendNodeId from Accessibility tree.
+        For Lightpanda the id is the data-elc-id index stamped by browser.dump.
+        Always run browser.dump before browser.click to ensure elements are
+        tagged.
 
         args:
-            id – backendNodeId (integer) from browser.dump
+            id      – element ID from browser.dump
+            browser – optional engine override: "auto" (default), "chromium",
+                      or "lightpanda"
         """
         node_id = args.get("id") if args.get("id") is not None else args.get("node_id")
         if node_id is None:
             raise ValueError("'id' is required for browser.click")
-        return self._run_cdp("click", id=int(node_id))
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        return self._run_cdp("click", browser=browser, id=int(node_id))
 
     def tool_browser_type(self, args: dict[str, Any]) -> ToolResult:
         """Type text into an element in the active browser tab.
 
+        For Chromium the id is a backendNodeId from Accessibility tree.
+        For Lightpanda the id is the data-elc-id index stamped by browser.dump.
+        Always run browser.dump before browser.type to ensure elements are
+        tagged.
+
         args:
-            id   – backendNodeId (integer)
-            text – string to type
+            id      – element ID from browser.dump
+            text    – string to type
+            browser – optional engine override: "auto" (default), "chromium",
+                      or "lightpanda"
         """
         node_id = args.get("id") if args.get("id") is not None else args.get("node_id")
         text    = args.get("text", "")
         if node_id is None:
             raise ValueError("'id' is required for browser.type")
-        return self._run_cdp("type", id=int(node_id), text=str(text))
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        return self._run_cdp("type", browser=browser, id=int(node_id), text=str(text))
 
 
     def tool_app_launch(self, args: dict[str, Any]) -> ToolResult:
@@ -1841,17 +1876,27 @@ class ToolExecutor:
     def tool_browser_screenshot(self, args: dict[str, Any]) -> ToolResult:
         """Capture a screenshot of the active browser tab and save to a file.
 
+        P2 FIX: cdp_controller.py now handles the scrot/import fallback when
+        Lightpanda does not support Page.captureScreenshot. The harness-level
+        import fallback is kept as a last-resort safety net.
+
         args:
-            path – target output path (default /tmp/browser_screenshot.png)
+            path    – target output path (default /tmp/browser_screenshot.png)
+            browser – optional engine override: "auto" (default), "chromium",
+                      or "lightpanda"
         """
         raw_path = args.get("path", "/tmp/browser_screenshot.png")
         if not isinstance(raw_path, str) or not raw_path.strip():
             raw_path = "/tmp/browser_screenshot.png"
         path = Path(raw_path).resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
-        res = self._run_cdp("screenshot", path=str(path))
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        res = self._run_cdp("screenshot", browser=browser, path=str(path))
         if res.ok and path.is_file():
             return ToolResult(True, f"Browser screenshot saved to {path}", stdout=str(path))
+        # Last-resort harness-level fallback (cdp_controller handles scrot/import first)
         if shutil.which("import"):
             fb = self._exec(["import", "-window", "root", str(path)])
             if fb.ok:
@@ -1863,11 +1908,16 @@ class ToolExecutor:
 
         args:
             selector – optional CSS selector (default 'body')
+            browser  – optional engine override: "auto" (default), "chromium",
+                       or "lightpanda"
         """
         selector = args.get("selector", "body")
         if not isinstance(selector, str) or not selector.strip():
             selector = "body"
-        res = self._run_cdp("extract", selector=selector.strip())
+        browser = str(args.get("browser") or "auto").lower()
+        if browser not in ("auto", "chromium", "lightpanda"):
+            browser = "auto"
+        res = self._run_cdp("extract", browser=browser, selector=selector.strip())
         if res.ok:
             return ToolResult(True, f"Extracted text matching '{selector}'", stdout=res.stdout)
         return res
@@ -1910,13 +1960,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "document.read": {"required": {"path": str}, "optional": {"max_chars": int}},
     "email.read": {"required": {}, "optional": {"folder": str, "max_messages": int}},
     "email.send": {"required": {"to": str, "subject": str, "body": str}, "optional": {}},
-    "browser.navigate": {"required": {"url": str}, "optional": {}},
-    "browser.dump": {"required": {}, "optional": {}},
-    "browser.screenshot": {"required": {}, "optional": {"path": str}},
-    "browser.extract": {"required": {}, "optional": {"selector": str}},
+    "browser.navigate": {"required": {"url": str}, "optional": {"browser": str}},
+    "browser.dump": {"required": {}, "optional": {"browser": str}},
+    "browser.screenshot": {"required": {}, "optional": {"path": str, "browser": str}},
+    "browser.extract": {"required": {}, "optional": {"selector": str, "browser": str}},
     "app.launch": {"required": {"app": str}, "optional": {"url": str, "path": str, "name": str}},
-    "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str}},
-    "browser.type": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "text": str}},
+    "browser.click": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "browser": str}},
+    "browser.type": {"required": {}, "optional": {"id": (int, str), "node_id": (int, str), "selector": str, "text": str, "browser": str}},
 }
 
 
