@@ -32,7 +32,13 @@ LLAMA_CLI_BIN="/usr/local/bin/llama-cli"
 MODEL_PATH="/var/lib/ai-agent/models/smollm2-135m-instruct-q4_k_m.gguf"
 AGENT_SCRIPT="/usr/local/lib/ai-agent/agent_daemon.py"
 DATASET_PATH="/var/ai-agent/training_data/dataset.jsonl"
-TEST_SYSCALL_BIN="$SCRIPT_DIR/test-programs/test_syscall"
+if [ -f "$SCRIPT_DIR/test_syscall" ]; then
+    TEST_SYSCALL_BIN="$SCRIPT_DIR/test_syscall"
+elif [ -f "$SCRIPT_DIR/test-programs/test_syscall" ]; then
+    TEST_SYSCALL_BIN="$SCRIPT_DIR/test-programs/test_syscall"
+else
+    TEST_SYSCALL_BIN="$SCRIPT_DIR/test_syscall"
+fi
 
 echo "=================================================="
 echo "    Elenchus: Boot Validation Harness  "
