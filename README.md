@@ -427,12 +427,12 @@ The OS appliance includes a graphical desktop environment (XFCE4 + LightDM) with
 
 The entire OS stack (kernel, syscall, daemon, inference server, harness stabilization, and automation engine) is continuously verified across three comprehensive test suites:
 
-### 1. Boot & Kernel Integration Suite (`test_phase6_boot.sh`)
+### 1. Boot & Kernel Integration Suite (`test-programs/test_phase6_boot.sh`)
 
 Validates low-level kernel hooks, sys_agent_query #548, Netlink IPC, OpenRC services, and inference server health:
 
 ```bash
-/root/os-ai-agent/test_phase6_boot.sh
+/root/os-ai-agent/test-programs/test_phase6_boot.sh
 ```
 
 ```
@@ -631,13 +631,15 @@ os-ai-agent/
 ├── ptrace-monitor/                  # Phase 1 Userspace Monitor
 │   └── monitor.c                    # ptrace-based syscall interceptor
 ├── packaging/                       # Native Alpine APK package definitions
-├── test-programs/                   # Syscall Validation Programs
+├── test-programs/                   # Syscall & Integration Validation Programs
 │   ├── test_syscall.c               # Single-process & edge-case test
-│   └── test_syscall_stress.c        # Multi-threaded concurrent stress test
+│   ├── test_syscall_stress.c        # Multi-threaded concurrent stress test
+│   └── test_phase6_boot.sh          # Boot & appliance validation harness
+├── docs/                            # Deep architecture, test reports & technical specifications
 ├── boot.ps1                         # Windows PowerShell one-command boot launcher
 ├── boot.sh                          # Linux / macOS Bash one-command boot launcher
-├── test_phase6_boot.sh              # Boot validation harness
 ├── AI_Agent_OS_Technical_Documentation.md # Exhaustive technical architecture & reference
+├── ARCHITECTURE_AND_CONTRIBUTING.md # Contribution guide and governance
 └── README.md
 ```
 

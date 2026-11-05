@@ -1,0 +1,447 @@
+list of high-level prompt examples, grouped by category. These are the kinds of jobs the OS can automate when it can:
+
+• read files and folders,
+
+• launch apps,
+
+• access the browser,
+
+• manipulate documents,
+
+• run shell commands,
+
+• trigger coding assistants like Cursor / Claude Code / Copilot / Codex,
+
+• interact with email, calendar, chat, Git, and local systems.
+
+1. Everyday productivity and office work
+
+• “Draft and send a polite email to the vendor asking for a revised invoice and attach the latest invoice PDF.”
+
+• “Open the July expense spreadsheet, calculate total travel expenses, and summarize them in a short report.”
+
+• “Create a meeting invite for tomorrow at 3 PM with the design and engineering leads, include agenda, and send it to all attendees.”
+
+• “Take the notes from this meeting transcript and turn them into action items with owners and deadlines.”
+
+• “Prepare a one-page summary of this client proposal and save it as a PDF.”
+
+• “Compare the two versions of this document and produce a clean merged version.”
+
+• “Find the latest draft of the Q4 roadmap, update the milestones, and save it as a new revision.”
+
+• “Open the document, fix grammar, tighten the executive summary, and export a final version.”
+
+• “Create a weekly status update email from my task list and send it to my team.”
+
+• “Generate a meeting recap and email it to all attendees with decisions and follow-ups.”
+
+• “Take this slide deck, remove duplicate content, and rewrite the intro slide.”
+
+• “Find all documents mentioning the Figma handoff and compile them into one folder summary.”
+
+• “Scan my files for invoices from the last 30 days and summarize them by vendor.”
+
+2. Document editing and Office automation
+
+• “Open the Word document, update the title page, replace the client name with Acme Corp, and save a new copy.”
+
+• “Edit the DOCX file to update the pricing table, keep the formatting, and add a final paragraph summarizing the recommendation.”
+
+• “Create a polished proposal document from this rough outline and keep it in formal business tone.”
+
+• “Use the latest product metrics to update the sales deck and replace all outdated numbers.”
+
+• “Convert this report into a cleaner executive summary format in a new document.”
+
+• “Merge the two versions of the contract into one final document with tracked changes removed.”
+
+• “Find every occurrence of ‘Q2’ in this doc and replace it with ‘Q3’ only in the pricing section.”
+
+• “Insert a table of contents, update headings, and format the document consistently.”
+
+• “Open the spreadsheet, sort by revenue, highlight underperforming regions, and save a chart image.”
+
+• “Create a one-page handout from this long report with key bullets and a summary.”
+
+• “Take this draft letter, reformat it as a formal client email, and attach the PDF version.”
+
+• “Add footnotes, update citations, and format references in APA style.”
+
+• “Create a .docx file containing a project proposal, timeline, budget table, and risks section.”
+
+3. Email, communication, and contact workflows
+
+• “Draft and send an email to my client thanking them for the meeting and attaching the updated proposal.”
+
+• “Write a follow-up email to the recruiter, mention my experience in backend systems and AI tooling, and ask for a call.”
+
+• “Compose a short email to my team explaining the deployment delay and include the updated ETA.”
+
+• “Check my inbox for emails from the hiring manager, summarize them, and draft replies.”
+
+• “Send a reminder to everyone who has not responded to the project status thread.”
+
+• “Create a personalized outreach email to 20 leads in this list and send them one by one.”
+
+• “Draft a polite rejection email to a candidate and save it in drafts.”
+
+• “Email the meeting notes and action items to the project stakeholders.”
+
+• “Find unread vendor emails and summarize the key requests in a table.”
+
+• “Send a professional follow-up after the demo with a recap of key points and next steps.”
+
+• “Forward the latest security update to the engineering team with a brief summary.”
+
+• “Write a concise customer support response for a billing inquiry and attach the final invoice.”
+
+• “Email the latest roadmap update to leadership with bullet points and key risks.”
+
+4. Browser and web automation
+
+• “Open the vendor portal, log in, upload the signed document, and confirm the upload succeeded.”
+
+• “Go to the supplier website, search for the latest price list, compare it with last quarter’s pricing, and summarize deltas.”
+
+• “Open the customer support dashboard, find the top five unresolved tickets, and compile a summary.”
+
+• “Book a flight for next Thursday to Seattle under a $500 budget and save the confirmation.”
+
+• “Open all job postings matching this keyword list, extract the job titles and closing dates, and compile a shortlist.”
+
+• “Log into the analytics dashboard, export the weekly report, and save it to my downloads folder.”
+
+• “Use the browser to fill out this web form with my contact details and submit it.”
+
+• “Check the product website for price changes and compare against my previous notes.”
+
+• “Open the QA form, submit the status update, and attach the signed report.”
+
+• “Go to the local portal, download the latest invoices, rename them, and save them to the finance folder.”
+
+• “Open the help center article and summarize the steps needed to configure the feature.”
+
+• “Queue up all requested product pages in the browser and capture screenshots for a review.”
+
+• “Search the web for 10 competitors, extract pricing and feature summaries, and create a comparison table.”
+
+5. Files, folders, and local organization
+
+• “Create a clean project folder structure for this new client and organize all files by phase.”
+
+• “Rename all downloaded PDFs in this folder to include the vendor name and date.”
+
+• “Move all screenshots from the desktop into a Screenshots folder and sort them by date.”
+
+• “Find duplicate files in this folder and delete the oldest copies.”
+
+• “Compress the project backup folder into a ZIP and save it in the archive directory.”
+
+• “Create a backup of my notes and save it to an external drive path.”
+
+• “Organize all files in the research folder by document type and year.”
+
+• “Batch rename these images to match the product naming convention.”
+
+• “Find all .csv files from the last 7 days and consolidate them into one master spreadsheet.”
+
+• “Extract all PDFs from this folder, rename them with the correct date, and move them to a final archive.”
+
+• “Create a folder hierarchy for the product launch with directories for design, marketing, legal, and engineering.”
+
+• “Scan my workspace for large unused files and suggest which ones to delete.”
+
+• “Move all archived work items to a separate folder and keep the current items in the main project.”
+
+6. Coding and software development tasks
+
+• “Open the repo in Cursor and add a login page with validation and error messages.”
+
+• “Use Claude Code in this project to fix the failing unit test and explain the root cause.”
+
+• “Have Cursor refactor this Python service into smaller modules and keep the public API unchanged.”
+
+• “Ask the coding agent to find every TODO in this repo and summarize the remaining work.”
+
+• “Open VS Code/Cursor on the backend repo, write a fix for the null pointer bug in the auth flow, and run the relevant tests.”
+
+• “Use the coding assistant to add CI linting, update pre-commit hooks, and explain the config changes.”
+
+• “Ask the engineering assistant to review the PR diff and suggest improvements.”
+
+• “Open this repo, identify the performance bottleneck in the database query, and propose a fix.”
+
+• “Run the local unit tests, fix the failing ones, and summarize the patch.”
+
+• “Use a coding assistant to create a CLI tool that converts CSV to JSON with validation.”
+
+• “Update the README, add setup instructions, and create a sample config file.”
+
+• “Open the coding workspace, add unit tests for edge cases, and patch the bug.”
+
+• “Refactor the application into a clean layered architecture without changing behavior.”
+
+• “Create a migration script for the database schema and validate it against the test dataset.”
+
+• “Ask the coding assistant to write a migration guide for this repo and save it in docs/.”
+
+7. Coding assistant delegation examples
+
+• “Use Cursor to open this project, identify the failing test, patch it, and summarize the change.”
+
+• “Run Claude Code in the repo root, implement the feature described in this issue, and commit the result.”
+
+• “Ask GitHub Copilot/Cursor to generate the backend API for these endpoints and write tests.”
+
+• “Use the coding assistant to create a Dockerfile, a CI pipeline, and a basic health check endpoint.”
+
+• “Open the project in Cursor, build a dashboard screen matching this mockup, and keep the code clean and well-named.”
+
+• “Have the coding assistant review the API for security issues and patch any weak validation.”
+
+• “Use Claude Code to create a bugfix PR branch, implement the fix, run the tests, and summarize the result.”
+
+• “Ask the coding agent to update this monorepo to use the new environment variable pattern.”
+
+• “Give Cursor the requirements and have it generate a small full-stack app skeleton with model, view, and API layers.”
+
+• “Use the coding agent to implement a simple CLI for file conversion and add a README example.”
+
+• “Task the coding assistant with refactoring the data access layer to remove duplicate logic.”
+
+• “Open the project and ask the agent to create a release checklist and update the changelog.”
+
+8. Research, summaries, and document synthesis
+
+• “Read all PDFs in this folder, summarize the key findings, and create a one-page conclusion.”
+
+• “Find the last 3 product strategy memos and synthesize their common themes.”
+
+• “Scan the research notes and create a brief competitor analysis with opportunities and risks.”
+
+• “Compile all documentation into one searchable summary and highlight open questions.”
+
+• “Read these technical docs and produce a summary for non-technical leadership.”
+
+• “Find updates across three support tickets and create a merged status report.”
+
+• “Pull together all release notes for the last quarter and summarize the trends.”
+
+• “Generate a literature review summary from the PDF folder and save it as a markdown file.”
+
+• “Read the design spec and produce a list of unimplemented requirements and risks.”
+
+• “Summarize the knowledge base articles relevant to this bug.”
+
+• “Compile the notes from multiple branches into a single project brief.”
+
+• “Read the customer feedback CSV and summarize recurring complaints.”
+
+9. Data analysis and reporting
+
+• “Open the dataset, remove invalid rows, compute monthly totals, and write a summary report.”
+
+• “Use the CSV to generate charts for revenue, churn, and product usage and save them as PNGs.”
+
+• “Analyze the customer support data and identify top failure areas by category.”
+
+• “Create a summary report from this sales export and highlight the top 10 accounts.”
+
+• “Clean the spreadsheet, fill missing values, and generate a final analysis with charts.”
+
+• “Look through this log file and summarize the most frequent errors and probable causes.”
+
+• “Build a dashboard from this folder of CSV files and export a report to PDF.”
+
+• “Find anomalies in the operational logs and group them by time and severity.”
+
+• “Use the billing export to identify late payments and summarize them by customer.”
+
+• “Take this raw table and produce a polished analysis with a short narrative and recommendations.”
+
+10. Local system and admin tasks
+
+• “Check if the disk is almost full, clean temporary logs, and summarize which folders are using the most space.”
+
+• “Start the local dev server, verify it is healthy, and open the app in the browser.”
+
+• “Restart the agent daemon and confirm the service is back to healthy status.”
+
+• “Update the repo package manager config, install the missing dependency, and verify the app runs.”
+
+• “Check the device logs for the last 24 hours, summarize failures, and suggest likely fixes.”
+
+• “Create a local backup of the project and restore it to a previous snapshot if the next step fails.”
+
+• “Review the current environment, identify installed tools, and suggest improvements for the dev setup.”
+
+• “Set up a local monitoring script to alert on CPU spikes and save logs to a file.”
+
+• “Install the required toolchain for this project, then verify the build runs successfully.”
+
+• “Create a safe staging environment for the new version and run smoke tests.”
+
+• “Check if all required environment variables are set, fix missing ones, and confirm the app boots.”
+
+11. Communication and outreach tasks
+
+• “Draft a follow-up message to our customers with a summary of the fix and the release timeline.”
+
+• “Write a LinkedIn post announcing the launch and generate hashtags and a CTA.”
+
+• “Create a short blog draft from this release notes document.”
+
+• “Turn this sales transcript into a polished case study.”
+
+• “Draft a customer thank-you email with the meeting summary and next steps.”
+
+• “Prepare a short investor update based on this project status report.”
+
+• “Create a call script for onboarding new customers.”
+
+• “Generate an internal announcement for the new AI workflow rollout.”
+
+• “Write a product launch email sequence with subject lines and body copy.”
+
+• “Prepare a testimonial request email for early customers.”
+
+12. Personal/assistant style tasks
+
+• “Find my most recent project notes and organize them by current workstream.”
+
+• “Create a daily to-do list from my emails, tasks, and project notes.”
+
+• “Summarize my calendar for this week and suggest the best slots for a 30-minute deep work block.”
+
+• “Review my work folder and suggest what I should prioritize today.”
+
+• “Generate a daily brief from my available files, chat history, and task list.”
+
+• “Draft a weekly recap email with wins, blockers, and next actions.”
+
+• “Create a checklist for launching a new AI project from scratch.”
+
+• “Turn my rough notes into a polished project brief with sections: goals, scope, roadmap, risks.”
+
+• “Write a clean personal update to my team about progress and blockers.”
+
+• “Collect all open loops and turn them into a prioritized action registry.”
+
+13. High-risk but powerful actions
+
+• “Open the browser, log in to the admin dashboard, and update the customer settings for this deployment.”
+
+• “Approve the deployment pipeline if all tests pass, then monitor whether the app stays healthy.”
+
+• “Review this production log and isolate which service is failing, then patch and redeploy.”
+
+• “Shut down all non-critical background jobs and restart the critical services.”
+
+• “Lock down the exposed port, create a temporary firewall rule, and alert the admin.”
+
+• “Create a rollback plan for the production release and restore the previous snapshot if health checks fail.”
+
+• “Update the environment configuration for the new release, validate it, and apply with a rollback window.”
+
+• “Patch the bug in the production branch, run a focused test suite, and prepare a release note.”
+
+• “Adopt the new security policy for the system and validate the affected services.”
+
+• “Perform a safe staged deploy: build, smoke test, deploy to staging, then approve production update.”
+
+14. Example prompts for app-to-app orchestration
+
+• “Read the PDF attachment, extract the pricing table, update the spreadsheet, and email the client a summary.”
+
+• “Open the issue tracker, find the tasks matching the current sprint theme, and create a one-page summary for the team.”
+
+• “Take the research notes, create a slide deck, export it to PDF, and email it to the leadership channel.”
+
+• “Draft a contract revision, update the pricing section, save as PDF, and email the signed version.”
+
+• “Open the code repo, patch the bug, run tests, summarize the result, and commit the change.”
+
+• “Create a design brief from the roadmap, export it to a doc, and save it in the project folder.”
+
+• “Create a new issue in the tracker with a description from the bug report and attach the relevant logs.”
+
+• “Search the bug reports for duplicate issues, merge them into a new summary, and send it to engineering.”
+
+• “Take the generated report, add it to the shared drive, and notify the team.”
+
+• “Generate a meeting summary, save it to the document folder, and send it to all attendees.”
+
+15. Prompt patterns the OS agent should support
+
+• “Open X and do Y”
+
+• “Draft/Send/Save/Export/Update/Compare/Convert/Move/Organize/Analyze”
+
+• “Use Cursor/Claude Code/Codex to …”
+
+• “Use the browser to …”
+
+• “Use the document editor to …”
+
+• “Use the spreadsheet to …”
+
+• “Use the email app to …”
+
+• “Fix bug in repo and validate”
+
+• “Summarize and generate report”
+
+• “Create task list and execute smart workflow”
+
+16. Good “agent-level” task classes to support
+
+• Simple workflow task: one app, one action, one outcome
+
+• Multi-step workflow task: cross-app orchestration
+
+• Research task: gather, summarize, structure, and report
+
+• Creative task: write email, doc, design copy, summaries
+
+• Coding task: implement features, tests, fixes
+
+• Administration task: package install, config, tuning, backups
+
+• Security task: monitor, contain, and report
+
+• Compliance task: audit, summarize, export
+
+• Browser task: interact with web apps and forms
+
+• GUI task: click, edit, navigate within the desktop
+
+17. The most valuable prompt classes for your projectThese are the ones that make the OS feel “agentic”:
+
+• “Open the relevant app, do the necessary workflow, and report completion.”
+
+• “Find the data, operate on it, and save the result in the expected format.”
+
+• “Take the task from intent to execution across apps without me needing to click around.”
+
+• “Act on my behalf within the OS in a way that is auditable and safe.”
+
+• “Use the right app/tool for the job, not just a shell command.”
+
+18. A few example “all-in-one” orchestration prompts
+
+• “Open the latest customer note, create a summary, prepare a follow-up email with an updated project plan, save the plan as a DOCX, and send the email.”
+
+• “Review this bug report, open the repo in Cursor, patch the code, run the relevant tests, save a summary report, and create a release note.”
+
+• “Take the product updates from the project tracker, update the roadmap in the document, send a shortlist to leadership, and save a clean PDF.”
+
+• “Look through the PDF attachments, extract the contract amendments, update the relevant spreadsheet, and email the revised version to legal.”
+
+• “Open the browser, find the latest pricing on the supplier portal, compare it to last quarter, update the price sheet, and send the summary to finance.”
+
+• “Create an onboarding checklist from my notes and send it to the team via email and a shared document.”
+
+• “Find the latest design mockup, open the app, create a matching UI component, run the local tests, and summarize the result.”
+
+• “Review the project backlog, open the relevant repo in Cursor, fix the top-priority bug, and prepare a brief update email.”
