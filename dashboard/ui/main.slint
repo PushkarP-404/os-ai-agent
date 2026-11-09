@@ -1,0 +1,183 @@
+// ============================================================
+// main.slint — SentinelDock root component
+// Elenchus OS · Sentinel Control Center (Obsidian Lumina)
+// ============================================================
+import { Theme } from "theme.slint";
+import { DockBar } from "views/dock_bar.slint";
+import { PanelView, NavItem } from "views/panel.slint";
+import { ConsoleView, ConsoleTab, ChatMessage } from "views/console.slint";
+import { IntentMonitor, IntentEvent } from "views/intent_monitor.slint";
+import { LiveLog, LogLine } from "views/live_log.slint";
+import { ModelManager, ModelEntry } from "views/model_manager.slint";
+import { ServiceBadge, ServiceStatus } from "components/service_badge.slint";
+
+// ── Dock state enum ─────────────────────────────────────────
+export enum DockState { Collapsed, Panel, Console }
+
+// ── Root window ─────────────────────────────────────────────
+export component SentinelDock inherits Window {
+    title: "Sentinel Control Center";
+    background: transparent;
+    no-frame: true;
+
+    // Window dimensions track dock state via animation
+    width:  Theme.dock-width;
+    height: state == DockState.Collapsed ? Theme.dock-height-collapsed :
+            state == DockState.Panel     ? Theme.dock-height-panel     :
+            Theme.dock-height-console;
+
+    animate height {
+        duration: Theme.anim-normal;
+        easing:   Theme.ease-dock;
+    }
+
+    // ── Bindable properties (set from Rust) ─────────────────
+    in-out property <DockState>  state:             DockState.Collapsed;
+    in-out property <NavItem>    active-nav:         NavItem.Overview;
+    in-out property <ConsoleTab> active-tab:         ConsoleTab.Chat;
+
+    // Telemetry
+    in property <float>  cpu-usage:    0.0;
+    in property <float>  ram-usage:    0.0;
+    in property <float>  disk-usage:   0.0;
+
+    // Service status
+    in property <ServiceStatus> ai-agent-status:    ServiceStatus.Checking;
+    in property <ServiceStatus> llama-status:       ServiceStatus.Checking;
+    in property <ServiceStatus> lightpanda-status:  ServiceStatus.Checking;
+
+    // Chat
+    in property <[ChatMessage]>  messages:          [];
+    in property <bool>           is-thinking:        false;
+    in property <string>         active-model:       "No model loaded";
+
+    // Model manager
+    in property <[ModelEntry]>   models:             [];
+
+    // Intent monitor
+    in property <[IntentEvent]>  intent-events:      [];
+
+    // Log
+    in property <[LogLine]>      log-lines:          [];
+
+    // ── Callbacks → Rust ─────────────────────────────────────
+    callback send-chat-message(string);
+    callback load-model(string);
+    callback unload-model();
+    callback copy-to-clipboard(string);
+    callback state-changed(DockState);
+    callback nav-changed(NavItem);
+
+    // ── State transition helpers ─────────────────────────────
+    function go-collapsed() {
+        state = DockState.Collapsed;
+        state-changed(DockState.Collapsed);
+    }
+    function go-panel() {
+        state = DockState.Panel;
+        state-changed(DockState.Panel);
+    }
+    function go-console() {
+        state = DockState.Console;
+        state-changed(DockState.Console);
+    }
+
+    // ── Root surface ─────────────────────────────────────────
+    root-rect := Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Theme.glass-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.glass-border;
+        clip: true;
+
+        // Accent top-edge highlight
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: 2px;
+            background: @linear-gradient(90deg, Theme.accent-start, Theme.accent-end);
+        }
+
+        // ── State-switched content ───────────────────────────
+
+        // State 1 — Collapsed dock bar
+        if state == DockState.Collapsed : DockBar {
+            x: 0; y: 0;
+            width: parent.width;
+            cpu-usage: root.cpu-usage;
+            ram-usage: root.ram-usage;
+            ai-agent-status: root.ai-agent-status;
+            llama-status:    root.llama-status;
+            expand-clicked => { go-panel(); }
+        }
+
+        // State 2 — Panel view
+        if state == DockState.Panel : PanelView {
+            x: 0; y: 0;
+            width: parent.width;
+            cpu-usage:          root.cpu-usage;
+            ram-usage:          root.ram-usage;
+            disk-usage:         root.disk-usage;
+            ai-agent-status:    root.ai-agent-status;
+            llama-status:       root.llama-status;
+            lightpanda-status:  root.lightpanda-status;
+            active-model:       root.active-model;
+            active-nav <=> root.active-nav;
+
+            nav-selected(item) => {
+                if item == NavItem.Console {
+                    go-console();
+                }
+                nav-changed(item);
+            }
+            quick-prompt(text) => {
+                go-console();
+                send-chat-message(text);
+            }
+            collapse-clicked => { go-collapsed(); }
+        }
+
+        // State 3 — Full console
+        if state == DockState.Console : VerticalLayout {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height;
+
+            ConsoleView {
+                messages:   root.messages;
+                is-thinking: root.is-thinking;
+                active-tab <=> root.active-tab;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+
+                send-message(text) => { send-chat-message(text); }
+                tab-changed(t)     => { active-tab = t; }
+                copy-to-clipboard(text) => { root.copy-to-clipboard(text); }
+                panel-collapse     => { go-panel(); }
+            }
+
+            // Inline sub-views for non-Chat tabs
+            if active-tab == ConsoleTab.ModelManager : ModelManager {
+                models:        root.models;
+                loaded-model:  root.active-model;
+                vertical-stretch: 1;
+                load-model(p)  => { root.load-model(p); }
+                unload-model   => { root.unload-model(); }
+            }
+
+            if active-tab == ConsoleTab.IntentMonitor : IntentMonitor {
+                events: root.intent-events;
+                vertical-stretch: 1;
+            }
+
+            if active-tab == ConsoleTab.LiveLog : LiveLog {
+                lines: root.log-lines;
+                vertical-stretch: 1;
+            }
+        }
+    }
+}
+
+

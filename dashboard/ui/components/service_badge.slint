@@ -1,0 +1,68 @@
+// ============================================================
+// ServiceBadge — RUNNING / STOPPED / CHECKING status pill
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export enum ServiceStatus { Running, Stopped, Checking }
+
+export component ServiceBadge {
+    in property <string>        label:  "";
+    in property <ServiceStatus> status: ServiceStatus.Checking;
+
+    property <color> pill-color:
+        status == ServiceStatus.Running  ? Theme.ok   :
+        status == ServiceStatus.Stopped  ? Theme.err  : Theme.warn;
+
+    property <string> status-text:
+        status == ServiceStatus.Running  ? "RUN"  :
+        status == ServiceStatus.Stopped  ? "STOP" : "...";
+
+    height: 24px;
+
+    HorizontalLayout {
+        spacing: Theme.sp-2;
+        alignment: center;
+
+        // Status dot
+        Rectangle {
+            width: 7px; height: 7px;
+            border-radius: 4px;
+            background: pill-color;
+            // Pulse animation when checking
+            animate opacity {
+                duration: status == ServiceStatus.Checking ? 800ms : 0ms;
+                iteration-count: status == ServiceStatus.Checking ? -1 : 1;
+                easing: ease-in-out;
+            }
+            opacity: status == ServiceStatus.Checking ? 0.4 : 1.0;
+        }
+
+        Text {
+            text: label;
+            font-size: Theme.text-xs;
+            color: Theme.text-primary;
+            overflow: elide;
+        }
+
+        // Pill tag
+        Rectangle {
+            height: 16px;
+            width: status-label-text.preferred-width + 10px;
+            border-radius: Theme.radius-pill;
+            background: pill-color.with-alpha(0.15);
+            border-width: 1px;
+            border-color: pill-color.with-alpha(0.4);
+
+            status-label-text := Text {
+                x: 5px;
+                text: status-text;
+                font-size: 9px;
+                font-weight: Theme.weight-bold;
+                color: pill-color;
+                letter-spacing: 0.5px;
+            }
+        }
+    }
+}
+
+

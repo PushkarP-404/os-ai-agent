@@ -1,0 +1,228 @@
+// ============================================================
+// PanelView — 320px half-expanded panel (State 2 of 3)
+// Shows: nav sidebar + system health gauges + quick prompt
+// ============================================================
+import { Theme } from "../theme.slint";
+import { MetricGauge } from "../components/metric_gauge.slint";
+import { ServiceBadge, ServiceStatus } from "../components/service_badge.slint";
+
+export enum NavItem {
+    Overview, Console, ModelManager, IntentMonitor, LiveLog
+}
+
+export component PanelView {
+    in property <float>  cpu-usage:  0.0;
+    in property <float>  ram-usage:  0.0;
+    in property <float>  disk-usage: 0.0;
+    in property <ServiceStatus> ai-agent-status: ServiceStatus.Checking;
+    in property <ServiceStatus> llama-status:    ServiceStatus.Checking;
+    in property <ServiceStatus> lightpanda-status: ServiceStatus.Checking;
+    in property <string> active-model: "Loading…";
+
+    in-out property <NavItem> active-nav: NavItem.Overview;
+
+    callback nav-selected(NavItem);
+    callback quick-prompt(string);
+    callback collapse-clicked();
+
+    height: Theme.dock-height-panel;
+
+    HorizontalLayout {
+        // ── Sidebar nav ─────────────────────────────────────
+        sidebar := Rectangle {
+            width: 48px;
+            background: Theme.bg-surface;
+            border-radius: Theme.radius-md;
+
+            VerticalLayout {
+                padding: Theme.sp-2;
+                spacing: Theme.sp-1;
+                alignment: start;
+
+                // Nav icons — text glyphs as stand-ins for SVG icons
+                for item in [
+                    { id: NavItem.Overview, glyph: "⬡", tip: "Overview"       },
+                    { id: NavItem.Console, glyph: "💬", tip: "Console"        },
+                    { id: NavItem.ModelManager, glyph: "🧠", tip: "Model Manager"  },
+                    { id: NavItem.IntentMonitor, glyph: "⚡", tip: "Intent Monitor" },
+                    { id: NavItem.LiveLog, glyph: "📋", tip: "Live Log"       },
+                ] : nav-btn := Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius-sm;
+                    background: active-nav == item.id
+                        ? @linear-gradient(135deg, Theme.accent-start.with-alpha(0.25), Theme.accent-end.with-alpha(0.25))
+                        : transparent;
+                    border-width: active-nav == item.id ? 1px : 0px;
+                    border-color: Theme.accent-start.with-alpha(0.4);
+
+                    animate background { duration: Theme.anim-fast; }
+
+                    Text {
+                        text: item.glyph;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.text-base;
+                        x: 0; y: 0;
+                        width: 48px; height: 36px;
+                    }
+
+                    TouchArea {
+                        clicked => { nav-selected(item.id); }
+                        mouse-cursor: pointer;
+                    }
+                }
+
+                // Spacer
+                Rectangle { vertical-stretch: 1; }
+
+                // Collapse
+                Rectangle {
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg-elevated;
+
+                    Text {
+                        text: "▼";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.text-xs;
+                        color: Theme.text-muted;
+                        x: 0; y: 0;
+                        width: 48px; height: 32px;
+                    }
+
+                    TouchArea {
+                        clicked => { collapse-clicked(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+
+        // ── Main panel content ───────────────────────────────
+        VerticalLayout {
+            padding: Theme.sp-4;
+            spacing: Theme.sp-3;
+
+            // Header
+            HorizontalLayout {
+                alignment: center;
+                spacing: Theme.sp-2;
+
+                Text {
+                    text: "Sentinel";
+                    font-size: Theme.text-md;
+                    font-weight: Theme.weight-bold;
+                    color: Theme.text-primary;
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: active-model;
+                    font-size: Theme.text-xs;
+                    color: Theme.accent-mid;
+                }
+            }
+
+            // ── Metric gauges ────────────────────────────────
+            HorizontalLayout {
+                alignment: center;
+                spacing: Theme.sp-3;
+
+                MetricGauge {
+                    label: "CPU";
+                    value: cpu-usage;
+                }
+                MetricGauge {
+                    label: "RAM";
+                    value: ram-usage;
+                }
+                MetricGauge {
+                    label: "Disk";
+                    value: disk-usage;
+                }
+            }
+
+            // ── Service status ───────────────────────────────
+            Rectangle {
+                background: Theme.bg-elevated;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.glass-border;
+
+                VerticalLayout {
+                    padding: Theme.sp-3;
+                    spacing: Theme.sp-2;
+
+                    Text {
+                        text: "Services";
+                        font-size: Theme.text-xs;
+                        font-weight: Theme.weight-bold;
+                        color: Theme.text-muted;
+                        letter-spacing: 1px;
+                    }
+
+                    ServiceBadge { label: "ai-agent";   status: ai-agent-status; }
+                    ServiceBadge { label: "llama-server"; status: llama-status; }
+                    ServiceBadge { label: "lightpanda";  status: lightpanda-status; }
+                }
+            }
+
+            // ── Quick prompt ─────────────────────────────────
+            quick-row := HorizontalLayout {
+                spacing: Theme.sp-2;
+                alignment: center;
+
+                // Placeholder overlay pattern (TextInput has no placeholder-color)
+                input-wrap := Rectangle {
+                    horizontal-stretch: 1;
+                    height: 24px;
+
+                    input := TextInput {
+                        font-size: Theme.text-sm;
+                        color: Theme.text-primary;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+
+                    Text {
+                        text: "Ask Sentinel anything…";
+                        font-size: Theme.text-sm;
+                        color: Theme.text-faint;
+                        visible: input.text == "";
+                        x: 0; y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    width: 32px; height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: @linear-gradient(135deg, Theme.accent-start, Theme.accent-end);
+
+                    Text {
+                        text: "→";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.text-base;
+                        color: Theme.text-inverse;
+                        x: 0; y: 0;
+                        width: 32px; height: 32px;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            quick-prompt(input.text);
+                            input.text = "";
+                        }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+    }
+}
+
+

@@ -276,3 +276,4 @@ A key weakness of standard AI agents is failing silently or acting on stale stat
 | **CDP Controller** | [`agent-daemon/cdp_controller.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/cdp_controller.py) | Dual-engine browser automation (Lightpanda on 9223, Chromium on 9222) |
 | **Accessibility Dumper**| [`agent-daemon/atspi_dumper.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/atspi_dumper.py) | AT-SPI accessibility inspection for native desktop applications |
 | **Plan Grammar** | [`agent-daemon/plan_grammar.gbnf`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/plan_grammar.gbnf) | GBNF grammar enforcing valid plan JSON output from local LLMs |
+

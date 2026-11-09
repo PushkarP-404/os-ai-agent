@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Sentinel Control Center
+GenericName=System Dashboard
+Comment=Elenchus OS AI Agent Control Center
+Exec=/usr/local/bin/elenchus-dashboard
+Icon=elenchus-dashboard
+Terminal=false
+Categories=System;Monitor;
+StartupNotify=false
+Keywords=ai;agent;monitor;dashboard;sentinel;
+X-GNOME-Autostart-enabled=false
+

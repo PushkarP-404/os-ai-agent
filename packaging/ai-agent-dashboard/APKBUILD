@@ -1,0 +1,55 @@
+# Contributor: Elenchus OS Team
+# Maintainer: Elenchus OS Team <team@elenchus.os>
+pkgname=ai-agent-dashboard
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Elenchus OS Sentinel Control Center — Rust/Slint collapsible dock UI"
+url="https://github.com/pushk/os-ai-agent"
+arch="x86_64 aarch64"
+license="MIT"
+depends="libgcc mesa-gl"
+makedepends="rust cargo musl-dev"
+subpackages="$pkgname-doc"
+source="$pkgname-$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
+
+prepare() {
+    default_prepare
+    # Pre-fetch Cargo deps if mirror available; skip on no-network
+    cargo fetch --manifest-path dashboard/Cargo.toml 2>/dev/null || true
+}
+
+build() {
+    cd "$builddir"
+    cargo build \
+        --manifest-path dashboard/Cargo.toml \
+        --release \
+        --target x86_64-unknown-linux-musl
+}
+
+check() {
+    cd "$builddir"
+    cargo test \
+        --manifest-path dashboard/Cargo.toml \
+        --target x86_64-unknown-linux-musl
+}
+
+package() {
+    # Binary
+    install -Dm755 \
+        "$builddir/dashboard/target/x86_64-unknown-linux-musl/release/elenchus-dashboard" \
+        "$pkgdir/usr/local/bin/elenchus-dashboard"
+
+    # Desktop entry
+    install -Dm644 \
+        "$builddir/dashboard/elenchus-dashboard.desktop" \
+        "$pkgdir/usr/share/applications/elenchus-dashboard.desktop"
+
+    # Optional icon
+    if [ -f "$builddir/dashboard/assets/icon.png" ]; then
+        install -Dm644 \
+            "$builddir/dashboard/assets/icon.png" \
+            "$pkgdir/usr/share/pixmaps/elenchus-dashboard.png"
+    fi
+}
+

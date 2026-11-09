@@ -1,0 +1,49 @@
+// ============================================================
+// InlineBar — compact horizontal progress bar for dock strip
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export component InlineBar {
+    in property <float>  value: 0.0;   // 0.0 – 1.0
+    in property <string> label: "";
+    in property <color>  bar-color: Theme.accent-mid;
+
+    height: 14px;
+
+    HorizontalLayout {
+        spacing: Theme.sp-2;
+        alignment: center;
+
+        Text {
+            text: label;
+            font-size: Theme.text-xs;
+            color: Theme.text-muted;
+            width: 28px;
+        }
+
+        Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.border;
+            clip: true;
+
+            Rectangle {
+                width: parent.width * root.value;
+                height: 4px;
+                border-radius: 2px;
+                background: bar-color;
+                animate width { duration: Theme.anim-normal; easing: ease-out; }
+            }
+        }
+
+        Text {
+            text: Math.round(root.value * 100) + "%";
+            font-size: Theme.text-xs;
+            color: Theme.text-primary;
+            width: 30px;
+            horizontal-alignment: right;
+        }
+    }
+}
+
+

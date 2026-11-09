@@ -1,0 +1,196 @@
+// ============================================================
+// ConsoleView — 580px Full Console (State 3 of 3)
+// Tab strip + markdown-rendered chat + prompt bar
+// ============================================================
+import { Theme } from "../theme.slint";
+import { ChatBubble } from "../components/chat_bubble.slint";
+
+export struct ChatMessage {
+    kind: int,       // maps to BubbleKind: 0=User 1=Agent 2=Thinking 3=Tool 4=Confirm
+    content: string,
+    timestamp: string,
+    streaming: bool,
+}
+
+export enum ConsoleTab { Chat, ModelManager, IntentMonitor, LiveLog }
+
+export component ConsoleView {
+    in property <[ChatMessage]>  messages:    [];
+    in property <string>         prompt-text: "";
+    in-out property <ConsoleTab> active-tab:  ConsoleTab.Chat;
+    in property <bool>           is-thinking: false;
+
+    callback send-message(string);
+    callback tab-changed(ConsoleTab);
+    callback copy-to-clipboard(string);
+    callback panel-collapse();
+
+    height: Theme.dock-height-console;
+
+    VerticalLayout {
+        // ── Tab strip ───────────────────────────────────────
+        tab-bar := Rectangle {
+            height: 36px;
+            background: Theme.bg-surface;
+            border-radius: Theme.radius-md;
+
+            HorizontalLayout {
+                padding-left: Theme.sp-3;
+                padding-right: Theme.sp-3;
+                spacing: 0px;
+                alignment: center;
+
+                for tab in [
+                    { id: ConsoleTab.Chat, label: "Chat" },
+                    { id: ConsoleTab.ModelManager, label: "Models" },
+                    { id: ConsoleTab.IntentMonitor, label: "Intents" },
+                    { id: ConsoleTab.LiveLog, label: "Live Log" },
+                ] : tab-btn := TouchArea {
+                    width: 72px;
+                    clicked => { tab-changed(tab.id); }
+                    mouse-cursor: pointer;
+
+                    Rectangle {
+                        height: 36px;
+                        background: transparent;
+
+                        if active-tab == tab.id : Rectangle {
+                            y: parent.height - 2px;
+                            height: 2px;
+                            background: Theme.accent-mid;
+                        }
+
+                        Text {
+                            text: tab.label;
+                            font-size: Theme.text-xs;
+                            font-weight: active-tab == tab.id
+                                ? Theme.weight-bold
+                                : Theme.weight-regular;
+                            color: active-tab == tab.id
+                                ? Theme.accent-mid
+                                : Theme.text-muted;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            x: 0; y: 0;
+                            width: 72px; height: 36px;
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Collapse button
+                TouchArea {
+                    width: 28px;
+                    clicked => { panel-collapse(); }
+                    mouse-cursor: pointer;
+
+                    Text {
+                        text: "▼";
+                        font-size: Theme.text-xs;
+                        color: Theme.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        x: 0; y: 0;
+                        width: 28px; height: 36px;
+                    }
+                }
+            }
+        }
+
+        // ── Chat message list ────────────────────────────────
+        scroll := Flickable {
+            vertical-stretch: 1;
+            interactive: true;
+
+            VerticalLayout {
+                padding: Theme.sp-3;
+                spacing: Theme.sp-3;
+                alignment: start;
+
+                for msg in messages : ChatBubble {
+                    kind: msg.kind;
+                    content: msg.content;
+                    timestamp: msg.timestamp;
+                    streaming: msg.streaming;
+                }
+
+                // Thinking indicator
+                if is-thinking : Rectangle {
+                    height: 32px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-elevated;
+                    border-width: 1px;
+                    border-color: Theme.warn.with-alpha(0.25);
+
+                    Text {
+                        text: "⟳  Sentinel is thinking…";
+                        font-size: Theme.text-xs;
+                        color: Theme.warn;
+                        font-italic: true;
+                        x: Theme.sp-3; y: 0;
+                        height: 32px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ── Prompt bar ───────────────────────────────────────
+        prompt-area := Rectangle {
+            height: 52px;
+            background: Theme.bg-elevated;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.glass-border;
+
+            HorizontalLayout {
+                spacing: Theme.sp-2;
+                alignment: center;
+                padding: Theme.sp-2;
+                padding-left: Theme.sp-3;
+                padding-right: Theme.sp-3;
+
+                prompt-input := TextInput {
+                    font-size: Theme.text-sm;
+                    color: Theme.text-primary;
+                    horizontal-stretch: 1;
+                    // Send on Enter
+                    accepted => {
+                        send-message(self.text);
+                        self.text = "";
+                    }
+                }
+
+                // Send button
+                send-btn := Rectangle {
+                    width: 36px; height: 36px;
+                    border-radius: Theme.radius-sm;
+                    background: @linear-gradient(135deg, Theme.accent-start, Theme.accent-end);
+
+                    Text {
+                        text: "⏎";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.text-base;
+                        color: Theme.text-inverse;
+                        x: 0; y: 0;
+                        width: 36px; height: 36px;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            send-message(prompt-input.text);
+                            prompt-input.text = "";
+                        }
+                        mouse-cursor: pointer;
+                    }
+
+                    animate background { duration: Theme.anim-fast; }
+                }
+            }
+        }
+    }
+}
+
+
