@@ -9,3 +9,8 @@ htmlcov/
 id_rsa*
 *.qcow2
 *.iso
+
+# Rust / Cargo
+dashboard/target/
+dashboard/.cargo/
+*.pdb

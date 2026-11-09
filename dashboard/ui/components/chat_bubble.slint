@@ -1,0 +1,152 @@
+// ============================================================
+// ChatBubble — renders a single message in the AI console
+// Supports: 0=User, 1=Agent, 2=Thinking, 3=ToolResult, 4=Confirmation
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export component ChatBubble {
+    in property <int>        kind:      0; // 0=User, 1=Agent, 2=Thinking, 3=Tool, 4=Confirm
+    in property <string>     content:   "";
+    in property <string>     timestamp: "";
+    in property <bool>       streaming: false;
+
+    // Bubble style per kind
+    property <color> bubble-bg:
+        kind == 0 ? Theme.accent-start.with-alpha(0.18) :
+        kind == 1 ? Theme.bg-elevated :
+        kind == 2 ? Theme.bg-surface :
+        kind == 3 ? #0f1a0f :
+        Theme.bg-overlay;
+
+    property <color> bubble-border:
+        kind == 0 ? Theme.accent-start.with-alpha(0.35) :
+        kind == 1 ? Theme.glass-border :
+        kind == 2 ? Theme.warn.with-alpha(0.25) :
+        kind == 3 ? Theme.ok.with-alpha(0.25) :
+        Theme.info.with-alpha(0.3);
+
+    property <color> role-color:
+        kind == 0 ? Theme.accent-mid :
+        kind == 1 ? Theme.text-primary :
+        kind == 2 ? Theme.warn :
+        kind == 3 ? Theme.ok :
+        Theme.info;
+
+    property <string> role-label:
+        kind == 0 ? "You" :
+        kind == 1 ? "Sentinel" :
+        kind == 2 ? "⟳ Thinking" :
+        kind == 3 ? "⚙ Tool" :
+        "⚡ Confirm";
+
+    property <bool> is-user: kind == 0;
+
+    // ── User bubble (right-aligned) ───────────────────────────
+    if is-user : HorizontalLayout {
+        alignment: end;
+        padding-left: 48px;
+
+        VerticalLayout {
+            spacing: Theme.sp-1;
+            max-width: 280px;
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: Theme.sp-2;
+
+                Text {
+                    text: timestamp;
+                    font-size: Theme.text-xs;
+                    color: Theme.text-muted;
+                }
+                Text {
+                    text: role-label;
+                    font-size: Theme.text-xs;
+                    font-weight: Theme.weight-bold;
+                    color: role-color;
+                }
+            }
+
+            Rectangle {
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: bubble-border;
+                background: bubble-bg;
+
+                VerticalLayout {
+                    padding: Theme.sp-3;
+                    Text {
+                        text: content;
+                        font-size: Theme.text-sm;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Agent / system bubbles (left-aligned) ─────────────────
+    if !is-user : HorizontalLayout {
+        alignment: start;
+        padding-right: 48px;
+
+        VerticalLayout {
+            spacing: Theme.sp-1;
+            max-width: 280px;
+
+            HorizontalLayout {
+                alignment: start;
+                spacing: Theme.sp-2;
+
+                Text {
+                    text: role-label;
+                    font-size: Theme.text-xs;
+                    font-weight: Theme.weight-bold;
+                    color: role-color;
+                }
+                Text {
+                    text: timestamp;
+                    font-size: Theme.text-xs;
+                    color: Theme.text-muted;
+                }
+            }
+
+            Rectangle {
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: bubble-border;
+                background: bubble-bg;
+
+                VerticalLayout {
+                    padding: Theme.sp-3;
+                    spacing: Theme.sp-2;
+
+                    Text {
+                        text: content;
+                        font-size: Theme.text-sm;
+                        color: kind == 2
+                            ? Theme.text-muted
+                            : Theme.text-primary;
+                        wrap: word-wrap;
+                        font-italic: kind == 2;
+                    }
+
+                    // Streaming cursor blink
+                    if streaming : Rectangle {
+                        width: 8px;
+                        height: 2px;
+                        border-radius: 1px;
+                        background: Theme.accent-mid;
+                        animate opacity {
+                            duration: 600ms;
+                            iteration-count: -1;
+                            easing: ease-in-out;
+                        }
+                        opacity: 0.3;
+                    }
+                }
+            }
+        }
+    }
+}

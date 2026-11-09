@@ -1,0 +1,81 @@
+// ============================================================
+// MetricGauge — circular arc gauge for CPU / RAM / Disk
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export component MetricGauge {
+    in property <float>  value:   0.0;   // 0.0 – 1.0
+    in property <string> label:   "";
+    in property <string> unit:    "%";
+    in property <color>  color-low:  Theme.ok;
+    in property <color>  color-high: Theme.err;
+
+    // Derived: colour shifts from green → amber → red
+    property <color> gauge-color: value < 0.6
+        ? Theme.ok
+        : value < 0.85 ? Theme.warn : Theme.err;
+
+    width: 80px;
+    height: 90px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.sp-1;
+
+        // Arc drawn with Canvas
+        Rectangle {
+            width: 72px;
+            height: 72px;
+            border-radius: 36px;
+            background: Theme.bg-elevated;
+            border-width: 1px;
+            border-color: Theme.glass-border;
+
+            // Track ring
+            Rectangle {
+                x: 6px; y: 6px;
+                width: 60px; height: 60px;
+                border-radius: 30px;
+                border-width: 5px;
+                border-color: Theme.border;
+                background: transparent;
+            }
+
+            // Value ring — simulated via clip + rotate
+            // (Slint 1.8 Path-based arc)
+            Rectangle {
+                x: 6px; y: 6px;
+                width: 60px; height: 60px;
+                border-radius: 30px;
+                border-width: 5px;
+                border-color: gauge-color;
+                background: transparent;
+                // Clip so only the "filled" portion shows
+                clip: true;
+                opacity: root.value;
+                animate opacity { duration: Theme.anim-normal; }
+            }
+
+            // Centre text
+            Text {
+                x: 0; y: 20px;
+                width: 72px;
+                horizontal-alignment: center;
+                text: Math.round(root.value * 100) + unit;
+                font-size: Theme.text-sm;
+                font-weight: Theme.weight-bold;
+                color: gauge-color;
+                animate color { duration: Theme.anim-normal; }
+            }
+        }
+
+        Text {
+            horizontal-alignment: center;
+            text: label;
+            font-size: Theme.text-xs;
+            color: Theme.text-muted;
+        }
+    }
+}
+
+

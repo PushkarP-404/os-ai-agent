@@ -1,0 +1,108 @@
+// ============================================================
+// DockBar — Collapsed 46px strip (State 1 of 3)
+// Shows: logo · CPU bar · RAM bar · service pills · expand btn
+// ============================================================
+import { Theme } from "../theme.slint";
+import { InlineBar } from "../components/inline_bar.slint";
+import { ServiceBadge, ServiceStatus } from "../components/service_badge.slint";
+
+export component DockBar inherits Rectangle {
+    in property <float>  cpu-usage:    0.0;
+    in property <float>  ram-usage:    0.0;
+    in property <ServiceStatus> ai-agent-status:    ServiceStatus.Checking;
+    in property <ServiceStatus> llama-status:       ServiceStatus.Checking;
+
+    callback expand-clicked();
+
+    height: Theme.dock-height-collapsed;
+    background: Theme.glass-bg;
+    border-width: 0px;
+    border-color: transparent;
+    // Top border accent line
+    border-radius: Theme.radius-md;
+
+    HorizontalLayout {
+        padding-left: Theme.sp-4;
+        padding-right: Theme.sp-3;
+        spacing: Theme.sp-4;
+        alignment: center;
+
+        // ── Logo mark ───────────────────────────────────────
+        Rectangle {
+            width: 28px; height: 28px;
+            border-radius: 8px;
+            background: @linear-gradient(135deg, Theme.accent-start, Theme.accent-end);
+
+            Text {
+                text: "E";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-size: Theme.text-md;
+                font-weight: Theme.weight-bold;
+                color: Theme.text-inverse;
+                x: 0; y: 0;
+                width: 28px; height: 28px;
+            }
+        }
+
+        // ── Separator ───────────────────────────────────────
+        Rectangle { width: 1px; height: 24px; background: Theme.glass-border; }
+
+        // ── CPU bar ─────────────────────────────────────────
+        InlineBar {
+            label: "CPU";
+            value: cpu-usage;
+            bar-color: Theme.accent-start;
+            horizontal-stretch: 1;
+        }
+
+        // ── RAM bar ─────────────────────────────────────────
+        InlineBar {
+            label: "RAM";
+            value: ram-usage;
+            bar-color: Theme.accent-end;
+            horizontal-stretch: 1;
+        }
+
+        // ── Separator ───────────────────────────────────────
+        Rectangle { width: 1px; height: 24px; background: Theme.glass-border; }
+
+        // ── Service pills ───────────────────────────────────
+        ServiceBadge {
+            label: "ai-agent";
+            status: ai-agent-status;
+        }
+        ServiceBadge {
+            label: "llama";
+            status: llama-status;
+        }
+
+        // ── Expand button ───────────────────────────────────
+        Rectangle {
+            width: 28px; height: 28px;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg-elevated;
+            border-width: 1px;
+            border-color: Theme.glass-border;
+
+            Text {
+                text: "▲";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-size: Theme.text-xs;
+                color: Theme.text-muted;
+                x: 0; y: 0;
+                width: 28px; height: 28px;
+            }
+
+            TouchArea {
+                clicked => { expand-clicked(); }
+                mouse-cursor: pointer;
+            }
+
+            animate background { duration: Theme.anim-fast; }
+        }
+    }
+}
+
+

@@ -1,0 +1,82 @@
+// ============================================================
+// Obsidian Lumina Design System — Design Tokens
+// Elenchus OS · Sentinel Control Center
+// ============================================================
+
+// ── Surface palette ─────────────────────────────────────────
+export global Theme {
+    // Backgrounds
+    out property <color> bg-root:       #0b0d16;  // deepest base
+    out property <color> bg-surface:    #111422;  // card / panel
+    out property <color> bg-elevated:   #181b2e;  // raised element
+    out property <color> bg-overlay:    #1e2238;  // dropdown / tooltip
+
+    // Accent gradient endpoints
+    out property <color> accent-start:  #6366f1;  // indigo-500
+    out property <color> accent-end:    #8b5cf6;  // violet-500
+    out property <color> accent-mid:    #7c6df0;  // interpolated mid
+
+    // Semantic status
+    out property <color> ok:            #22c55e;  // green-500
+    out property <color> warn:          #f59e0b;  // amber-500
+    out property <color> err:           #ef4444;  // red-500
+    out property <color> info:          #38bdf8;  // sky-400
+
+    // Text
+    out property <color> text-primary:  #e2e8f0;  // slate-200
+    out property <color> text-muted:    #64748b;  // slate-500
+    out property <color> text-faint:    #334155;  // slate-700 (placeholder)
+    out property <color> text-inverse:  #0b0d16;  // on accent buttons
+
+    // Borders
+    out property <color> border:        #1e2238;
+    out property <color> border-accent: #6366f120; // translucent accent
+
+    // Glassmorphism
+    out property <color> glass-bg:      #141828cc; // 80 % opacity panel
+    out property <color> glass-border:  #ffffff12;
+
+    // ── Typography ─────────────────────────────────────────
+    out property <length> text-xs:    10px;
+    out property <length> text-sm:    12px;
+    out property <length> text-base:  13px;
+    out property <length> text-md:    15px;
+    out property <length> text-lg:    18px;
+    out property <length> text-xl:    22px;
+    out property <length> text-2xl:   28px;
+
+    out property <int> weight-regular: 400;
+    out property <int> weight-medium:  500;
+    out property <int> weight-bold:    700;
+
+    // ── Spacing ────────────────────────────────────────────
+    out property <length> sp-1:   4px;
+    out property <length> sp-2:   8px;
+    out property <length> sp-3:  12px;
+    out property <length> sp-4:  16px;
+    out property <length> sp-5:  20px;
+    out property <length> sp-6:  24px;
+    out property <length> sp-8:  32px;
+
+    // ── Radii ──────────────────────────────────────────────
+    out property <length> radius-sm:   6px;
+    out property <length> radius-md:  10px;
+    out property <length> radius-lg:  16px;
+    out property <length> radius-xl:  24px;
+    out property <length> radius-pill: 100px;
+
+    // ── Dock geometry ──────────────────────────────────────
+    out property <length> dock-width-collapsed:  320px;  // visible strip (top)
+    out property <length> dock-height-collapsed:  46px;
+    out property <length> dock-height-panel:     320px;
+    out property <length> dock-height-console:   580px;
+    out property <length> dock-width:            320px;
+
+    // ── Animation ─────────────────────────────────────────
+    out property <duration> anim-fast:   150ms;
+    out property <duration> anim-normal: 250ms;
+    out property <duration> anim-slow:   400ms;
+    out property <easing>   ease-dock:   ease-in-out;
+}
+
+

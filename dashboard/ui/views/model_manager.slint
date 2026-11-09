@@ -1,0 +1,172 @@
+// ============================================================
+// ModelManager — GGUF model switcher view
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export struct ModelEntry {
+    name: string,
+    path: string,
+    size-gb: string,
+    active: bool,
+}
+
+export component ModelManager {
+    in property <[ModelEntry]> models: [];
+    in property <string>       loaded-model: "";
+
+    callback load-model(string);    // path
+    callback unload-model();
+
+    VerticalLayout {
+        padding: Theme.sp-4;
+        spacing: Theme.sp-3;
+
+        Text {
+            text: "Model Manager";
+            font-size: Theme.text-md;
+            font-weight: Theme.weight-bold;
+            color: Theme.text-primary;
+        }
+
+        // Active model card
+        Rectangle {
+            background: @linear-gradient(135deg,
+                Theme.accent-start.with-alpha(0.12),
+                Theme.accent-end.with-alpha(0.12));
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.accent-start.with-alpha(0.35);
+            height: 56px;
+
+            HorizontalLayout {
+                padding: Theme.sp-3;
+                alignment: center;
+                spacing: Theme.sp-3;
+
+                Rectangle {
+                    width: 8px; height: 8px;
+                    border-radius: 4px;
+                    background: Theme.ok;
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "Active model";
+                        font-size: Theme.text-xs;
+                        color: Theme.text-muted;
+                    }
+                    Text {
+                        text: loaded-model == "" ? "None" : loaded-model;
+                        font-size: Theme.text-sm;
+                        font-weight: Theme.weight-bold;
+                        color: Theme.text-primary;
+                        overflow: elide;
+                    }
+                }
+
+                // Unload button
+                Rectangle {
+                    width: 64px; height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.err.with-alpha(0.15);
+                    border-width: 1px;
+                    border-color: Theme.err.with-alpha(0.4);
+
+                    Text {
+                        text: "Unload";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        font-size: Theme.text-xs;
+                        color: Theme.err;
+                        x: 0; y: 0;
+                        width: 64px; height: 28px;
+                    }
+
+                    TouchArea {
+                        clicked => { unload-model(); }
+                        mouse-cursor: pointer;
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: "Available Models";
+            font-size: Theme.text-xs;
+            font-weight: Theme.weight-bold;
+            color: Theme.text-muted;
+            letter-spacing: 1px;
+        }
+
+        // Model list
+        Flickable {
+            vertical-stretch: 1;
+            interactive: true;
+
+            VerticalLayout {
+                spacing: Theme.sp-2;
+
+                for m in models : model-row := Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-md;
+                    background: m.active
+                        ? Theme.accent-start.with-alpha(0.1)
+                        : Theme.bg-elevated;
+                    border-width: 1px;
+                    border-color: m.active
+                        ? Theme.accent-start.with-alpha(0.35)
+                        : Theme.glass-border;
+
+                    HorizontalLayout {
+                        padding: Theme.sp-3;
+                        alignment: center;
+                        spacing: Theme.sp-3;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+
+                            Text {
+                                text: m.name;
+                                font-size: Theme.text-sm;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-primary;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: m.size-gb + " GB";
+                                font-size: Theme.text-xs;
+                                color: Theme.text-muted;
+                            }
+                        }
+
+                        if !m.active : Rectangle {
+                            width: 56px; height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background: @linear-gradient(135deg,
+                                Theme.accent-start, Theme.accent-end);
+
+                            Text {
+                                text: "Load";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: Theme.text-xs;
+                                font-weight: Theme.weight-bold;
+                                color: Theme.text-inverse;
+                                x: 0; y: 0;
+                                width: 56px; height: 28px;
+                            }
+
+                            TouchArea {
+                                clicked => { load-model(m.path); }
+                                mouse-cursor: pointer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+

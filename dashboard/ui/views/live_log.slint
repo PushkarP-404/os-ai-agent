@@ -1,0 +1,102 @@
+// ============================================================
+// LiveLog — Scrollable log stream with ANSI-colour simulation
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export struct LogLine {
+    timestamp: string,
+    level: string,   // "INFO" | "WARN" | "ERROR" | "DEBUG"
+    source: string,
+    message: string,
+}
+
+export component LiveLog {
+    in property <[LogLine]> lines: [];
+
+    VerticalLayout {
+        padding: Theme.sp-4;
+        spacing: Theme.sp-3;
+
+        // Header
+        HorizontalLayout {
+            alignment: center;
+
+            Text {
+                text: "Live System Log";
+                font-size: Theme.text-md;
+                font-weight: Theme.weight-bold;
+                color: Theme.text-primary;
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: lines.length + " lines";
+                font-size: Theme.text-xs;
+                color: Theme.text-muted;
+            }
+        }
+
+        // Log area
+        Rectangle {
+            vertical-stretch: 1;
+            background: #060810;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.glass-border;
+            clip: true;
+
+            Flickable {
+                interactive: true;
+                width: parent.width;
+                height: parent.height;
+
+                VerticalLayout {
+                    padding: Theme.sp-3;
+                    spacing: 0px;
+                    alignment: end;  // pin to bottom (newest at bottom)
+
+                    for line in lines : HorizontalLayout {
+                        height: 18px;
+                        spacing: Theme.sp-2;
+
+                        Text {
+                            text: line.timestamp;
+                            font-size: Theme.text-xs;
+                            color: Theme.text-faint;
+                            width: 70px;
+                        }
+
+                        Text {
+                            text: line.level;
+                            font-size: Theme.text-xs;
+                            font-weight: Theme.weight-bold;
+                            color: line.level == "ERROR" ? Theme.err  :
+                                   line.level == "WARN"  ? Theme.warn :
+                                   line.level == "DEBUG" ? Theme.text-muted :
+                                   Theme.ok;
+                            width: 40px;
+                        }
+
+                        Text {
+                            text: line.source;
+                            font-size: Theme.text-xs;
+                            color: Theme.accent-mid;
+                            width: 70px;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: line.message;
+                            font-size: Theme.text-xs;
+                            color: Theme.text-primary;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+

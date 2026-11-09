@@ -1,0 +1,128 @@
+// ============================================================
+// IntentMonitor — Live Intent Bus event table
+// ============================================================
+import { Theme } from "../theme.slint";
+
+export struct IntentEvent {
+    timestamp: string,
+    action: string,
+    source: string,
+    target: string,
+    status: string,
+}
+
+export component IntentMonitor {
+    in property <[IntentEvent]> events: [];
+
+    VerticalLayout {
+        padding: Theme.sp-4;
+        spacing: Theme.sp-3;
+
+        // Header
+        Text {
+            text: "Intent Bus Monitor";
+            font-size: Theme.text-md;
+            font-weight: Theme.weight-bold;
+            color: Theme.text-primary;
+        }
+
+        // Column headers
+        Rectangle {
+            height: 24px;
+            background: Theme.bg-surface;
+            border-radius: Theme.radius-sm;
+
+            HorizontalLayout {
+                padding-left: Theme.sp-2;
+                padding-right: Theme.sp-2;
+                alignment: center;
+                spacing: 0px;
+
+                for col in ["Time", "Action", "From", "To", "Status"] : Text {
+                    text: col;
+                    font-size: Theme.text-xs;
+                    font-weight: Theme.weight-bold;
+                    color: Theme.text-muted;
+                    letter-spacing: 0.5px;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // Event rows
+        Flickable {
+            vertical-stretch: 1;
+            interactive: true;
+
+            VerticalLayout {
+                spacing: 2px;
+
+                for ev in events : Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg-surface;
+
+                    HorizontalLayout {
+                        padding-left: Theme.sp-2;
+                        padding-right: Theme.sp-2;
+                        alignment: center;
+                        spacing: 0px;
+
+                        Text {
+                            text: ev.timestamp;
+                            font-size: Theme.text-xs;
+                            color: Theme.text-muted;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: ev.action;
+                            font-size: Theme.text-xs;
+                            color: Theme.accent-mid;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: ev.source;
+                            font-size: Theme.text-xs;
+                            color: Theme.text-primary;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: ev.target;
+                            font-size: Theme.text-xs;
+                            color: Theme.text-primary;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+
+                        // Status pill
+                        Rectangle {
+                            height: 16px;
+                            width: status-t.preferred-width + 10px;
+                            border-radius: Theme.radius-pill;
+                            background: ev.status == "ok"
+                                ? Theme.ok.with-alpha(0.15)
+                                : Theme.err.with-alpha(0.15);
+                            border-width: 1px;
+                            border-color: ev.status == "ok"
+                                ? Theme.ok.with-alpha(0.4)
+                                : Theme.err.with-alpha(0.4);
+
+                            status-t := Text {
+                                x: 5px;
+                                text: ev.status;
+                                font-size: 9px;
+                                font-weight: Theme.weight-bold;
+                                color: ev.status == "ok" ? Theme.ok : Theme.err;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
