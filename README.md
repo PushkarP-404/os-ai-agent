@@ -401,6 +401,27 @@ GUI=1 ./boot.sh
 ./boot.sh
 ```
 
+**Bootable Live ISO (Bare Metal / USB / QEMU CD-ROM):**
+
+Generate the hybrid BIOS + UEFI Live ISO (`elenchus-os-v0.1-x86_64.iso`, ~1.5 GB `zstd`-compressed `squashfs` + `overlayfs`) from `ai-agent-os-v0.1.qcow2`:
+
+```powershell
+# Windows (runs via WSL2 Ubuntu)
+powershell -ExecutionPolicy Bypass -File packaging\build_iso.ps1
+```
+
+```bash
+# Linux (as root)
+sudo ./packaging/build_iso.sh
+```
+
+```powershell
+# Boot-test the Live ISO in QEMU (BIOS CD-ROM, no hard disk attached)
+qemu-system-x86_64 -m 4G -smp 4 -cdrom ..\elenchus-os-v0.1-x86_64.iso -boot d -vga virtio -display sdl -device virtio-tablet-pci -netdev user,id=n1,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n1
+```
+
+For bare-metal testing, flash `elenchus-os-v0.1-x86_64.iso` to a USB drive (`dd bs=4M status=progress`, Rufus in **DD Image mode**, or Ventoy) and boot in BIOS or UEFI mode (disable Secure Boot if unsigned).
+
 The system automatically initializes:
 
 1. Direct Syslinux kernel boot: `Linux 6.6.142-ai-agent`.
@@ -608,14 +629,16 @@ int main(void) {
 The system components are modularized into Alpine Linux APK packages:
 
 ```
-packaging/
-├── ai-agent-daemon/                 # Daemon, Harness v2.3, Automation Engine, OpenRC
-├── ai-agent-dashboard/              # Rust/Slint Sentinel Control Center APKBUILD
-├── ai-agent-kernel-modules/         # Out-of-tree LKM hooks
-├── ai-agent-model-lora/             # Fine-tuned GGUF planner adapter
-├── llama-server-musl/               # Static musl llama.cpp binaries
-├── build_all.sh                     # Compiles packages via abuild
-└── sync_repo.py                     # Syncs packages and index to guest VM
+├── packaging/
+│   ├── ai-agent-daemon/                 # Daemon, Harness v2.3, Automation Engine, OpenRC
+│   ├── ai-agent-dashboard/              # Rust/Slint Sentinel Control Center APKBUILD
+│   ├── ai-agent-kernel-modules/         # Out-of-tree LKM hooks
+│   ├── ai-agent-model-lora/             # Fine-tuned GGUF planner adapter
+│   ├── llama-server-musl/               # Static musl llama.cpp binaries
+│   ├── build_all.sh                     # Compiles packages via abuild
+│   ├── build_iso.sh                     # Builds hybrid BIOS+UEFI squashfs Live ISO
+│   ├── build_iso.ps1                    # Windows WSL2 launcher for build_iso.sh
+│   └── sync_repo.py                     # Syncs packages and index to guest VM
 ```
 
 ---

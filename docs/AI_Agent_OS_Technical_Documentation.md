@@ -1098,6 +1098,7 @@ The appliance image is compressed via `qemu-img convert -O qcow2 -c`, reducing t
   - `powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_lowres.ps1` (`2 GB` RAM, `2` vCPUs, QXL display, TCG software emulation)
 - **Windows (PowerShell — Headless):** `.\boot.ps1` (or `python c:\qemu-alpine\run_vm.py` for automated `sshd` startup)
 - **Linux / macOS (Bash):** `GUI=1 ./boot.sh` or `./boot.sh --gui` (graphical XFCE4 desktop), `./boot.sh` (headless)
+- **Hybrid BIOS + UEFI Live ISO Pipeline:** `powershell -ExecutionPolicy Bypass -File packaging\build_iso.ps1` (or `sudo ./packaging/build_iso.sh`) packages `ai-agent-os-v0.1.qcow2` into a ~1.5 GB `zstd`-compressed `squashfs` + `overlayfs` ISO (`elenchus-os-v0.1-x86_64.iso`) with GRUB (`initramfs-elenchus-live`, `6.6.142-ai-agent`), verified in both SeaBIOS and EDK2 OVMF UEFI QEMU CD-ROM boots.
 
 Both scripts launch QEMU with 4GB RAM (default), 4 vCPUs, and SSH port forwarding (`localhost:2222 -> guest:22`).
 
@@ -1601,7 +1602,7 @@ os-ai-agent/
 │   ├── src/                      # telemetry.rs, services.rs, intent_client.rs, models.rs, llm.rs, markdown.rs, main.rs
 │   ├── ui/                       # Obsidian Lumina .slint theme, components, and 3 dock state views
 │   └── dashboard.py              # Legacy Python/GTK3 UI preserved as fallback
-├── packaging/                    # Alpine APKBUILD recipes (ai-agent-daemon, ai-agent-dashboard, etc.)
+├── packaging/                    # Alpine APKBUILD recipes & Live ISO builder (build_iso.sh, build_iso.ps1)
 ├── test-programs/                # Syscall Validation Programs
 │   ├── test_syscall.c            # Single-process & edge-case test
 │   ├── test_syscall_stress.c     # Multi-threaded concurrent stress test

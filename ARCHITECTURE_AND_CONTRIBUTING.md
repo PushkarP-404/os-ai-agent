@@ -71,14 +71,15 @@ Contains all operating system code: kernel module, userspace daemon, system CLI,
   * `agent-daemon/`: Python daemon listening on Netlink bus, Harness v2.3, Intent Bus, and CDP browser automation.
   * `agent-cli/`: Static C binary for issuing syscall 548 queries.
   * `dashboard/`: Native Rust + Slint Sentinel Control Center collapsible dock UI (`~15.6 MB` RSS on Alpine Linux musl).
-  * `packaging/`: Alpine Linux `APKBUILD` recipes and build automation scripts (`ai-agent-daemon`, `ai-agent-dashboard`, `llama-server-musl`, `ai-agent-kernel-modules`).
+  * `packaging/`: Alpine Linux `APKBUILD` recipes, package sync automation, and hybrid BIOS/UEFI Live ISO pipeline (`build_iso.sh`, `build_iso.ps1`).
 * **Prerequisites**: QEMU x86_64, Alpine Linux VM with custom kernel `6.6.142-ai-agent`; Rust `1.92+` for building `dashboard/`.
 * **Setup & Development Flow**:
   1. Clone repository: `git clone https://github.com/PushkarP-404/os-ai-agent.git`
   2. Boot GUI VM (Windows): `.\boot.ps1 -Gui` (or `c:\qemu-alpine\boot_gui.ps1`; Linux/macOS: `GUI=1 ./boot.sh`; headless: `.\boot.ps1`)
   3. Test Rust/Slint UI & Python harness: `cargo test --manifest-path dashboard/Cargo.toml` and `python -m pytest tests/ -q`
   4. Sync changes and trigger package build: `python packaging/sync_repo.py`
-  5. Test syscall live in VM: `/root/os-ai-agent/test-programs/test_syscall`
+  5. Build bootable hybrid BIOS/UEFI Live ISO (`..\elenchus-os-v0.1-x86_64.iso`): `powershell -ExecutionPolicy Bypass -File packaging\build_iso.ps1` (or `sudo ./packaging/build_iso.sh` on Linux)
+  6. Test syscall live in VM: `/root/os-ai-agent/test-programs/test_syscall`
 
 ---
 
