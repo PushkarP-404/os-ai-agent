@@ -6,7 +6,7 @@ import { Theme } from "../theme.slint";
 import { ChatBubble } from "../components/chat_bubble.slint";
 
 export struct ChatMessage {
-    kind: int,       // maps to BubbleKind: 0=User 1=Agent 2=Thinking 3=Tool 4=Confirm
+    kind: int,       // 0=User 1=Agent 2=Thinking 3=Tool 4=Confirm
     content: string,
     timestamp: string,
     streaming: bool,
@@ -24,8 +24,7 @@ export component ConsoleView {
     callback tab-changed(ConsoleTab);
     callback copy-to-clipboard(string);
     callback panel-collapse();
-
-    height: Theme.dock-height-console;
+    callback close-clicked();
 
     VerticalLayout {
         // ── Tab strip ───────────────────────────────────────
@@ -36,17 +35,16 @@ export component ConsoleView {
 
             HorizontalLayout {
                 padding-left: Theme.sp-3;
-                padding-right: Theme.sp-3;
+                padding-right: Theme.sp-2;
                 spacing: 0px;
-                alignment: center;
 
                 for tab in [
-                    { id: ConsoleTab.Chat, label: "Chat" },
-                    { id: ConsoleTab.ModelManager, label: "Models" },
-                    { id: ConsoleTab.IntentMonitor, label: "Intents" },
-                    { id: ConsoleTab.LiveLog, label: "Live Log" },
+                    { id: ConsoleTab.Chat,          label: "Chat"     },
+                    { id: ConsoleTab.ModelManager,  label: "Models"   },
+                    { id: ConsoleTab.IntentMonitor, label: "Intents"  },
+                    { id: ConsoleTab.LiveLog,       label: "Live Log" },
                 ] : tab-btn := TouchArea {
-                    width: 72px;
+                    width: 82px;
                     clicked => { tab-changed(tab.id); }
                     mouse-cursor: pointer;
 
@@ -72,7 +70,7 @@ export component ConsoleView {
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             x: 0; y: 0;
-                            width: 72px; height: 36px;
+                            width: 82px; height: 36px;
                         }
                     }
                 }
@@ -95,11 +93,28 @@ export component ConsoleView {
                         width: 28px; height: 36px;
                     }
                 }
+
+                // Close button
+                TouchArea {
+                    width: 28px;
+                    clicked => { close-clicked(); }
+                    mouse-cursor: pointer;
+
+                    Text {
+                        text: "×";
+                        font-size: Theme.text-sm;
+                        color: Theme.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        x: 0; y: 0;
+                        width: 28px; height: 36px;
+                    }
+                }
             }
         }
 
-        // ── Chat message list ────────────────────────────────
-        scroll := Flickable {
+        // ── Chat message list (only shown when Chat tab active) ──
+        if active-tab == ConsoleTab.Chat : scroll := Flickable {
             vertical-stretch: 1;
             interactive: true;
 
@@ -124,7 +139,7 @@ export component ConsoleView {
                     border-color: Theme.warn.with-alpha(0.25);
 
                     Text {
-                        text: "⟳  Sentinel is thinking…";
+                        text: "* Sentinel is thinking…";
                         font-size: Theme.text-xs;
                         color: Theme.warn;
                         font-italic: true;
@@ -136,8 +151,8 @@ export component ConsoleView {
             }
         }
 
-        // ── Prompt bar ───────────────────────────────────────
-        prompt-area := Rectangle {
+        // ── Prompt bar (only shown when Chat tab active) ─────────
+        if active-tab == ConsoleTab.Chat : prompt-area := Rectangle {
             height: 52px;
             background: Theme.bg-elevated;
             border-radius: Theme.radius-md;
@@ -146,19 +161,36 @@ export component ConsoleView {
 
             HorizontalLayout {
                 spacing: Theme.sp-2;
-                alignment: center;
                 padding: Theme.sp-2;
                 padding-left: Theme.sp-3;
-                padding-right: Theme.sp-3;
+                padding-right: Theme.sp-2;
 
-                prompt-input := TextInput {
-                    font-size: Theme.text-sm;
-                    color: Theme.text-primary;
+                prompt-wrap := Rectangle {
                     horizontal-stretch: 1;
-                    // Send on Enter
-                    accepted => {
-                        send-message(self.text);
-                        self.text = "";
+                    height: 32px;
+
+                    prompt-input := TextInput {
+                        font-size: Theme.text-sm;
+                        color: Theme.text-primary;
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        // Send on Enter
+                        accepted => {
+                            send-message(self.text);
+                            self.text = "";
+                        }
+                    }
+
+                    Text {
+                        text: "Ask Sentinel or type /do <os task>…";
+                        font-size: Theme.text-sm;
+                        color: Theme.text-faint;
+                        visible: prompt-input.text == "";
+                        x: 0; y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-alignment: center;
                     }
                 }
 
@@ -169,7 +201,7 @@ export component ConsoleView {
                     background: @linear-gradient(135deg, Theme.accent-start, Theme.accent-end);
 
                     Text {
-                        text: "⏎";
+                        text: "→";
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         font-size: Theme.text-base;
@@ -192,5 +224,3 @@ export component ConsoleView {
         }
     }
 }
-
-

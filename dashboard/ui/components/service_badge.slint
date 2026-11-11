@@ -21,48 +21,51 @@ export component ServiceBadge {
 
     HorizontalLayout {
         spacing: Theme.sp-2;
-        alignment: center;
 
         // Status dot
-        Rectangle {
-            width: 7px; height: 7px;
-            border-radius: 4px;
-            background: pill-color;
-            // Pulse animation when checking
-            animate opacity {
-                duration: status == ServiceStatus.Checking ? 800ms : 0ms;
-                iteration-count: status == ServiceStatus.Checking ? -1 : 1;
-                easing: ease-in-out;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px; height: 7px;
+                border-radius: 4px;
+                background: pill-color;
+                opacity: status == ServiceStatus.Checking ? 0.5 : 1.0;
             }
-            opacity: status == ServiceStatus.Checking ? 0.4 : 1.0;
         }
 
         Text {
             text: label;
             font-size: Theme.text-xs;
             color: Theme.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
             overflow: elide;
         }
 
         // Pill tag
-        Rectangle {
-            height: 16px;
-            width: status-label-text.preferred-width + 10px;
-            border-radius: Theme.radius-pill;
-            background: pill-color.with-alpha(0.15);
-            border-width: 1px;
-            border-color: pill-color.with-alpha(0.4);
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 18px;
+                width: status-label-text.preferred-width + 12px;
+                border-radius: Theme.radius-pill;
+                background: pill-color.with-alpha(0.15);
+                border-width: 1px;
+                border-color: pill-color.with-alpha(0.4);
 
-            status-label-text := Text {
-                x: 5px;
-                text: status-text;
-                font-size: 9px;
-                font-weight: Theme.weight-bold;
-                color: pill-color;
-                letter-spacing: 0.5px;
+                status-label-text := Text {
+                    x: 0; y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    text: status-text;
+                    font-size: 9px;
+                    font-weight: Theme.weight-bold;
+                    color: pill-color;
+                    letter-spacing: 0.5px;
+                }
             }
         }
     }
 }
-
-

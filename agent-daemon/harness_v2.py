@@ -1829,7 +1829,12 @@ class ToolExecutor:
             launch_argv = ["mousepad"] + ([path] if path else [])
             app_label = "Mousepad Text Editor"
         elif app in ("dashboard", "sentinel", "control_center"):
-            launch_argv = ["python3", "/usr/local/lib/ai-agent/dashboard.py"]
+            if os.path.exists("/usr/local/bin/elenchus-dashboard"):
+                launch_argv = ["/usr/local/bin/elenchus-dashboard"]
+            elif os.path.exists("/usr/bin/ai-agent-dashboard"):
+                launch_argv = ["/usr/bin/ai-agent-dashboard"]
+            else:
+                launch_argv = ["python3", "/usr/local/lib/ai-agent/dashboard.py"]
             app_label = "Sentinel Control Center"
         else:
             bin_path = shutil.which(app)

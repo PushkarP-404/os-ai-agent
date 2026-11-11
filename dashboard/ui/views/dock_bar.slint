@@ -13,6 +13,7 @@ export component DockBar inherits Rectangle {
     in property <ServiceStatus> llama-status:       ServiceStatus.Checking;
 
     callback expand-clicked();
+    callback close-clicked();
 
     height: Theme.dock-height-collapsed;
     background: Theme.glass-bg;
@@ -22,10 +23,11 @@ export component DockBar inherits Rectangle {
     border-radius: Theme.radius-md;
 
     HorizontalLayout {
-        padding-left: Theme.sp-4;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        padding-left: Theme.sp-3;
         padding-right: Theme.sp-3;
-        spacing: Theme.sp-4;
-        alignment: center;
+        spacing: Theme.sp-3;
 
         // ── Logo mark ───────────────────────────────────────
         Rectangle {
@@ -54,6 +56,7 @@ export component DockBar inherits Rectangle {
             value: cpu-usage;
             bar-color: Theme.accent-start;
             horizontal-stretch: 1;
+            height: 28px;
         }
 
         // ── RAM bar ─────────────────────────────────────────
@@ -62,6 +65,7 @@ export component DockBar inherits Rectangle {
             value: ram-usage;
             bar-color: Theme.accent-end;
             horizontal-stretch: 1;
+            height: 28px;
         }
 
         // ── Separator ───────────────────────────────────────
@@ -101,6 +105,30 @@ export component DockBar inherits Rectangle {
             }
 
             animate background { duration: Theme.anim-fast; }
+        }
+
+        // ── Close button ────────────────────────────────────
+        Rectangle {
+            width: 28px; height: 28px;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg-elevated;
+            border-width: 1px;
+            border-color: Theme.glass-border;
+
+            Text {
+                text: "×";
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-size: Theme.text-sm;
+                color: Theme.text-muted;
+                x: 0; y: 0;
+                width: 28px; height: 28px;
+            }
+
+            TouchArea {
+                clicked => { close-clicked(); }
+                mouse-cursor: pointer;
+            }
         }
     }
 }

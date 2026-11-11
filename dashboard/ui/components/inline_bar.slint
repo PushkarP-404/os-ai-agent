@@ -8,31 +8,39 @@ export component InlineBar {
     in property <string> label: "";
     in property <color>  bar-color: Theme.accent-mid;
 
-    height: 14px;
+    height: 16px;
 
     HorizontalLayout {
         spacing: Theme.sp-2;
-        alignment: center;
 
         Text {
             text: label;
             font-size: Theme.text-xs;
             color: Theme.text-muted;
             width: 28px;
+            vertical-alignment: center;
         }
 
         Rectangle {
-            height: 4px;
-            border-radius: 2px;
-            background: Theme.border;
-            clip: true;
+            horizontal-stretch: 1;
+            background: transparent;
 
             Rectangle {
-                width: parent.width * root.value;
+                y: (parent.height - 4px) / 2;
+                width: parent.width;
                 height: 4px;
                 border-radius: 2px;
-                background: bar-color;
-                animate width { duration: Theme.anim-normal; easing: ease-out; }
+                background: Theme.border;
+                clip: true;
+
+                Rectangle {
+                    x: 0px; y: 0px;
+                    width: parent.width * clamp(root.value, 0.0, 1.0);
+                    height: 4px;
+                    border-radius: 2px;
+                    background: bar-color;
+                    animate width { duration: Theme.anim-normal; easing: ease-out; }
+                }
             }
         }
 
@@ -42,8 +50,7 @@ export component InlineBar {
             color: Theme.text-primary;
             width: 30px;
             horizontal-alignment: right;
+            vertical-alignment: center;
         }
     }
 }
-
-
