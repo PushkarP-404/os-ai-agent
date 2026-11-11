@@ -1093,10 +1093,13 @@ The appliance image is compressed via `qemu-img convert -O qcow2 -c`, reducing t
 
 **Single-Command Boot Launchers:**
 
-- **Windows (PowerShell):** `.\boot.ps1`
-- **Linux / macOS (Bash):** `./boot.sh`
+- **Windows (PowerShell — Graphical GUI VM):**
+  - `.\boot.ps1 -Gui` (from repo root) or `powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_gui.ps1` (`4 GB` RAM, `4` vCPUs, `virtio-vga`, SDL display, tablet mouse sync, SSH forwarding `2222`, APK repo `8080`, CDP `9222`)
+  - `powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_lowres.ps1` (`2 GB` RAM, `2` vCPUs, QXL display, TCG software emulation)
+- **Windows (PowerShell — Headless):** `.\boot.ps1` (or `python c:\qemu-alpine\run_vm.py` for automated `sshd` startup)
+- **Linux / macOS (Bash):** `GUI=1 ./boot.sh` or `./boot.sh --gui` (graphical XFCE4 desktop), `./boot.sh` (headless)
 
-Both scripts launch QEMU with 4GB RAM, 4 vCPUs, console stdio redirection, and SSH port forwarding (`localhost:2222 -> guest:22`).
+Both scripts launch QEMU with 4GB RAM (default), 4 vCPUs, and SSH port forwarding (`localhost:2222 -> guest:22`).
 
 ---
 
@@ -1591,12 +1594,20 @@ os-ai-agent/
 ├── agent-cli/                    # Phase 8 Intent CLI
 │   ├── agent-cli.c               # Invokes Syscall #548 to dispatch JSON intents
 │   └── Makefile
+├── dashboard/                    # Rust + Slint Sentinel Control Center UI
+│   ├── Cargo.toml                # Slint 1.8 (winit-x11, software + femtovg), Tokio, pulldown-cmark
+│   ├── build.rs                  # Slint compiler integration
+│   ├── elenchus-dashboard.desktop# Desktop application entry (/usr/local/bin/elenchus-dashboard)
+│   ├── src/                      # telemetry.rs, services.rs, intent_client.rs, models.rs, llm.rs, markdown.rs, main.rs
+│   ├── ui/                       # Obsidian Lumina .slint theme, components, and 3 dock state views
+│   └── dashboard.py              # Legacy Python/GTK3 UI preserved as fallback
+├── packaging/                    # Alpine APKBUILD recipes (ai-agent-daemon, ai-agent-dashboard, etc.)
 ├── test-programs/                # Syscall Validation Programs
 │   ├── test_syscall.c            # Single-process & edge-case test
-│   └── test_syscall_stress.c     # Multi-threaded concurrent stress test
-├── boot.ps1                      # Windows PowerShell one-command boot launcher
-├── boot.sh                       # Linux / macOS Bash one-command boot launcher
-├── test_phase6_boot.sh           # Phase 6 automated verification harness
+│   ├── test_syscall_stress.c     # Multi-threaded concurrent stress test
+│   └── test_phase6_boot.sh       # Phase 6 automated verification harness
+├── boot.ps1                      # Windows PowerShell launcher (-Gui for graphical desktop)
+├── boot.sh                       # Linux / macOS Bash launcher (GUI=1 / --gui for graphical desktop)
 ├── AI_Agent_OS_Technical_Documentation.md # Exhaustive technical architecture & reference
 └── README.md
 ```
@@ -1614,6 +1625,8 @@ os-ai-agent/
 | `openssh` | Remote access from host | `apk add openssh` |
 | `strace` / `ltrace` | Reference tools for syscall/library-call tracing | `apk add strace ltrace` |
 | `python3` | Agent scripting | `apk add python3` |
+| `rustup` (`1.92+`) | Rust compiler for Slint 1.8+ UI (with `-C target-feature=-crt-static`) | `curl -sSf https://sh.rustup.rs \| sh` |
+| `libxkbcommon-x11`, `xclip` | X11 runtime keymap + clipboard support for `elenchus-dashboard` | `apk add libxkbcommon-x11 xclip` |
 
 ---
 
@@ -1710,6 +1723,29 @@ With the initial 9 phases completed, the system has successfully scaled from a s
 | **Parseable Plan Rate** | 100.0% (30/30) | 100.0% (30/30) |
 | **Common Task Completion Rate** | 100.0% (10/10) | 100.0% (10/10) |
 | **Unapproved Destructive Executions** | 0 / 16 (0%) | 0 / 16 (0%) |
+
+---
+
+## 24. Sentinel Control Center Redesign (Rust + Slint Collapsible Dock)
+
+**Status:** ✅ Built & Deployed to Live Alpine VM (`feature/slint-dashboard`)
+
+### 24.1 Architecture & Renderer Strategy
+To replace the ~65 MB Python 3 / PyGObject GTK3 window (`dashboard/dashboard.py`) with a low-footprint native binary that works both in driverless QEMU TCG environments and bare-metal GPUs:
+- **Toolkit:** Slint `1.8` (`slint-1.18.1`) with `default-features = false`, `backend-winit-x11`, `renderer-software` (default CPU framebuffer via `SLINT_BACKEND=winit-software` in QEMU), and `renderer-femtovg` (OpenGL acceleration on bare metal).
+- **Alpine musl Linking:** Compiled in Alpine 3.20 with `RUSTFLAGS="-C target-feature=-crt-static"` (`13.4 MB` stripped binary linked dynamically to `/lib/ld-musl-x86_64.so.1` so `winit`/`xkbcommon-dl` `dlopen()` of X11 libraries works cleanly), using TLS-free `reqwest` (eliminating `openssl-sys`).
+- **Measured Footprint inside QEMU VM:** `~15.6 MB` RSS (`15,996 kB` `VmRSS`), ~4x lower than Python GTK3.
+
+### 24.2 Obsidian Lumina Design & 3-State Dock
+- **Collapsed (`560 × 46 px`, `--dock`):** Inline CPU/RAM usage bars, `ai-agent` and `llama-server` status pills, expand (`▲`) and close (`×`) buttons. Auto-started on XFCE login via `/home/aiuser/.config/autostart/elenchus-dashboard.desktop`.
+- **Panel (`560 × 360 px`, default):** Labeled sidebar (`Overview`, `AI Chat`, `Models`, `Intents`, `Live Log`), SVG `ArcTo` circular gauges (CPU `/proc/stat`, RAM `/proc/meminfo`, Disk `statvfs`), OpenRC service badges (`ai-agent`, `llama-server`, `lightpanda`), active GGUF model indicator, and quick prompt bar.
+- **Full Console (`560 × 580 px`, `--prompt`):** Tabbed interface with ChatML streaming completions (`http://127.0.0.1:11434/completion`), markdown parsing (`pulldown-cmark`), `/do <task>` or `/agent <task>` execution via `agent-cli`, GGUF scanner (`/var/lib/ai-agent/models`) + `/props` health, Intent Bus client (`/var/ai-agent/intent.sock` register/ping), and live response/task-runner log tailing.
+
+### 24.3 Guest Deployment & Launch Paths
+- **Native Binary:** `/usr/local/bin/elenchus-dashboard`
+- **Unified Launcher:** `/usr/bin/ai-agent-dashboard` (`export SLINT_BACKEND="${SLINT_BACKEND:-winit-software}"` -> `exec /usr/local/bin/elenchus-dashboard "$@"`). Legacy script preserved at `/usr/bin/ai-agent-dashboard.py-bak` and `/usr/lib/ai-agent/dashboard.py`.
+- **Harness Integration:** `harness_v2.py` `app.launch` (`dashboard`, `sentinel`, `control_center`) prefers `/usr/local/bin/elenchus-dashboard` -> `/usr/bin/ai-agent-dashboard` -> `/usr/local/lib/ai-agent/dashboard.py`.
+- **Keyboard Shortcuts & Desktop Entry:** `<Super>Space`, `<Alt>Space`, `/usr/share/applications/elenchus-dashboard.desktop`.
 
 ---
 

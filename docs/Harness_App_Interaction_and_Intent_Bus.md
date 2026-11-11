@@ -53,7 +53,9 @@ Elenchus takes a fundamentally different approach:
 The Harness controls system applications through four distinct interfaces:
 
 ### A. Desktop GUI Applications (`app.launch`)
-When launching GUI applications (such as Chromium, Thunar file manager, Mousepad text editor, or XFCE Terminal), the agent does not execute dangerous shell strings. Instead, it interacts directly with the user's graphical desktop session:
+When launching GUI applications (such as Chromium, Thunar file manager, Mousepad text editor, XFCE Terminal, or **Sentinel Control Center**), the agent does not execute dangerous shell strings. Instead, it interacts directly with the user's graphical desktop session:
+
+- Launching `"dashboard"`, `"sentinel"`, or `"control_center"` prefers the native **Rust/Slint UI** (`/usr/local/bin/elenchus-dashboard` -> `/usr/bin/ai-agent-dashboard`), falling back to `/usr/local/lib/ai-agent/dashboard.py` if unavailable.
 
 1. **Target Session Discovery**:
    - The harness determines the target user (typically `aiuser`).
@@ -272,7 +274,8 @@ A key weakness of standard AI agents is failing silently or acting on stale stat
 | **Harness Core** | [`agent-daemon/harness_v2.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/harness_v2.py) | Plan generation, DAG dependency checking, tool execution, bounded repair loop |
 | **Automation Engine** | [`agent-daemon/automation_engine.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/automation_engine.py) | Central orchestrator managing the Intent Bus, Policy Manager, and multi-app routing |
 | **Intent Bus Server** | [`agent-daemon/automation_engine.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/automation_engine.py#L928) | Unix Domain Socket server (`intent.sock`) for process-to-process messaging |
-| **Intent Bus Client** | [`agent-daemon/automation_engine.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/automation_engine.py#L1290) | Python library for any local application to connect, send intents, and receive responses |
+| **Intent Bus Client (Python)** | [`agent-daemon/automation_engine.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/automation_engine.py#L1290) | Python library for any local application to connect, send intents, and receive responses |
+| **Sentinel UI Client (Rust)** | [`dashboard/src/intent_client.rs`](file:///c:/qemu-alpine/os-ai-agent/dashboard/src/intent_client.rs) | Rust/Tokio Intent Bus subscriber powering the Sentinel Slint Dock UI |
 | **CDP Controller** | [`agent-daemon/cdp_controller.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/cdp_controller.py) | Dual-engine browser automation (Lightpanda on 9223, Chromium on 9222) |
 | **Accessibility Dumper**| [`agent-daemon/atspi_dumper.py`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/atspi_dumper.py) | AT-SPI accessibility inspection for native desktop applications |
 | **Plan Grammar** | [`agent-daemon/plan_grammar.gbnf`](file:///c:/qemu-alpine/os-ai-agent/agent-daemon/plan_grammar.gbnf) | GBNF grammar enforcing valid plan JSON output from local LLMs |

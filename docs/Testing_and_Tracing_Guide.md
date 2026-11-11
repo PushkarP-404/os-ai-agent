@@ -105,14 +105,28 @@ This guide provides end-to-end instructions for verifying every phase of the AI-
 
 ## Phase 11: Sentinel Control Center & Mail Bridge
 
-**Objective:** Verify the graphical user dashboard and remote email triggers.
+**Objective:** Verify the graphical Rust/Slint Sentinel dock and remote email triggers.
 
-1. **Launch the GTK Dashboard:**
-   In the XFCE GUI, open the Start Menu -> Settings -> **Sentinel Control Center**.
-   *Expected Result:* A native Python-GTK window displaying Daemon Status, Capability Registry, LLM Engine Settings, and Remote Access configuration.
-2. **Test LLM Swapping:**
-   In the dashboard, navigate to the **Local LLM Engine** tab, select a different `.gguf` model, and click Apply. Verify that `rc-service llama-server status` restarted the process with the new model.
-3. **Test the Mail Bridge:**
+1. **Boot the GUI VM:**
+   From `c:\qemu-alpine` (or `os-ai-agent`), launch QEMU in graphical desktop mode:
+   ```powershell
+   .\boot.ps1 -Gui
+   # or directly:
+   powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_gui.ps1
+   ```
+2. **Launch & Inspect the Rust/Slint Sentinel Dock:**
+   The collapsed dock (`--dock`) auto-starts on XFCE login as `aiuser`. You can also press `<Super>Space` / `<Alt>Space`, click **Sentinel Control Center** on the Desktop, or launch from terminal:
+   ```bash
+   ai-agent-dashboard            # Opens Panel view (560x360)
+   ai-agent-dashboard --dock     # Opens Collapsed Dock strip (560x46)
+   ai-agent-dashboard --prompt   # Opens Full AI Console (560x580)
+   ```
+   *Expected Result:* A dark **Obsidian Lumina** window (`elenchus-dashboard`, ~15-16 MB `VmRSS`) displaying CPU/RAM/Disk SVG gauges, active model (`os_planner_lora.gguf`), `ai-agent` / `llama-server` / `lightpanda` `RUN` pills, Intent Bus monitor, and ChatML streaming + `/do <task>` execution via `agent-cli`.
+3. **Verify Memory Footprint & Process Health:**
+   ```bash
+   grep -E 'Name|VmRSS|Threads' /proc/$(pidof elenchus-dashboard)/status
+   ```
+4. **Test the Mail Bridge:**
    Run the mail bridge manually:
    ```bash
    python3 /root/os-ai-agent/remote-bridges/mail_trigger.py
