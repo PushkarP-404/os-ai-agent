@@ -9,7 +9,7 @@ import { ConsoleView, ConsoleTab, ChatMessage } from "views/console.slint";
 import { IntentMonitor, IntentEvent } from "views/intent_monitor.slint";
 import { LiveLog, LogLine } from "views/live_log.slint";
 import { ModelManager, ModelEntry } from "views/model_manager.slint";
-import { ServiceBadge, ServiceStatus } from "components/service_badge.slint";
+import { ServiceStatus } from "components/service_badge.slint";
 
 // ── Dock state enum ─────────────────────────────────────────
 export enum DockState { Collapsed, Panel, Console }
@@ -32,9 +32,9 @@ export component SentinelDock inherits Window {
     }
 
     // ── Bindable properties (set from Rust) ─────────────────
-    in-out property <DockState>  state:             DockState.Collapsed;
-    in-out property <NavItem>    active-nav:         NavItem.Overview;
-    in-out property <ConsoleTab> active-tab:         ConsoleTab.Chat;
+    in-out property <DockState>  state:             DockState.Panel;
+    in-out property <NavItem>    active-nav:        NavItem.Overview;
+    in-out property <ConsoleTab> active-tab:        ConsoleTab.Chat;
 
     // Telemetry
     in property <float>  cpu-usage:    0.0;
@@ -48,17 +48,17 @@ export component SentinelDock inherits Window {
 
     // Chat
     in property <[ChatMessage]>  messages:          [];
-    in property <bool>           is-thinking:        false;
-    in property <string>         active-model:       "No model loaded";
+    in property <bool>           is-thinking:       false;
+    in property <string>         active-model:      "No model loaded";
 
     // Model manager
-    in property <[ModelEntry]>   models:             [];
+    in property <[ModelEntry]>   models:            [];
 
     // Intent monitor
-    in property <[IntentEvent]>  intent-events:      [];
+    in property <[IntentEvent]>  intent-events:     [];
 
     // Log
-    in property <[LogLine]>      log-lines:          [];
+    in property <[LogLine]>      log-lines:         [];
 
     // ── Callbacks → Rust ─────────────────────────────────────
     callback send-chat-message(string);
@@ -67,6 +67,7 @@ export component SentinelDock inherits Window {
     callback copy-to-clipboard(string);
     callback state-changed(DockState);
     callback nav-changed(NavItem);
+    callback close-requested();
 
     // ── State transition helpers ─────────────────────────────
     function go-collapsed() {
@@ -74,6 +75,7 @@ export component SentinelDock inherits Window {
         state-changed(DockState.Collapsed);
     }
     function go-panel() {
+        active-nav = NavItem.Overview;
         state = DockState.Panel;
         state-changed(DockState.Panel);
     }
@@ -111,6 +113,7 @@ export component SentinelDock inherits Window {
             ai-agent-status: root.ai-agent-status;
             llama-status:    root.llama-status;
             expand-clicked => { go-panel(); }
+            close-clicked  => { close-requested(); }
         }
 
         // State 2 — Panel view
@@ -128,15 +131,27 @@ export component SentinelDock inherits Window {
 
             nav-selected(item) => {
                 if item == NavItem.Console {
+                    active-tab = ConsoleTab.Chat;
+                    go-console();
+                } else if item == NavItem.ModelManager {
+                    active-tab = ConsoleTab.ModelManager;
+                    go-console();
+                } else if item == NavItem.IntentMonitor {
+                    active-tab = ConsoleTab.IntentMonitor;
+                    go-console();
+                } else if item == NavItem.LiveLog {
+                    active-tab = ConsoleTab.LiveLog;
                     go-console();
                 }
                 nav-changed(item);
             }
             quick-prompt(text) => {
+                active-tab = ConsoleTab.Chat;
                 go-console();
                 send-chat-message(text);
             }
             collapse-clicked => { go-collapsed(); }
+            close-clicked    => { close-requested(); }
         }
 
         // State 3 — Full console
@@ -150,12 +165,13 @@ export component SentinelDock inherits Window {
                 is-thinking: root.is-thinking;
                 active-tab <=> root.active-tab;
                 horizontal-stretch: 1;
-                vertical-stretch: 1;
+                vertical-stretch: active-tab == ConsoleTab.Chat ? 1 : 0;
 
                 send-message(text) => { send-chat-message(text); }
                 tab-changed(t)     => { active-tab = t; }
                 copy-to-clipboard(text) => { root.copy-to-clipboard(text); }
                 panel-collapse     => { go-panel(); }
+                close-clicked      => { close-requested(); }
             }
 
             // Inline sub-views for non-Chat tabs
@@ -179,5 +195,3 @@ export component SentinelDock inherits Window {
         }
     }
 }
-
-

@@ -10,19 +10,20 @@ export component MetricGauge {
     in property <color>  color-low:  Theme.ok;
     in property <color>  color-high: Theme.err;
 
-    // Derived: colour shifts from green → amber → red
+    property <float> clamped: clamp(root.value, 0.0, 0.999);
+
+    // Derived: colour shifts from green -> amber -> red
     property <color> gauge-color: value < 0.6
         ? Theme.ok
         : value < 0.85 ? Theme.warn : Theme.err;
 
     width: 80px;
-    height: 90px;
+    height: 92px;
 
     VerticalLayout {
         alignment: center;
         spacing: Theme.sp-1;
 
-        // Arc drawn with Canvas
         Rectangle {
             width: 72px;
             height: 72px;
@@ -41,31 +42,38 @@ export component MetricGauge {
                 background: transparent;
             }
 
-            // Value ring — simulated via clip + rotate
-            // (Slint 1.8 Path-based arc)
-            Rectangle {
+            // Proportional SVG arc from 12 o'clock clockwise
+            if clamped > 0.005 : Path {
                 x: 6px; y: 6px;
                 width: 60px; height: 60px;
-                border-radius: 30px;
-                border-width: 5px;
-                border-color: gauge-color;
-                background: transparent;
-                // Clip so only the "filled" portion shows
-                clip: true;
-                opacity: root.value;
-                animate opacity { duration: Theme.anim-normal; }
+                stroke: gauge-color;
+                stroke-width: 5px;
+                fill: transparent;
+                viewbox-width: 100;
+                viewbox-height: 100;
+
+                MoveTo { x: 50; y: 8; }
+                ArcTo {
+                    radius-x: 42;
+                    radius-y: 42;
+                    x: 50 + 42 * Math.sin(clamped * 360deg);
+                    y: 50 - 42 * Math.cos(clamped * 360deg);
+                    sweep: true;
+                    large-arc: clamped >= 0.5;
+                }
             }
 
-            // Centre text
+            // Centre percentage label
             Text {
-                x: 0; y: 20px;
+                x: 0; y: 0;
                 width: 72px;
+                height: 72px;
                 horizontal-alignment: center;
+                vertical-alignment: center;
                 text: Math.round(root.value * 100) + unit;
                 font-size: Theme.text-sm;
                 font-weight: Theme.weight-bold;
                 color: gauge-color;
-                animate color { duration: Theme.anim-normal; }
             }
         }
 
@@ -77,5 +85,3 @@ export component MetricGauge {
         }
     }
 }
-
-

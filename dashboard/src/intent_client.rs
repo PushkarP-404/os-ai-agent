@@ -1,15 +1,16 @@
 // ============================================================
-// intent_client.rs — Intent Bus Unix socket client
-// Subscribes to broadcast events from /var/run/ai-agent/intent.sock
+// intent_client.rs — Intent Bus Unix socket client + log reader
+// Registers with /var/ai-agent/intent.sock and polls health
 // ============================================================
 use anyhow::Result;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 #[allow(dead_code)]
 pub const SOCKET_PATHS: &[&str] = &[
-    "/var/run/ai-agent/intent.sock",
     "/var/ai-agent/intent.sock",
+    "/var/run/ai-agent/intent.sock",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,9 +31,9 @@ pub fn subscribe() -> mpsc::Receiver<IntentEvent> {
     tokio::spawn(async move {
         loop {
             if let Err(e) = connect_and_stream(&tx).await {
-                log::warn!("Intent Bus disconnected: {e}. Retrying in 2s…");
+                log::warn!("Intent Bus disconnected: {e}. Retrying in 3s…");
             }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     });
     rx
@@ -40,30 +41,105 @@ pub fn subscribe() -> mpsc::Receiver<IntentEvent> {
 
 #[cfg(target_os = "linux")]
 async fn connect_and_stream(tx: &mpsc::Sender<IntentEvent>) -> Result<()> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
-    let path = SOCKET_PATHS.iter().find(|p| std::path::Path::new(p).exists())
+    let path = SOCKET_PATHS
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
         .ok_or_else(|| anyhow::anyhow!("Intent socket not found"))?;
 
     let stream = UnixStream::connect(path).await?;
-    let reader = BufReader::new(stream);
-    let mut lines = reader.lines();
+    let (reader, mut writer) = stream.into_split();
 
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() { continue; }
-        match serde_json::from_str::<IntentEvent>(&line) {
-            Ok(ev) => { let _ = tx.send(ev).await; }
-            Err(e) => log::debug!("Intent Bus parse error: {e}: {line}"),
+    // Register sentinel-ui on the Intent Bus
+    let reg = r#"{"type":"register","app_name":"sentinel-ui","capabilities":["ui.status"]}"#;
+    writer.write_all(reg.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+
+    let mut lines = BufReader::new(reader).lines();
+
+    // Read registration ACK
+    if let Some(ack_line) = lines.next_line().await? {
+        let ok = ack_line.contains("\"OK\"");
+        let _ = tx
+            .send(IntentEvent {
+                timestamp: Utc::now().format("%H:%M:%S").to_string(),
+                action: "bus.register".to_string(),
+                source: "sentinel-ui".to_string(),
+                target: "intent-bus".to_string(),
+                status: if ok { "ok" } else { "err" }.to_string(),
+                payload: serde_json::Value::Null,
+            })
+            .await;
+    }
+
+    // Periodically ping the bus and read any unsolicited intent messages
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    ping_interval.tick().await; // consume initial tick
+
+    loop {
+        tokio::select! {
+            res = lines.next_line() => {
+                match res? {
+                    Some(line) if !line.trim().is_empty() => {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let status_str = val.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                            if status_str == "PONG" {
+                                continue; // routine keepalive
+                            }
+                            let action = val.get("intent_type")
+                                .or_else(|| val.get("action"))
+                                .or_else(|| val.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("bus.event")
+                                .to_string();
+                            let source = val.get("source_app")
+                                .or_else(|| val.get("source"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("intent-bus")
+                                .to_string();
+                            let target = val.get("target_app")
+                                .or_else(|| val.get("target"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("sentinel-ui")
+                                .to_string();
+                            let ev_status = if status_str.eq_ignore_ascii_case("error")
+                                || status_str.eq_ignore_ascii_case("denied")
+                                || status_str.eq_ignore_ascii_case("failed")
+                            {
+                                "err"
+                            } else {
+                                "ok"
+                            };
+                            let _ = tx.send(IntentEvent {
+                                timestamp: Utc::now().format("%H:%M:%S").to_string(),
+                                action,
+                                source,
+                                target,
+                                status: ev_status.to_string(),
+                                payload: val,
+                            }).await;
+                        }
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            _ = ping_interval.tick() => {
+                if writer.write_all(b"{\"type\":\"ping\"}\n").await.is_err() {
+                    break;
+                }
+            }
         }
     }
+
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn connect_and_stream(_tx: &mpsc::Sender<IntentEvent>) -> Result<()> {
+async fn connect_and_stream(tx: &mpsc::Sender<IntentEvent>) -> Result<()> {
     // On Windows host: emit synthetic events every 3s for UI development
-    use chrono::Utc;
     let actions = ["browser.goto", "llm.query", "fs.read", "agent.spawn"];
     let apps    = ["ai-agent", "lightpanda", "llama-server", "file-manager"];
     let mut i = 0usize;
@@ -77,8 +153,7 @@ async fn connect_and_stream(_tx: &mpsc::Sender<IntentEvent>) -> Result<()> {
             status:    if i % 4 == 3 { "err".to_string() } else { "ok".to_string() },
             payload:   serde_json::Value::Null,
         };
-        let _ = _tx.send(ev).await;
+        let _ = tx.send(ev).await;
         i += 1;
     }
 }
-

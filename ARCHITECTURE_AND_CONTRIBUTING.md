@@ -8,7 +8,7 @@ Elenchus (formerly AI-Agent OS) is divided into **three specialized GitHub repos
 
 | Repository | GitHub Target | Primary Role | Key Technologies |
 |---|---|---|---|
-| **`os-ai-agent`** | [`PushkarP-404/os-ai-agent`](https://github.com/PushkarP-404/os-ai-agent) | **Elenchus Core Operating System** | Linux Kernel 6.6 (C), LKM, OpenRC, Python, Alpine Linux |
+| **`os-ai-agent`** | [`PushkarP-404/os-ai-agent`](https://github.com/PushkarP-404/os-ai-agent) | **Elenchus Core Operating System** | Linux Kernel 6.6 (C), LKM, OpenRC, Rust + Slint UI, Python, Alpine Linux |
 | **`distillation-fine-tuning`** | [`PushkarP-404/distillation-fine-tuning`](https://github.com/PushkarP-404/distillation-fine-tuning) | **AI Brain & Intelligence** | PyTorch, Hugging Face, PEFT/LoRA, llama.cpp GGUF, Groq API |
 | **`ai-agent-apk-repo`** | [`PushkarP-404/ai-agent-apk-repo`](https://github.com/PushkarP-404/ai-agent-apk-repo) | **Public Package Mirror** | Alpine APK format, cryptographic signing (`abuild-sign`), GitHub Pages |
 
@@ -64,19 +64,22 @@ Responsible for dataset generation, teacher-model distillation, and training lig
 ---
 
 ### 2. `os-ai-agent` (Elenchus Operating System)
-Contains all operating system code: kernel module, userspace daemon, system CLI, OpenRC init scripts, and packaging build definitions.
+Contains all operating system code: kernel module, userspace daemon, system CLI, Rust/Slint control center UI, OpenRC init scripts, and packaging build definitions.
 
 * **Key Directories**:
   * `kernel-module/`: Loadable Kernel Module (`ai_process_hook.c`) capturing process events.
-  * `agent-daemon/`: Python daemon listening on Netlink bus and managing LLM queries.
+  * `agent-daemon/`: Python daemon listening on Netlink bus, Harness v2.3, Intent Bus, and CDP browser automation.
   * `agent-cli/`: Static C binary for issuing syscall 548 queries.
-  * `packaging/`: Alpine Linux `APKBUILD` recipes and build automation scripts.
-* **Prerequisites**: QEMU x86_64, Alpine Linux VM with custom kernel `6.6.142-ai-agent`
+  * `dashboard/`: Native Rust + Slint Sentinel Control Center collapsible dock UI (`~15.6 MB` RSS on Alpine Linux musl).
+  * `packaging/`: Alpine Linux `APKBUILD` recipes, package sync automation, and hybrid BIOS/UEFI Live ISO pipeline (`build_iso.sh`, `build_iso.ps1`).
+* **Prerequisites**: QEMU x86_64, Alpine Linux VM with custom kernel `6.6.142-ai-agent`; Rust `1.92+` for building `dashboard/`.
 * **Setup & Development Flow**:
   1. Clone repository: `git clone https://github.com/PushkarP-404/os-ai-agent.git`
-  2. Boot development VM: `python boot_and_enable_sshd.py`
-  3. Sync changes and trigger package build: `python packaging/sync_repo.py`
-  4. Test syscall live: `/root/os-ai-agent/test-programs/test_syscall`
+  2. Boot GUI VM (Windows): `.\boot.ps1 -Gui` (or `c:\qemu-alpine\boot_gui.ps1`; Linux/macOS: `GUI=1 ./boot.sh`; headless: `.\boot.ps1`)
+  3. Test Rust/Slint UI & Python harness: `cargo test --manifest-path dashboard/Cargo.toml` and `python -m pytest tests/ -q`
+  4. Sync changes and trigger package build: `python packaging/sync_repo.py`
+  5. Build bootable hybrid BIOS/UEFI Live ISO (`..\elenchus-os-v0.1-x86_64.iso`): `powershell -ExecutionPolicy Bypass -File packaging\build_iso.ps1` (or `sudo ./packaging/build_iso.sh` on Linux)
+  6. Test syscall live in VM: `/root/os-ai-agent/test-programs/test_syscall`
 
 ---
 
@@ -107,9 +110,10 @@ The public-facing CDN repository that allows anyone running Elenchus / Alpine Li
    * Contribute to `distillation-fine-tuning`. Add new syscall query patterns or prompt templates.
    * Run `export_gguf.py` and test accuracy with `03_eval_distilled_agent.py`.
 
-2. **Modifying OS Services, CLI, or Kernel**:
-   * Contribute to `os-ai-agent`.
+2. **Modifying OS Services, UI, CLI, or Kernel**:
+   * Contribute to `os-ai-agent` on feature branches (never commit directly to `main`/`master`).
    * Ensure C code builds cleanly with `make CC=gcc CFLAGS="-Wall -O2"`.
+   * Ensure Rust/Slint UI changes pass `cargo test --manifest-path dashboard/Cargo.toml`, compile cleanly for Alpine musl with `RUSTFLAGS="-C target-feature=-crt-static"`, and keep `python -m pytest tests/ -q` (`83/83`) passing.
    * Update package version in `packaging/<pkg>/APKBUILD` (increment `pkgver` or `pkgrel`).
 
 3. **Releasing Updates to Users**:

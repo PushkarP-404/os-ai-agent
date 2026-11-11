@@ -367,41 +367,74 @@ The appliance is distributed as a pre-built QCOW2 image: `ai-agent-os-v0.1.qcow2
 - 4 GB host RAM.
 - Virtualization enabled (WHPX on Windows, KVM on Linux).
 
-### One-Command Boot
+### One-Command Boot (Headless & Graphical GUI VM)
 
 **Windows (PowerShell):**
 
 ```powershell
-# Headless mode
-.\boot.ps1
-
-# Graphical Desktop Mode (Seamless 1:1 Tablet Mouse Sync)
+# Graphical Desktop Mode — from os-ai-agent repo root (resolves ..\ai-agent-os-v0.1.qcow2)
 .\boot.ps1 -Gui
+
+# Or directly from workspace root (c:\qemu-alpine):
+powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_gui.ps1
+
+# Low-resource GUI Mode (2 GB RAM, 2 vCPUs, QXL display, TCG emulation)
+powershell -ExecutionPolicy Bypass -File c:\qemu-alpine\boot_lowres.ps1
+
+# Headless mode (SSH + serial console only)
+.\boot.ps1
+# Or with automated sshd verification:
+python c:\qemu-alpine\run_vm.py
 ```
 
 **Linux / macOS (Bash):**
 
 ```bash
-# Headless mode
 chmod +x boot.sh
-./boot.sh
 
-# Graphical Desktop Mode
+# Graphical Desktop Mode (XFCE4 + Rust/Slint Sentinel Dock)
 GUI=1 ./boot.sh
+# Or:
+./boot.sh --gui
+
+# Headless mode
+./boot.sh
 ```
+
+**Bootable Live ISO (Bare Metal / USB / QEMU CD-ROM):**
+
+Generate the hybrid BIOS + UEFI Live ISO (`elenchus-os-v0.1-x86_64.iso`, ~1.5 GB `zstd`-compressed `squashfs` + `overlayfs`) from `ai-agent-os-v0.1.qcow2`:
+
+```powershell
+# Windows (runs via WSL2 Ubuntu)
+powershell -ExecutionPolicy Bypass -File packaging\build_iso.ps1
+```
+
+```bash
+# Linux (as root)
+sudo ./packaging/build_iso.sh
+```
+
+```powershell
+# Boot-test the Live ISO in QEMU (BIOS CD-ROM, no hard disk attached)
+qemu-system-x86_64 -m 4G -smp 4 -cdrom ..\elenchus-os-v0.1-x86_64.iso -boot d -vga virtio -display sdl -device virtio-tablet-pci -netdev user,id=n1,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n1
+```
+
+For bare-metal testing, flash `elenchus-os-v0.1-x86_64.iso` to a USB drive (`dd bs=4M status=progress`, Rufus in **DD Image mode**, or Ventoy) and boot in BIOS or UEFI mode (disable Secure Boot if unsigned).
 
 The system automatically initializes:
 
 1. Direct Syslinux kernel boot: `Linux 6.6.142-ai-agent`.
 2. Starts native `llama-server` on `127.0.0.1:11434`.
-3. Starts `agent_daemon.py` and registers Netlink PID with the kernel.
-4. Starts `sshd` and forwards SSH to `localhost:2222`.
-5. Starts LightDM autologin into XFCE4 desktop for `aiuser`.
+3. Starts `agent_daemon.py` (Netlink PID + Intent Bus `/var/ai-agent/intent.sock`) and `lightpanda` on `:9223`.
+4. Starts `sshd` and forwards ports to localhost (`2222 -> 22` SSH, `8080 -> 8080` APK repo, `9222 -> 9222` Chromium CDP when GUI boot is used).
+5. Starts LightDM autologin into the XFCE4 desktop for `aiuser` and auto-launches the **Rust/Slint Sentinel Dock** (`--dock`).
 
 ### Accessing the Guest
 
-- **SSH Access:** `ssh -p 2222 root@127.0.0.1` (Password: `root`)
-- **Local LLM Health Check:** `http://127.0.0.1:11434/health`
+- **Desktop Autologin:** `aiuser` (Password: `password`)
+- **SSH Access:** `ssh -p 2222 root@127.0.0.1` (uses configured `VM_PASSWORD` in `.env`, e.g. `password_123`)
+- **Local LLM Health & Props:** `http://127.0.0.1:11434/health` and `http://127.0.0.1:11434/props`
 - **Dispatching Tasks via CLI:**
 
   ```bash
@@ -410,16 +443,25 @@ The system automatically initializes:
 
 ---
 
-## Sentinel Control Center (GUI)
+## Sentinel Control Center (Rust + Slint GUI)
 
-The OS appliance includes a graphical desktop environment (XFCE4 + LightDM) with autologin for `aiuser`:
+The OS appliance includes an XFCE4 + LightDM graphical desktop featuring a lightweight native **Rust + Slint** collapsible dock UI (**Obsidian Lumina** design system, `13.4 MB` Alpine `musl` binary, `~15.6 MB` live VM RSS vs `~65 MB` for the legacy Python/GTK3 UI):
 
-- **Seamless Mouse Synchronization:** Configured with `xf86-input-libinput` and `/etc/X11/xorg.conf.d/50-qemu-tablet.conf`. When booted with `-device virtio-tablet-pci -usb -device usb-tablet -vga virtio -display sdl`, the cursor coordinates map 1:1 to host mouse coordinates with zero acceleration drift or clipping.
-- **Sentinel AI Dashboard:** Launch from desktop terminal:
+- **Three Dock States (`560 px` wide):**
+  - **Collapsed (`46 px`)** (`--dock`): Compact live strip with inline CPU/RAM bars, `ai-agent` and `llama-server` status pills, and expand toggle (`▲`). Auto-starts on XFCE login via `/home/aiuser/.config/autostart/elenchus-dashboard.desktop`.
+  - **Panel (`360 px`)** *(default)*: Sidebar navigation, SVG circular arc gauges (CPU, RAM, Disk via `/proc` and `statvfs`), OpenRC service status (`ai-agent`, `llama-server`, `lightpanda`), active model display, and quick prompt bar.
+  - **Full Console (`580 px`)** (`--prompt`): Tabbed view (`Chat`, `Models`, `Intents`, `Live Log`) with streaming ChatML markdown completions (`pulldown-cmark`), `/do <task>` or `/agent <task>` OS dispatch via `agent-cli`, GGUF scanner (`/var/lib/ai-agent/models`), live Intent Bus monitor (`/var/ai-agent/intent.sock`), and log stream.
+- **Seamless Mouse Synchronization:** Configured with `xf86-input-libinput` and `/etc/X11/xorg.conf.d/50-qemu-tablet.conf` (`-device virtio-tablet-pci -usb -device usb-tablet -vga virtio -display sdl`) for 1:1 cursor tracking without drift.
+- **Launching Sentinel Control Center:**
+  - Press `<Super>Space` or `<Alt>Space`, click **Sentinel Control Center** on the Desktop/Panel, or run from terminal:
 
   ```bash
-  python3 /root/os-ai-agent/dashboard/dashboard.py
+  ai-agent-dashboard            # Opens Panel view (executes /usr/local/bin/elenchus-dashboard)
+  ai-agent-dashboard --dock     # Starts Collapsed 46px strip
+  ai-agent-dashboard --prompt   # Opens straight to Full AI Console
   ```
+
+  > Software rendering (`SLINT_BACKEND=winit-software`) is enabled by default inside QEMU guests for zero-GPU compatibility (`renderer-femtovg` OpenGL is also compiled in for bare-metal targets). The legacy Python GTK3 script remains preserved at `/usr/lib/ai-agent/dashboard.py`.
 
 ---
 
@@ -587,13 +629,16 @@ int main(void) {
 The system components are modularized into Alpine Linux APK packages:
 
 ```
-packaging/
-├── ai-agent-daemon/                 # Daemon, Harness v2.3, Automation Engine, OpenRC
-├── ai-agent-kernel-modules/         # Out-of-tree LKM hooks
-├── ai-agent-model-lora/             # Fine-tuned GGUF planner adapter
-├── llama-server-musl/               # Static musl llama.cpp binaries
-├── build_all.sh                     # Compiles packages via abuild
-└── sync_repo.py                     # Syncs packages and index to guest VM
+├── packaging/
+│   ├── ai-agent-daemon/                 # Daemon, Harness v2.3, Automation Engine, OpenRC
+│   ├── ai-agent-dashboard/              # Rust/Slint Sentinel Control Center APKBUILD
+│   ├── ai-agent-kernel-modules/         # Out-of-tree LKM hooks
+│   ├── ai-agent-model-lora/             # Fine-tuned GGUF planner adapter
+│   ├── llama-server-musl/               # Static musl llama.cpp binaries
+│   ├── build_all.sh                     # Compiles packages via abuild
+│   ├── build_iso.sh                     # Builds hybrid BIOS+UEFI squashfs Live ISO
+│   ├── build_iso.ps1                    # Windows WSL2 launcher for build_iso.sh
+│   └── sync_repo.py                     # Syncs packages and index to guest VM
 ```
 
 ---
@@ -614,6 +659,14 @@ os-ai-agent/
 │   └── openrc/                      # OpenRC service scripts
 │       ├── llama-server             # Native musl inference server service
 │       └── ai-agent                 # Unified agent daemon and intent bus service
+├── dashboard/                       # Rust + Slint Sentinel Control Center UI (Obsidian Lumina)
+│   ├── Cargo.toml                   # Slint 1.8 (winit-x11, software + femtovg), Tokio, pulldown-cmark
+│   ├── build.rs                     # Slint compile hook
+│   ├── elenchus-dashboard.desktop   # Desktop launcher (/usr/local/bin/elenchus-dashboard)
+│   ├── src/                         # Telemetry, services, markdown, Intent Bus, GGUF, ChatML LLM
+│   ├── ui/                          # Slint views (dock_bar, panel, console) & components
+│   ├── dashboard.py                 # Legacy Python/GTK3 fallback
+│   └── dashboard.css                # Legacy GTK3 stylesheet
 ├── agent-cli/                       # Phase 8 Intent CLI
 │   ├── agent-cli.c                  # Invokes Syscall #548 to dispatch JSON intents
 │   └── Makefile

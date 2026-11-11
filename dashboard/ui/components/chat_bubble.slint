@@ -35,20 +35,20 @@ export component ChatBubble {
     property <string> role-label:
         kind == 0 ? "You" :
         kind == 1 ? "Sentinel" :
-        kind == 2 ? "⟳ Thinking" :
-        kind == 3 ? "⚙ Tool" :
-        "⚡ Confirm";
+        kind == 2 ? "* Thinking" :
+        kind == 3 ? "> Tool" :
+        "! Confirm";
 
     property <bool> is-user: kind == 0;
 
     // ── User bubble (right-aligned) ───────────────────────────
     if is-user : HorizontalLayout {
         alignment: end;
-        padding-left: 48px;
+        padding-left: 64px;
 
         VerticalLayout {
             spacing: Theme.sp-1;
-            max-width: 280px;
+            max-width: 440px;
 
             HorizontalLayout {
                 alignment: end;
@@ -89,11 +89,11 @@ export component ChatBubble {
     // ── Agent / system bubbles (left-aligned) ─────────────────
     if !is-user : HorizontalLayout {
         alignment: start;
-        padding-right: 48px;
+        padding-right: 64px;
 
         VerticalLayout {
             spacing: Theme.sp-1;
-            max-width: 280px;
+            max-width: 440px;
 
             HorizontalLayout {
                 alignment: start;

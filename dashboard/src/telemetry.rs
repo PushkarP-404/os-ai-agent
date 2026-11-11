@@ -93,8 +93,8 @@ mod linux {
         let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::statvfs(cpath.as_ptr(), &mut st) };
         if rc != 0 { return Ok(0.0); }
-        let total = st.f_blocks * st.f_frsize;
-        let free  = st.f_bfree  * st.f_frsize;
+        let total = (st.f_blocks as u64).saturating_mul(st.f_frsize as u64);
+        let free  = (st.f_bfree  as u64).saturating_mul(st.f_frsize as u64);
         if total == 0 { return Ok(0.0); }
         Ok(1.0 - (free as f32 / total as f32))
     }
