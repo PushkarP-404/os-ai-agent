@@ -12,13 +12,14 @@
 
 pkgname="ai-agent-daemon"
 pkgver="0.1.0"
-pkgrel=4
-pkgdesc="AI-Agent OS kernel-userspace daemon, agent-cli, and Sentinel Control Center UI"
+pkgrel=6
+pkgdesc="Elenchus OS kernel-userspace daemon, Intent Bus, Harness v2.3, agent-cli, and system integration"
 arch="x86_64"
 license="GPL-2.0-only"
-url="https://github.com/ai-agent-os/ai-agent"
-depends="python3 llama-server-musl py3-gobject3 gtk+3.0 papirus-icon-theme font-jetbrains-mono font-noto albatross-themes-gtk3"
+url="https://github.com/PushkarP-404/os-ai-agent"
+depends="python3 llama-server-musl ai-agent-dashboard py3-gobject3 gtk+3.0 papirus-icon-theme font-jetbrains-mono font-noto albatross-themes-gtk3"
 makedepends="gcc make"
+install="$pkgname.pre-install $pkgname.pre-upgrade $pkgname.post-install $pkgname.post-upgrade"
 options="!check !fhs"
 
 # Source is in the VM at /root/os-ai-agent (uploaded by sync.py / sync_repo.py)
@@ -45,28 +46,25 @@ package() {
             "$pkgdir/usr/lib/ai-agent/plan_grammar.gbnf"
     fi
 
-    # ── Sentinel Control Center GUI + CSS ───────────────────────────────
+    # ── Legacy Python fallback UI + compatibility symlinks (/usr/bin/ai-agent-dashboard is owned by ai-agent-dashboard) ──
     if [ -d "$_dashboard_src" ]; then
         install -Dm755 "$_dashboard_src/dashboard.py" \
             "$pkgdir/usr/lib/ai-agent/dashboard.py"
         install -Dm644 "$_dashboard_src/dashboard.css" \
             "$pkgdir/usr/lib/ai-agent/dashboard.css"
 
-        # Binary launcher wrapper
-        mkdir -p "$pkgdir/usr/bin"
-        cat << 'EOF' > "$pkgdir/usr/bin/ai-agent-dashboard"
-#!/bin/sh
-exec python3 /usr/lib/ai-agent/dashboard.py "$@"
-EOF
-        chmod 755 "$pkgdir/usr/bin/ai-agent-dashboard"
-
         # Compatibility symlinks in /usr/local/lib/ai-agent/
         mkdir -p "$pkgdir/usr/local/lib/ai-agent"
         ln -sf /usr/lib/ai-agent/dashboard.py "$pkgdir/usr/local/lib/ai-agent/dashboard.py"
         ln -sf /usr/lib/ai-agent/dashboard.css "$pkgdir/usr/local/lib/ai-agent/dashboard.css"
-        ln -sf /usr/lib/ai-agent/agent_daemon.py "$pkgdir/usr/local/lib/ai-agent/agent_daemon.py"
-        ln -sf /usr/lib/ai-agent/harness_v2.py "$pkgdir/usr/local/lib/ai-agent/harness_v2.py"
-        ln -sf /usr/lib/ai-agent/plan_grammar.gbnf "$pkgdir/usr/local/lib/ai-agent/plan_grammar.gbnf"
+        for pyf in "$_daemon_src"/*.py; do
+            if [ -f "$pyf" ]; then
+                ln -sf "/usr/lib/ai-agent/$(basename "$pyf")" "$pkgdir/usr/local/lib/ai-agent/$(basename "$pyf")"
+            fi
+        done
+        if [ -f "$_daemon_src/plan_grammar.gbnf" ]; then
+            ln -sf /usr/lib/ai-agent/plan_grammar.gbnf "$pkgdir/usr/local/lib/ai-agent/plan_grammar.gbnf"
+        fi
 
         # Desktop application launcher
         if [ -f "$_dashboard_src/ai-agent-dashboard.desktop" ]; then
@@ -76,7 +74,17 @@ EOF
                 "$pkgdir/etc/skel/Desktop/ai-agent-dashboard.desktop"
         fi
 
-        # AI-Agent Brand Vector Icon
+        # Elenchus + legacy AI-Agent brand icons
+        if [ -f "$_dashboard_src/elenchus.png" ]; then
+            install -Dm644 "$_dashboard_src/elenchus.png" \
+                "$pkgdir/usr/share/pixmaps/elenchus.png"
+        fi
+        if [ -f "$_dashboard_src/elenchus.svg" ]; then
+            install -Dm644 "$_dashboard_src/elenchus.svg" \
+                "$pkgdir/usr/share/icons/hicolor/scalable/apps/elenchus.svg"
+            install -Dm644 "$_dashboard_src/elenchus.svg" \
+                "$pkgdir/usr/share/pixmaps/elenchus.svg"
+        fi
         if [ -f "$_dashboard_src/ai-agent.svg" ]; then
             install -Dm644 "$_dashboard_src/ai-agent.svg" \
                 "$pkgdir/usr/share/icons/hicolor/scalable/apps/ai-agent.svg"
@@ -84,18 +92,12 @@ EOF
                 "$pkgdir/usr/share/pixmaps/ai-agent.svg"
         fi
 
-        # Wallpaper
+        # Wallpaper (avoid overwriting upstream xfdesktop files)
         if [ -f "$_dashboard_src/agent-os-wallpaper.jpg" ]; then
             install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
                 "$pkgdir/usr/share/backgrounds/agent-os-wallpaper.jpg"
             install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
                 "$pkgdir/usr/share/backgrounds/xfce/agent-os-wallpaper.jpg"
-            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
-                "$pkgdir/usr/share/backgrounds/xfce/xfce-blue.jpg"
-            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
-                "$pkgdir/usr/share/backgrounds/xfce/xfce-stripes.png"
-            install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
-                "$pkgdir/usr/share/backgrounds/xfce/xfce-teal.jpg"
             install -Dm644 "$_dashboard_src/agent-os-wallpaper.jpg" \
                 "$pkgdir/etc/skel/Pictures/Wallpapers/agent-os-wallpaper.jpg"
         fi
@@ -461,8 +463,8 @@ EOF
   <property name="plugins" type="empty">
     <property name="plugin-1" type="string" value="applicationsmenu">
       <property name="show-button-title" type="bool" value="true"/>
-      <property name="button-title" type="string" value="AI-Agent OS"/>
-      <property name="button-icon" type="string" value="ai-agent"/>
+      <property name="button-title" type="string" value="Elenchus"/>
+      <property name="button-icon" type="string" value="elenchus"/>
     </property>
     <property name="plugin-2" type="string" value="tasklist">
       <property name="flat-buttons" type="bool" value="true"/>
@@ -519,11 +521,14 @@ EOF
 </channel>
 EOF
 
-    # Install xfconf channels into skeleton and xdg templates
+    # Install xfconf channels into skeleton and non-conflicting xdg defaults
+    # (xsettings.xml & xfce4-keyboard-shortcuts.xml are applied in post-install to avoid upstream APK ownership clashes)
     install -d "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
     install -d "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
     for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
         cp "$pkgdir/usr/share/ai-agent/themes/$cfg" "$pkgdir/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg"
+    done
+    for cfg in xfwm4.xml xfce4-desktop.xml xfce4-panel.xml; do
         cp "$pkgdir/usr/share/ai-agent/themes/$cfg" "$pkgdir/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg"
     done
 
@@ -560,6 +565,16 @@ pre_install() {
     # Create daemon system user/group
     addgroup -S ai-agent 2>/dev/null || true
     adduser -S -G ai-agent -H -h /var/ai-agent ai-agent 2>/dev/null || true
+    # Clean legacy unowned copies in /usr/local/lib/ai-agent before symlink extraction
+    for f in /usr/local/lib/ai-agent/*.py /usr/local/lib/ai-agent/*.gbnf; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then
+            rm -f "$f" 2>/dev/null || true
+        fi
+    done
+}
+
+pre_upgrade() {
+    pre_install
 }
 
 post_install() {

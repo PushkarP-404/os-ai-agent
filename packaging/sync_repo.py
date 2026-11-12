@@ -19,7 +19,9 @@ Usage:
 
 import argparse
 import os
+import subprocess
 import sys
+import tempfile
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
@@ -74,6 +76,7 @@ def upload_packaging(sftp, ssh):
     """Upload all APKBUILD files, helper scripts, and the repo_server.py."""
     packages = [
         "llama-server-musl",
+        "ai-agent-dashboard",
         "ai-agent-daemon",
         "ai-agent-kernel-modules",
         "ai-agent-model-lora",
@@ -92,7 +95,7 @@ def upload_packaging(sftp, ssh):
         else:
             print(f"  [WARN] {fname} not found locally, skipping")
 
-    run(ssh, f"chmod +x {REMOTE_PKG}/setup_repo.sh {REMOTE_PKG}/build_all.sh")
+    run(ssh, f"sed -i 's/\\r$//' {REMOTE_PKG}/setup_repo.sh {REMOTE_PKG}/build_all.sh {REMOTE_PKG}/repo_server.py && chmod +x {REMOTE_PKG}/setup_repo.sh {REMOTE_PKG}/build_all.sh")
 
     # Package subdirectories
     for pkg in packages:
@@ -120,6 +123,77 @@ def upload_packaging(sftp, ssh):
             sftp.put(local, f"/root/os-ai-agent/agent-daemon/{fname}")
             sftp.put(local, f"/usr/local/lib/ai-agent/{fname}")
             print(f"  -> /root/os-ai-agent/agent-daemon/{fname}")
+
+    # Also upload OpenRC service scripts cleanly
+    run(ssh, "mkdir -p /root/os-ai-agent/agent-daemon/openrc", check=False)
+    openrc_dir = os.path.join(daemon_dir, "openrc")
+    if os.path.isdir(openrc_dir):
+        for fname in os.listdir(openrc_dir):
+            local = os.path.join(openrc_dir, fname)
+            if os.path.isfile(local):
+                sftp.put(local, f"/root/os-ai-agent/agent-daemon/openrc/{fname}")
+                print(f"  -> /root/os-ai-agent/agent-daemon/openrc/{fname}")
+        run(ssh, "sed -i 's/\\r$//' /root/os-ai-agent/agent-daemon/openrc/* && chmod +x /root/os-ai-agent/agent-daemon/openrc/*", check=False)
+
+    # Upload dashboard desktop/icons/wallpaper + compiled Alpine musl UI binary (if present)
+    print("\n[sync] Uploading dashboard assets & UI binary...")
+    run(ssh, "mkdir -p /root/os-ai-agent/dashboard", check=False)
+    dash_dir = os.path.join(LOCAL_BASE, "dashboard")
+    for fname in [
+        "dashboard.py",
+        "dashboard.css",
+        "ai-agent-dashboard.desktop",
+        "elenchus-dashboard.desktop",
+        "ai-agent.svg",
+        "elenchus.svg",
+        "elenchus.png",
+        "agent-os-wallpaper.jpg",
+    ]:
+        local = os.path.join(dash_dir, fname)
+        if os.path.isfile(local):
+            sftp.put(local, f"/root/os-ai-agent/dashboard/{fname}")
+            print(f"  -> /root/os-ai-agent/dashboard/{fname}")
+
+    uploaded_ui_bin = False
+    for bin_candidate in [
+        os.path.join(dash_dir, "elenchus-dashboard"),
+        os.path.join(dash_dir, "target", "x86_64-unknown-linux-musl", "release", "elenchus-dashboard"),
+    ]:
+        if os.path.isfile(bin_candidate):
+            sftp.put(bin_candidate, "/root/os-ai-agent/dashboard/elenchus-dashboard")
+            run(ssh, "chmod 755 /root/os-ai-agent/dashboard/elenchus-dashboard", check=False)
+            print(f"  -> /root/os-ai-agent/dashboard/elenchus-dashboard (from {bin_candidate})")
+            uploaded_ui_bin = True
+            break
+
+    if not uploaded_ui_bin and os.name == "nt":
+        wsl_bin = "/root/alpine320/work/dashboard/target/release/elenchus-dashboard"
+        try:
+            res = subprocess.run(
+                ["wsl", "-d", "Ubuntu", "-u", "root", "test", "-f", wsl_bin],
+                capture_output=True,
+                timeout=5,
+            )
+            if res.returncode == 0:
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    tmp_path = tf.name
+                try:
+                    with open(tmp_path, "wb") as out_f:
+                        cp_res = subprocess.run(
+                            ["wsl", "-d", "Ubuntu", "-u", "root", "cat", wsl_bin],
+                            stdout=out_f,
+                            timeout=30,
+                        )
+                    if cp_res.returncode == 0 and os.path.getsize(tmp_path) > 0:
+                        sftp.put(tmp_path, "/root/os-ai-agent/dashboard/elenchus-dashboard")
+                        run(ssh, "chmod 755 /root/os-ai-agent/dashboard/elenchus-dashboard", check=False)
+                        print(f"  -> /root/os-ai-agent/dashboard/elenchus-dashboard (from WSL {wsl_bin})")
+                        uploaded_ui_bin = True
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+        except Exception:
+            pass
 
     # agent-cli source
     run(ssh, "mkdir -p /root/os-ai-agent/agent-cli", check=False)
@@ -191,6 +265,8 @@ def main():
         build_flags = ""
         if args.skip_llama:
             build_flags += " --skip-llama"
+        if args.no_lora:
+            build_flags += " --skip-lora"
         if args.only:
             build_flags += f" --only {args.only}"
 
@@ -205,6 +281,7 @@ def main():
         print()
         print("  Install packages in the VM:")
         print("    apk add ai-agent-daemon")
+        print("    apk add ai-agent-dashboard")
         print("    apk add llama-server-musl")
         print("    apk add ai-agent-kernel-modules")
         print("    apk add ai-agent-model-lora")

@@ -7,11 +7,11 @@
 
 pkgname="ai-agent-kernel-modules"
 pkgver="0.1.0"
-pkgrel=0
-pkgdesc="Kernel loadable module for AI-Agent OS process event monitoring"
+pkgrel=1
+pkgdesc="Kernel loadable module for Elenchus OS process event monitoring"
 arch="x86_64"
 license="GPL-2.0-only"
-url="https://github.com/ai-agent-os/ai-agent"
+url="https://github.com/PushkarP-404/os-ai-agent"
 depends=""
 makedepends="linux-headers build-base"
 options="!check !fhs"

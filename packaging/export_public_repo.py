@@ -13,7 +13,9 @@ Includes:
 """
 
 import os
+import re
 import sys
+import tarfile
 import paramiko
 
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -29,9 +31,45 @@ REMOTE_REPO_DIR = "/srv/apk-repo/x86_64"
 REMOTE_KEY_DIR  = "/etc/apk/keys"
 
 
+def _ver_key(ver: str):
+    parts = []
+    for tok in re.split(r"[.\-_]", ver):
+        if tok.startswith("r") and tok[1:].isdigit():
+            parts.append((0, int(tok[1:]), tok))
+        elif tok.isdigit():
+            parts.append((0, int(tok), tok))
+        else:
+            parts.append((1, 0, tok))
+    return tuple(parts)
+
+
+def parse_apkindex_versions(index_tgz_path: str) -> dict:
+    """Return {pkg_name: highest_version} from APKINDEX.tar.gz."""
+    versions = {}
+    if not os.path.isfile(index_tgz_path):
+        return versions
+    with tarfile.open(index_tgz_path, "r:gz") as tf:
+        for member in tf.getmembers():
+            if member.name != "APKINDEX":
+                continue
+            raw = tf.extractfile(member).read().decode("utf-8", errors="replace")
+            for block in raw.strip().split("\n\n"):
+                fields = {}
+                for line in block.splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        fields[k] = v.strip()
+                pkg = fields.get("P")
+                ver = fields.get("V")
+                if pkg and ver:
+                    if pkg not in versions or _ver_key(ver) > _ver_key(versions[pkg]):
+                        versions[pkg] = ver
+    return versions
+
+
 def main():
     print("==================================================")
-    print("  AI-Agent OS: Exporting APK Repo for GitHub      ")
+    print("  Elenchus OS: Exporting APK Repo for GitHub      ")
     print("==================================================")
 
     ssh = paramiko.SSHClient()
@@ -83,26 +121,34 @@ def main():
     sftp.close()
     ssh.close()
 
-    # 4. Generate README.md and index.html
+    # 4. Generate README.md and index.html with live APKINDEX versions
     print("\n[3/3] Generating repository documentation and index.html...")
+    versions = parse_apkindex_versions(os.path.join(local_x86, "APKINDEX.tar.gz"))
+    v_daemon = versions.get("ai-agent-daemon", "0.1.0-r5")
+    v_dash   = versions.get("ai-agent-dashboard", "0.1.0-r0")
+    v_llama  = versions.get("llama-server-musl", "0.1.0-r0")
+    v_lora   = versions.get("ai-agent-model-lora", "0.2.0-r0")
+    v_kmod   = versions.get("ai-agent-kernel-modules", "0.1.0-r1")
+
     readme_path = os.path.join(LOCAL_EXPORT_DIR, "README.md")
     with open(readme_path, "w", encoding="utf-8") as f:
-        f.write(f"""# AI-Agent OS — Official APK Package Repository
+        f.write(f"""# Elenchus OS — Official APK Package Repository
 
-This repository hosts official packages for **AI-Agent OS** (an autonomous Alpine-derived Linux distribution).
+This repository hosts official packages for **Elenchus** (an autonomous Alpine-derived Linux distribution with native kernel AI).
 
 ## Available Packages
 
 | Package | Version | Description |
 |---|---|---|
-| `ai-agent-daemon` | `0.1.0-r0` | Kernel-userspace agent daemon, task engine, and `agent-cli` |
-| `llama-server-musl` | `0.1.0-r0` | Native musl HTTP inference server with bundled runtime libraries |
-| `ai-agent-model-lora` | `0.1.0-r0` | Fine-tuned distilled LoRA adapter GGUF (`os_agent_lora.gguf`) |
-| `ai-agent-kernel-modules` | `0.1.0-r0` | Out-of-tree kernel module (`ai_process_hook.ko`) for `6.6.142-ai-agent` |
+| `ai-agent-daemon` | `{v_daemon}` | Kernel-userspace agent daemon, Intent Bus, Harness v2.3, and `agent-cli` |
+| `ai-agent-dashboard` | `{v_dash}` | Rust + Slint Sentinel Control Center collapsible dock UI |
+| `llama-server-musl` | `{v_llama}` | Native musl HTTP inference server with bundled runtime libraries |
+| `ai-agent-model-lora` | `{v_lora}` | Fine-tuned Task Planner & LoRA GGUF models (`os_planner_lora.gguf`, `os_agent_lora.gguf`) |
+| `ai-agent-kernel-modules` | `{v_kmod}` | Out-of-tree kernel module (`ai_process_hook.ko`) for `6.6.142-ai-agent` |
 
 ---
 
-## Installation Instructions (for any Alpine Linux system)
+## Installation Instructions (for Elenchus / Alpine Linux systems)
 
 ### 1. Trust the Public Signing Key
 ```sh
@@ -117,11 +163,11 @@ echo "https://PushkarP-404.github.io/ai-agent-apk-repo" >> /etc/apk/repositories
 ### 3. Update & Install Packages
 ```sh
 apk update
-apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-modules
+apk add ai-agent-daemon ai-agent-dashboard llama-server-musl ai-agent-model-lora ai-agent-kernel-modules
 ```
 
 ---
-*Built with Alpine `abuild` and cryptographically signed.*
+*Built for Elenchus with Alpine `abuild` and cryptographically signed.*
 """)
 
     # Generate HTML landing page for GitHub Pages
@@ -131,7 +177,7 @@ apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-mo
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AI-Agent OS — Package Repository</title>
+  <title>Elenchus OS — Package Repository</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono&display=swap">
@@ -227,12 +273,12 @@ apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-mo
 </head>
 <body>
   <div class="container">
-    <h1>AI-Agent OS</h1>
-    <p class="lead">Official Alpine Linux APK Package Repository</p>
+    <h1>Elenchus OS</h1>
+    <p class="lead">Official Elenchus Linux APK Package Repository</p>
 
     <div class="card">
       <h2>Quick Install Instructions</h2>
-      <p>Run the following commands inside Alpine Linux:</p>
+      <p>Run the following commands inside Elenchus / Alpine Linux:</p>
 
       <p><strong>1. Trust the Public Signing Key:</strong></p>
       <pre>wget -P /etc/apk/keys/ https://PushkarP-404.github.io/ai-agent-apk-repo/keys/{pub_key_name}</pre>
@@ -242,7 +288,7 @@ apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-mo
 
       <p><strong>3. Install Packages:</strong></p>
       <pre>apk update
-apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-modules</pre>
+apk add ai-agent-daemon ai-agent-dashboard llama-server-musl ai-agent-model-lora ai-agent-kernel-modules</pre>
     </div>
 
     <div class="card">
@@ -259,25 +305,31 @@ apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-mo
         <tbody>
           <tr>
             <td><strong>ai-agent-daemon</strong></td>
-            <td>0.1.0-r0</td>
-            <td>Daemon + CLI</td>
+            <td>{v_daemon}</td>
+            <td>Daemon + Intent Bus + CLI</td>
+            <td><span class="badge">Signed & Ready</span></td>
+          </tr>
+          <tr>
+            <td><strong>ai-agent-dashboard</strong></td>
+            <td>{v_dash}</td>
+            <td>Rust/Slint Control Center UI</td>
             <td><span class="badge">Signed & Ready</span></td>
           </tr>
           <tr>
             <td><strong>llama-server-musl</strong></td>
-            <td>0.1.0-r0</td>
+            <td>{v_llama}</td>
             <td>Inference Engine</td>
             <td><span class="badge">Signed & Ready</span></td>
           </tr>
           <tr>
             <td><strong>ai-agent-model-lora</strong></td>
-            <td>0.1.0-r0</td>
-            <td>Fine-Tuned Adapter</td>
+            <td>{v_lora}</td>
+            <td>Planner & LoRA GGUFs</td>
             <td><span class="badge">Signed & Ready</span></td>
           </tr>
           <tr>
             <td><strong>ai-agent-kernel-modules</strong></td>
-            <td>0.1.0-r0</td>
+            <td>{v_kmod}</td>
             <td>LKM (6.6.142)</td>
             <td><span class="badge">Signed & Ready</span></td>
           </tr>
@@ -292,6 +344,8 @@ apk add ai-agent-daemon llama-server-musl ai-agent-model-lora ai-agent-kernel-mo
     print(f"\n[SUCCESS] Exported repository ready at: {LOCAL_EXPORT_DIR}")
     print("Files ready to be pushed to GitHub:")
     for root, dirs, files in os.walk(LOCAL_EXPORT_DIR):
+        if ".git" in dirs:
+            dirs.remove(".git")
         for f in files:
             rel = os.path.relpath(os.path.join(root, f), LOCAL_EXPORT_DIR)
             print(f"  - {rel}")

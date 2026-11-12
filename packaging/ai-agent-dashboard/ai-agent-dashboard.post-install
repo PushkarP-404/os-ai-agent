@@ -1,0 +1,9 @@
+#!/bin/sh
+if [ -d "/home/aiuser" ]; then
+    mkdir -p /home/aiuser/.config/autostart
+    cp -f /etc/skel/.config/autostart/elenchus-dashboard.desktop \
+        /home/aiuser/.config/autostart/elenchus-dashboard.desktop 2>/dev/null || true
+    chown -R aiuser:aiuser /home/aiuser/.config/autostart 2>/dev/null || true
+fi
+exit 0
+

@@ -1,0 +1,40 @@
+#!/bin/sh
+chown -R ai-agent:ai-agent /var/ai-agent 2>/dev/null || true
+
+touch /var/log/ai-agent.log /var/log/task_runner.log /var/log/ai-agent-privileged.log
+chown ai-agent:ai-agent /var/log/ai-agent.log 2>/dev/null || true
+chown root:root /var/log/ai-agent-privileged.log 2>/dev/null || true
+chmod 600 /var/log/ai-agent-privileged.log 2>/dev/null || true
+chmod 666 /var/log/task_runner.log 2>/dev/null || true
+
+rc-update add ai-agent default 2>/dev/null || true
+rc-update add ai-agent-privileged default 2>/dev/null || true
+
+if [ -d "/etc/lightdm" ]; then
+    mkdir -p /etc/lightdm/lightdm.conf.d
+    cp -f /usr/share/ai-agent/themes/50-autologin.conf /etc/lightdm/lightdm.conf.d/50-autologin.conf 2>/dev/null || true
+    cp -f /usr/share/ai-agent/themes/lightdm-gtk-greeter.conf /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+fi
+
+if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
+    for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+        cp -f "/usr/share/ai-agent/themes/$cfg" "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+    done
+fi
+
+if [ -d "/home/aiuser" ]; then
+    mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml /home/aiuser/Pictures/Wallpapers
+    cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
+    chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
+    cp -f /etc/xdg/gtk-3.0/gtk.css /home/aiuser/.config/gtk-3.0/gtk.css 2>/dev/null || true
+    cp -f /etc/xdg/gtk-3.0/settings.ini /home/aiuser/.config/gtk-3.0/settings.ini 2>/dev/null || true
+    cp -f /etc/skel/.config/xfce4/terminal/terminalrc /home/aiuser/.config/xfce4/terminal/terminalrc 2>/dev/null || true
+    for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+        cp -f "/usr/share/ai-agent/themes/$cfg" "/home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+    done
+    cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/Wallpapers/agent-os-wallpaper.jpg 2>/dev/null || true
+    cp -f /usr/share/backgrounds/agent-os-wallpaper.jpg /home/aiuser/Pictures/agent-os-wallpaper.jpg 2>/dev/null || true
+    chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
+fi
+exit 0
+

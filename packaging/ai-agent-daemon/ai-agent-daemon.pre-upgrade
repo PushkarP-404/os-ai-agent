@@ -1,0 +1,9 @@
+#!/bin/sh
+# Clean legacy unowned regular files in /usr/local/lib/ai-agent before extracting symlinks
+for f in /usr/local/lib/ai-agent/*.py /usr/local/lib/ai-agent/*.gbnf; do
+    if [ -f "$f" ] && [ ! -L "$f" ]; then
+        rm -f "$f" 2>/dev/null || true
+    fi
+done
+exit 0
+

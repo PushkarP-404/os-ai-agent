@@ -2,54 +2,97 @@
 # Maintainer: Elenchus OS Team <team@elenchus.os>
 pkgname=ai-agent-dashboard
 pkgver=0.1.0
-pkgrel=0
+pkgrel=1
 pkgdesc="Elenchus OS Sentinel Control Center — Rust/Slint collapsible dock UI"
-url="https://github.com/pushk/os-ai-agent"
-arch="x86_64 aarch64"
+url="https://github.com/PushkarP-404/os-ai-agent"
+arch="x86_64"
 license="MIT"
-depends="libgcc mesa-gl libxkbcommon-x11 libx11 libxcb fontconfig xclip"
-makedepends="rust cargo musl-dev libx11-dev libxcb-dev libxkbcommon-dev fontconfig-dev mesa-dev pkgconf"
-subpackages="$pkgname-doc"
-source="$pkgname-$pkgver.tar.gz"
-builddir="$srcdir/$pkgname-$pkgver"
+depends="libgcc libstdc++ libxkbcommon-x11 libx11 libxcb fontconfig freetype xclip"
+replaces="ai-agent-daemon"
+makedepends=""
+install="$pkgname.post-install $pkgname.post-upgrade"
+options="!check !strip !fhs"
 
-prepare() {
-    default_prepare
-    # Pre-fetch Cargo deps if mirror available; skip on no-network
-    cargo fetch --manifest-path dashboard/Cargo.toml 2>/dev/null || true
+_dash_src="/root/os-ai-agent/dashboard"
+
+_find_bin() {
+    for candidate in \
+        "$_dash_src/elenchus-dashboard" \
+        "$_dash_src/target/x86_64-unknown-linux-musl/release/elenchus-dashboard" \
+        "$_dash_src/target/release/elenchus-dashboard" \
+        "/usr/local/bin/elenchus-dashboard"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 build() {
-    cd "$builddir"
-    cargo build \
-        --manifest-path dashboard/Cargo.toml \
-        --release \
-        --target x86_64-unknown-linux-musl
-}
-
-check() {
-    cd "$builddir"
-    cargo test \
-        --manifest-path dashboard/Cargo.toml \
-        --target x86_64-unknown-linux-musl
+    if _find_bin >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v cargo >/dev/null 2>&1 && [ -f "$_dash_src/Cargo.toml" ]; then
+        cd "$_dash_src"
+        RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --manifest-path "$_dash_src/Cargo.toml"
+        return 0
+    fi
+    die "No prebuilt elenchus-dashboard binary found and cargo is unavailable in VM. Run sync_repo.py or stage binary at $_dash_src/elenchus-dashboard."
 }
 
 package() {
-    # Binary
-    install -Dm755 \
-        "$builddir/dashboard/target/x86_64-unknown-linux-musl/release/elenchus-dashboard" \
-        "$pkgdir/usr/local/bin/elenchus-dashboard"
+    local _bin
+    _bin="$(_find_bin)" || die "elenchus-dashboard binary missing"
 
-    # Desktop entry
-    install -Dm644 \
-        "$builddir/dashboard/elenchus-dashboard.desktop" \
-        "$pkgdir/usr/share/applications/elenchus-dashboard.desktop"
+    install -Dm755 "$_bin" "$pkgdir/usr/local/bin/elenchus-dashboard"
 
-    # Optional icon
-    if [ -f "$builddir/dashboard/assets/icon.png" ]; then
-        install -Dm644 \
-            "$builddir/dashboard/assets/icon.png" \
+    # CLI / desktop wrapper (defaults to Slint software renderer for headless/virtio-vga compat)
+    install -d "$pkgdir/usr/bin"
+    cat << 'EOF' > "$pkgdir/usr/bin/ai-agent-dashboard"
+#!/bin/sh
+export SLINT_BACKEND="${SLINT_BACKEND:-winit-software}"
+exec /usr/local/bin/elenchus-dashboard "$@"
+EOF
+    chmod 755 "$pkgdir/usr/bin/ai-agent-dashboard"
+
+    # Desktop application entry
+    if [ -f "$_dash_src/elenchus-dashboard.desktop" ]; then
+        install -Dm644 "$_dash_src/elenchus-dashboard.desktop" \
+            "$pkgdir/usr/share/applications/elenchus-dashboard.desktop"
+    fi
+
+    # Autostart floating dock entry for XFCE sessions
+    install -d "$pkgdir/etc/skel/.config/autostart"
+    cat << 'EOF' > "$pkgdir/etc/skel/.config/autostart/elenchus-dashboard.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Sentinel Control Center Dock
+Exec=env SLINT_BACKEND=winit-software /usr/local/bin/elenchus-dashboard --dock
+Icon=elenchus
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+EOF
+
+    # Icon
+    if [ -f "$_dash_src/elenchus.png" ]; then
+        install -Dm644 "$_dash_src/elenchus.png" \
             "$pkgdir/usr/share/pixmaps/elenchus-dashboard.png"
     fi
+}
+
+post_install() {
+    if [ -d "/home/aiuser" ]; then
+        mkdir -p /home/aiuser/.config/autostart
+        cp -f /etc/skel/.config/autostart/elenchus-dashboard.desktop \
+            /home/aiuser/.config/autostart/elenchus-dashboard.desktop 2>/dev/null || true
+        chown -R aiuser:aiuser /home/aiuser/.config/autostart 2>/dev/null || true
+    fi
+}
+
+post_upgrade() {
+    post_install
 }
 

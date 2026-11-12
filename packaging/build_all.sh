@@ -11,27 +11,57 @@ REPO_DIR="/srv/apk-repo"
 PACKAGER_USER="packager"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Packages in dependency order (kernel-modules first, then llama, then daemon on top)
-ALL_PKGS="ai-agent-kernel-modules llama-server-musl ai-agent-daemon"
+# Packages in dependency order (kernel-modules first, then llama + dashboard, then daemon on top)
+ALL_PKGS="ai-agent-kernel-modules llama-server-musl ai-agent-dashboard ai-agent-daemon"
 
 # Parse args
 ONLY_PKG=""
 SKIP_LLAMA=0
-for arg in "$@"; do
-    case "$arg" in
+SKIP_LORA=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
         --skip-llama) SKIP_LLAMA=1 ;;
-        --only) shift; ONLY_PKG="$1" ;;
-        --only=*) ONLY_PKG="${arg#--only=}" ;;
+        --skip-lora)  SKIP_LORA=1 ;;
+        --only)
+            shift
+            ONLY_PKG="${1:-}"
+            ;;
+        --only=*) ONLY_PKG="${1#--only=}" ;;
     esac
+    shift || true
 done
 
 if [ -n "$ONLY_PKG" ]; then
     BUILD_PKGS="$ONLY_PKG"
 elif [ "$SKIP_LLAMA" = "1" ]; then
-    BUILD_PKGS="ai-agent-kernel-modules ai-agent-daemon"
+    BUILD_PKGS="ai-agent-kernel-modules ai-agent-dashboard ai-agent-daemon"
 else
     BUILD_PKGS="$ALL_PKGS"
 fi
+
+regenerate_index() {
+    mkdir -p "$REPO_DIR/x86_64"
+    # Clean accidental nested arch symlink if present
+    [ -L "$REPO_DIR/x86_64/x86_64" ] && rm -f "$REPO_DIR/x86_64/x86_64" 2>/dev/null || true
+    find "$REPO_DIR" -maxdepth 3 -name "*.apk" -not -path "$REPO_DIR/x86_64/*" -exec cp -f {} "$REPO_DIR/x86_64/" \; 2>/dev/null || true
+
+    APK_FILES=$(find "$REPO_DIR/x86_64" -maxdepth 1 -name "*.apk" 2>/dev/null)
+    if [ -z "$APK_FILES" ]; then
+        echo "[WARN] No .apk files found in $REPO_DIR/x86_64 — index will be empty."
+        return 0
+    fi
+
+    apk index \
+        --rewrite-arch x86_64 \
+        -o "$REPO_DIR/x86_64/APKINDEX.tar.gz" \
+        "$REPO_DIR/x86_64/"*.apk 2>/dev/null || \
+    apk index \
+        -o "$REPO_DIR/x86_64/APKINDEX.tar.gz" 2>/dev/null || true
+
+    su "$PACKAGER_USER" -c "
+        abuild-sign -k \"\$HOME/.abuild/\"*.rsa '$REPO_DIR/x86_64/APKINDEX.tar.gz'
+    "
+}
 
 echo "================================================="
 echo "  AI-Agent OS — APK Package Builder"
@@ -59,34 +89,37 @@ for pkg in $BUILD_PKGS; do
     echo "─────────────────────────────────────────────────"
 
     # abuild MUST NOT run as root — use the packager user
-    # Copy APKBUILD into packager's home for abuild
+    # Copy APKBUILD + hook scripts into packager's home with Unix LF endings
     PKG_BUILD_DIR="/home/$PACKAGER_USER/build/$pkg"
     mkdir -p "$PKG_BUILD_DIR"
-    cp "$PKG_DIR/APKBUILD" "$PKG_BUILD_DIR/APKBUILD"
-    # Copy any supplementary files (pre-install scripts, patches, etc.)
     for f in "$PKG_DIR"/*; do
-        [ "$f" != "$PKG_DIR/APKBUILD" ] && cp "$f" "$PKG_BUILD_DIR/" 2>/dev/null || true
+        [ -f "$f" ] || continue
+        base="$(basename "$f")"
+        tr -d '\r' < "$f" > "$PKG_BUILD_DIR/$base"
+        case "$base" in
+            *.pre-*|*.post-*|*.sh) chmod 755 "$PKG_BUILD_DIR/$base" ;;
+        esac
     done
     chown -R "$PACKAGER_USER:abuild" "$PKG_BUILD_DIR"
 
-    # Run abuild as packager user
+    # Run abuild as packager user (-d skips sudo apk builddeps check since setup_repo.sh installs toolchain as root)
     su "$PACKAGER_USER" -c "
         set -e
         cd '$PKG_BUILD_DIR'
-        # Clean previous build artifacts
         abuild clean 2>/dev/null || true
-        # Build: checksums → unpack → build → package → sign → copy
-        # -r  = install missing makedepends automatically
-        # -P  = output packages to REPO_DIR
-        REPODEST='$REPO_DIR' abuild -r
+        REPODEST='$REPO_DIR' abuild -d -r
     "
+
+    # Refresh index immediately so downstream packages (e.g. ai-agent-daemon -> ai-agent-dashboard) resolve intra-repo deps
+    regenerate_index
+    apk update 2>/dev/null || true
 
     echo "  ✓ $pkg built successfully"
 done
 
 # ── Handle ai-agent-model-lora separately (only if GGUF exists and not already built) ──
 MODELS_DIR="/var/lib/ai-agent/models"
-if [ "$ONLY_PKG" != "ai-agent-model-lora" ] && { [ -f "$MODELS_DIR/os_planner_lora.gguf" ] || [ -f "$MODELS_DIR/os_agent_lora.gguf" ]; }; then
+if [ -z "$ONLY_PKG" ] && [ "$SKIP_LORA" = "0" ] && { [ -f "$MODELS_DIR/os_planner_lora.gguf" ] || [ -f "$MODELS_DIR/os_agent_lora.gguf" ]; }; then
     echo ""
     echo "─────────────────────────────────────────────────"
     echo "  Building: ai-agent-model-lora (GGUF model found)"
@@ -99,7 +132,7 @@ if [ "$ONLY_PKG" != "ai-agent-model-lora" ] && { [ -f "$MODELS_DIR/os_planner_lo
         set -e
         cd '$PKG_BUILD_DIR'
         abuild clean 2>/dev/null || true
-        REPODEST='$REPO_DIR' abuild -r
+        REPODEST='$REPO_DIR' abuild -d -r
     "
     echo "  ✓ ai-agent-model-lora built"
 else
@@ -113,28 +146,7 @@ echo ""
 echo "─────────────────────────────────────────────────"
 echo "  Regenerating signed APK index..."
 echo "─────────────────────────────────────────────────"
-
-# Consolidate all built packages into $REPO_DIR/x86_64/
-mkdir -p "$REPO_DIR/x86_64"
-find "$REPO_DIR" -name "*.apk" -not -path "$REPO_DIR/x86_64/*" -exec cp -f {} "$REPO_DIR/x86_64/" \; 2>/dev/null || true
-
-APK_FILES=$(find "$REPO_DIR/x86_64" -name "*.apk" 2>/dev/null)
-if [ -z "$APK_FILES" ]; then
-    echo "[WARN] No .apk files found in $REPO_DIR/x86_64 — index will be empty."
-fi
-
-# apk index must run as root (needs access to all .apk files)
-apk index \
-    --rewrite-arch x86_64 \
-    -o "$REPO_DIR/x86_64/APKINDEX.tar.gz" \
-    "$REPO_DIR/x86_64/"*.apk 2>/dev/null || \
-apk index \
-    -o "$REPO_DIR/x86_64/APKINDEX.tar.gz" 2>/dev/null || true
-
-# Sign the index as packager user
-su "$PACKAGER_USER" -c "
-    abuild-sign -k \"\$HOME/.abuild/\"*.rsa '$REPO_DIR/x86_64/APKINDEX.tar.gz'
-"
+regenerate_index
 
 # ── Start / restart the HTTP repo server ─────────────────────────────────────
 echo ""
@@ -157,6 +169,7 @@ ls -lh "$REPO_DIR/x86_64/"*.apk 2>/dev/null || echo "  (no packages yet)"
 echo ""
 echo "  Install with:"
 echo "    apk add ai-agent-daemon"
+echo "    apk add ai-agent-dashboard"
 echo "    apk add llama-server-musl"
 echo "    apk add ai-agent-kernel-modules"
 echo "    apk add ai-agent-model-lora    # (if LoRA GGUF was available)"

@@ -1,0 +1,22 @@
+#!/bin/sh
+chown -R ai-agent:ai-agent /var/ai-agent 2>/dev/null || true
+rc-service ai-agent-privileged restart 2>/dev/null || true
+rc-service ai-agent restart 2>/dev/null || true
+
+if [ -d "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml" ]; then
+    for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+        cp -f "/usr/share/ai-agent/themes/$cfg" "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+    done
+fi
+
+if [ -d "/home/aiuser" ]; then
+    mkdir -p /home/aiuser/Desktop /home/aiuser/.config/gtk-3.0 /home/aiuser/.config/xfce4/terminal /home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml /home/aiuser/Pictures/Wallpapers
+    cp -f /usr/share/applications/ai-agent-dashboard.desktop /home/aiuser/Desktop/ 2>/dev/null || true
+    chmod +x /home/aiuser/Desktop/ai-agent-dashboard.desktop 2>/dev/null || true
+    for cfg in xsettings.xml xfwm4.xml xfce4-desktop.xml xfce4-panel.xml xfce4-keyboard-shortcuts.xml; do
+        cp -f "/usr/share/ai-agent/themes/$cfg" "/home/aiuser/.config/xfce4/xfconf/xfce-perchannel-xml/$cfg" 2>/dev/null || true
+    done
+    chown -R aiuser:aiuser /home/aiuser 2>/dev/null || true
+fi
+exit 0
+
